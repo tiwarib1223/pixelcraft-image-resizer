@@ -73,6 +73,64 @@ object RecentsStore {
         }
     }
 
+    /**
+     * Cache the thumbnail from an image file the app already holds (for example a
+     * batch-resized PNG in the cache dir), so "Recently edited" shows the edited
+     * version even when the original picker grant can no longer be read.
+     */
+    fun cacheThumbnailFromFile(context: Context, uri: Uri, file: File, maxDim: Int = 256) {
+        try {
+            val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            BitmapFactory.decodeFile(file.absolutePath, bounds)
+            if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return
+            var sample = 1
+            while (maxOf(bounds.outWidth, bounds.outHeight) / sample > maxDim) sample *= 2
+            val bmp = BitmapFactory.decodeFile(
+                file.absolutePath,
+                BitmapFactory.Options().apply { inSampleSize = sample }
+            ) ?: return
+            try {
+                FileOutputStream(File(thumbDir(context), thumbName(uri))).use {
+                    bmp.compress(Bitmap.CompressFormat.JPEG, 85, it)
+                }
+            } finally {
+                bmp.recycle()
+            }
+        } catch (e: Exception) {
+            // A missing thumbnail only means a placeholder tile; never fail the caller.
+        }
+    }
+
+    /** Cache the thumbnail from a bitmap the app already holds (the caller keeps ownership). */
+    fun cacheThumbnailFromBitmap(context: Context, uri: Uri, bitmap: Bitmap, maxDim: Int = 256) {
+        try {
+            val scale = maxDim.toFloat() / maxOf(bitmap.width, bitmap.height)
+            val thumb = if (scale < 1f) Bitmap.createScaledBitmap(
+                bitmap,
+                (bitmap.width * scale).toInt().coerceAtLeast(1),
+                (bitmap.height * scale).toInt().coerceAtLeast(1),
+                true
+            ) else bitmap
+            try {
+                FileOutputStream(File(thumbDir(context), thumbName(uri))).use {
+                    thumb.compress(Bitmap.CompressFormat.JPEG, 85, it)
+                }
+            } finally {
+                if (thumb !== bitmap) thumb.recycle()
+            }
+        } catch (e: Exception) {
+            // Placeholder tile only; never fail the caller.
+        }
+    }
+
+    /** Forget a photo whose source can no longer be read (dead picker grant, deleted file). */
+    fun remove(context: Context, uri: Uri) {
+        val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        val kept = list(context).map { it.toString() }.filter { it != uri.toString() }
+        prefs.edit().putString(KEY_ORDER, kept.joinToString("\n")).apply()
+        File(thumbDir(context), thumbName(uri)).delete()
+    }
+
     fun list(context: Context): List<Uri> {
         val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         val ordered = prefs.getString(KEY_ORDER, "") ?: ""

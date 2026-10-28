@@ -451,7 +451,10 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                                     else suggestBaseName(stored.width, stored.height)
                                 val name = buildFileName(base, fmt)
                                 if (fmt == ExportFormat.PDF) saveToDownloads(context, name, fmt.mimeType, encoded)
-                                else saveToGallery(context, name, fmt.mimeType, encoded)
+                                else {
+                                    val savedUri = saveToGallery(context, name, fmt.mimeType, encoded)
+                                    runCatching { RecentsStore.cacheThumbnailFromFile(context, savedUri, File(stored.cachePath)) }
+                                }
                                 encoded.size.toLong()
                             } finally {
                                 bmp.recycle()
@@ -609,6 +612,15 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                     }
                     val old = queueInfo[uri.toString()]
                     processedResults[uri.toString()] = ProcessedResult(outcome.first, outcome.second.first, outcome.second.second, outcome.third, old?.bytes ?: -1L, old?.width ?: 0, old?.height ?: 0)
+                    // Remember the photo and cache the EDITED image as its thumbnail, so
+                    // Home > Recently edited and My Photos > Recent show real pictures even
+                    // when the picker grant can no longer be read later.
+                    withContext(Dispatchers.IO) {
+                        runCatching {
+                            RecentsStore.add(context, uri)
+                            RecentsStore.cacheThumbnailFromFile(context, uri, File(outcome.first))
+                        }
+                    }
                     done++
                 } catch (e: Exception) {
                     failed++
@@ -665,7 +677,10 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                 val filename = buildFileName(exportName, fmt)
                 withContext(Dispatchers.IO) {
                     if (fmt == ExportFormat.PDF) saveToDownloads(context, filename, fmt.mimeType, bytes)
-                    else saveToGallery(context, filename, fmt.mimeType, bytes)
+                    else {
+                        val savedUri = saveToGallery(context, filename, fmt.mimeType, bytes)
+                        processedBitmap?.let { bmp -> runCatching { RecentsStore.cacheThumbnailFromBitmap(context, savedUri, bmp) } }
+                    }
                 }
                 finishSave(filename, bytes.size.toLong())
             } catch (e: Exception) {
@@ -786,6 +801,7 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
             screen = Screen.QueueOverview
             scope.launch(Dispatchers.IO) {
                 uris.forEach { u ->
+                    runCatching { RecentsStore.add(context, u) }
                     val t = decodeThumbnail(context, u)
                     if (t != null) queueThumbs[u.toString()] = t.asImageBitmap()
                 }
@@ -830,6 +846,7 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
             screen = Screen.QueueOverview
             scope.launch(Dispatchers.IO) {
                 uris.forEach { u ->
+                    runCatching { RecentsStore.add(context, u) }
                     val t = decodeThumbnail(context, u)
                     if (t != null) queueThumbs[u.toString()] = t.asImageBitmap()
                 }
@@ -950,13 +967,21 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
         lastUsedTarget = loadLastUsedTarget(context)
     }
     LaunchedEffect(recents) {
+        val dead = mutableListOf<Uri>()
         recents.forEach { uri ->
             val key = uri.toString()
             if (!recentThumbs.containsKey(key)) {
                 recentThumbs[key] = null
                 val thumb = withContext(Dispatchers.IO) { RecentsStore.loadThumbnail(context, uri) }
-                recentThumbs[key] = thumb?.asImageBitmap()
+                if (thumb != null) recentThumbs[key] = thumb.asImageBitmap()
+                else dead += uri
             }
+        }
+        // No cached thumbnail and an unreadable source means a dead picker grant or a
+        // deleted photo: drop the entry instead of showing a permanent placeholder.
+        if (dead.isNotEmpty()) {
+            withContext(Dispatchers.IO) { dead.forEach { RecentsStore.remove(context, it) } }
+            recents = recents.filterNot { dead.contains(it) }
         }
     }
 
@@ -2467,7 +2492,7 @@ private fun MyPhotosScreen(
             val key = sp.uri.toString()
             if (!savedThumbs.containsKey(key)) {
                 savedThumbs[key] = null
-                savedThumbs[key] = withContext(Dispatchers.IO) { RecentsStore.loadThumbnail(context, sp.uri) }?.asImageBitmap()
+                savedThumbs[key] = withContext(Dispatchers.IO) { loadSavedThumbnail(context, sp.uri) }?.asImageBitmap()
             }
         }
     }
@@ -2629,6 +2654,19 @@ private fun formatDraftTime(updatedAt: Long): String {
     } catch (e: Exception) {
         ""
     }
+}
+
+/** Thumbnail for a saved export: MediaStore's own thumbnailer (no permission needed for
+ *  files this app wrote), falling back to the cached/decode path. */
+private fun loadSavedThumbnail(context: Context, uri: Uri): Bitmap? {
+    if (Build.VERSION.SDK_INT >= 29) {
+        try {
+            return context.contentResolver.loadThumbnail(uri, android.util.Size(384, 384), null)
+        } catch (e: Exception) {
+            // Fall through to the cache/decode path below.
+        }
+    }
+    return RecentsStore.loadThumbnail(context, uri)
 }
 
 private fun querySavedExports(context: Context): List<SavedPhoto> {
@@ -2956,7 +2994,7 @@ private fun estimateBytes(bitmap: Bitmap, format: ExportFormat, quality: Int): L
     }
 }
 
-private fun saveToGallery(context: Context, filename: String, mimeType: String, bytes: ByteArray) {
+private fun saveToGallery(context: Context, filename: String, mimeType: String, bytes: ByteArray): Uri {
     val resolver = context.contentResolver
     val values = ContentValues().apply {
         put(MediaStore.Images.Media.DISPLAY_NAME, filename)
@@ -2978,6 +3016,7 @@ private fun saveToGallery(context: Context, filename: String, mimeType: String, 
         resolver.delete(uri, null, null)
         throw e
     }
+    return uri
 }
 
 private fun saveToDownloads(context: Context, filename: String, mimeType: String, bytes: ByteArray) {
