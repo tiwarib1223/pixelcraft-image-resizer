@@ -5,6 +5,7 @@ on:
 
 permissions:
   contents: write
+  actions: write
 
 jobs:
   bootstrap:
@@ -13,42 +14,50 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v4
 
+      - name: Show what is in the repository
+        run: |
+          echo "=== Files at repository root ==="
+          ls -la
+
       - name: Find and unpack the project zip
         run: |
           set -e
           shopt -s nullglob
           ZIPS=( *.zip )
           if [ ${#ZIPS[@]} -eq 0 ]; then
-            echo "ERROR: No .zip file found at the repository root."
-            echo "Upload the project zip first (Add file > Upload files)."
+            echo "ERROR: No .zip file at the repository root. Upload the project zip first."
             exit 1
           fi
           ZIP="${ZIPS[0]}"
-          echo "Found project archive: $ZIP"
+          echo "=== Found archive: $ZIP - contents: ==="
+          unzip -l "$ZIP"
           rm -rf unpacked
           unzip -o -q "$ZIP" -d unpacked
-          if [ ! -d unpacked/pixelcraft_android_v1 ]; then
-            echo "ERROR: The zip does not contain the expected pixelcraft_android_v1/ folder. Found:"
-            find unpacked -maxdepth 2
-            exit 1
-          fi
+          echo "=== Unpacked OK ==="
 
-      - name: Move project files to the repository root
+      - name: Locate the project folder and copy it to the root
         run: |
           set -e
-          cp -r unpacked/pixelcraft_android_v1/. .
+          GRADLE_FILE=$(find unpacked -name settings.gradle.kts | head -n 1)
+          if [ -z "$GRADLE_FILE" ]; then
+            echo "ERROR: No settings.gradle.kts found inside the zip. The archive layout was:"
+            find unpacked | head -50
+            exit 1
+          fi
+          PROJECT_DIR=$(dirname "$GRADLE_FILE")
+          echo "Project folder inside zip: $PROJECT_DIR"
+          cp -r "$PROJECT_DIR/." .
           rm -rf unpacked
           rm -f ./*.zip
-          rm -f .github/workflows/bootstrap.yml
-          echo "Project files are now at the repository root:"
+          echo "=== Repository root after import ==="
           ls -la
 
-      - name: Commit and push project files
+      - name: Commit and push project files (never touches .github)
         run: |
           set -e
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -A
+          git add -A -- ':!.github'
           git commit -m "Import PixelCraft Stage 1 project files (bootstrap)" || echo "Nothing to commit."
           git push origin main
 
@@ -56,4 +65,4 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh workflow run android-build.yml --ref main && echo "Android build started" || echo "Start it manually: Actions tab > Android build > Run workflow."
+          gh workflow run android-build.yml --ref main && echo "Android build started" || echo "Start it manually: Actions > Android build > Run workflow."
