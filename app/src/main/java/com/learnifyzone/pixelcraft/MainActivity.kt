@@ -1061,7 +1061,7 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
         containerColor = MaterialTheme.colorScheme.background,
         snackbarHost = { SnackbarHost(snackbar) },
         topBar = {
-            if (screen == Screen.Editor || screen == Screen.Export || screen == Screen.Print || screen == Screen.QueueOverview || screen == Screen.QueueResult) {
+            if (screen == Screen.Editor || screen == Screen.Export || screen == Screen.Print || screen == Screen.QueueOverview || screen == Screen.QueueResult || screen == Screen.Success) {
                 TopAppBar(
                     title = {
                         Text(
@@ -1070,6 +1070,7 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                                 Screen.Export -> "Export"
                                 Screen.QueueOverview -> "Photos to resize"
                                 Screen.QueueResult -> "Resized photos"
+                                Screen.Success -> "Saved"
                                 else -> "Print Size & DPI"
                             },
                             fontWeight = FontWeight.SemiBold
@@ -1221,13 +1222,6 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                 },
                 working = workingBitmap,
                 processed = processedBitmap,
-                widthText = inputWidth,
-                heightText = inputHeight,
-                customPercent = customPercent,
-                percentError = percentError,
-                lockRatio = lockRatio,
-                sizeUnit = sizeUnit,
-                resizeDpi = resizeDpi,
                 busy = busy,
                 busyLabel = busyLabel,
                 beforeAfter = beforeAfter,
@@ -1241,44 +1235,6 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                         Tool.Resize -> Unit
                         Tool.Presets -> { saveDraftIfNeeded(); screen = Screen.Home; tab = MainTab.Presets }
                         else -> scope.launch { snackbar.showSnackbar("${selected.label} is planned for a later stage. Resize and export are available now.") }
-                    }
-                },
-                onWidth = { value ->
-                    inputWidth = value
-                    invalidateProcessed()
-                    if (lockRatio) {
-                        val old = workingBitmap
-                        val newWidth = parseToPx(value, sizeUnit, currentDpi())
-                        if (old != null && newWidth != null && newWidth > 0) {
-                            val size = runCatching { ResizeMath.fromWidth(old.width, old.height, newWidth) }.getOrNull()
-                            if (size != null) inputHeight = fmtUnit(size.height.toDouble(), sizeUnit, currentDpi())
-                        }
-                    }
-                },
-                onHeight = { value ->
-                    inputHeight = value
-                    invalidateProcessed()
-                    val old = workingBitmap
-                    val newHeight = parseToPx(value, sizeUnit, currentDpi())
-                    if (lockRatio && old != null && newHeight != null && newHeight > 0) {
-                        val newWidth = (newHeight.toDouble() * old.width / old.height).toInt().coerceAtLeast(1)
-                        inputWidth = fmtUnit(newWidth.toDouble(), sizeUnit, currentDpi())
-                    }
-                },
-                onLockRatio = { lockRatio = it },
-                onSizeUnit = { convertInputsToUnit(sizeUnit, it) },
-                onResizeDpi = { resizeDpi = it },
-                onPercent = { applyPercent(it) },
-                onCustomPercent = { value ->
-                    customPercent = value
-                    val p = value.toDoubleOrNull()
-                    if (value.isBlank()) {
-                        percentError = ""
-                    } else if (p == null || p < 10.0 || p > 200.0) {
-                        percentError = "Choose a percentage between 10 and 200."
-                    } else {
-                        percentError = ""
-                        applyPercent(p)
                     }
                 },
                 onRotate = {
@@ -2008,13 +1964,6 @@ private fun EditorScreen(
     onQueueSelect: (Int) -> Unit,
     working: Bitmap?,
     processed: Bitmap?,
-    widthText: String,
-    heightText: String,
-    customPercent: String,
-    percentError: String,
-    lockRatio: Boolean,
-    sizeUnit: String,
-    resizeDpi: String,
     busy: Boolean,
     busyLabel: String,
     beforeAfter: Boolean,
@@ -2023,13 +1972,6 @@ private fun EditorScreen(
     estimatedBytes: Long,
     onBeforeAfter: (Boolean) -> Unit,
     onTool: (Tool) -> Unit,
-    onWidth: (String) -> Unit,
-    onHeight: (String) -> Unit,
-    onLockRatio: (Boolean) -> Unit,
-    onSizeUnit: (String) -> Unit,
-    onResizeDpi: (String) -> Unit,
-    onPercent: (Double) -> Unit,
-    onCustomPercent: (String) -> Unit,
     onRotate: () -> Unit,
     onProcess: () -> Unit,
     onExport: () -> Unit
@@ -2121,31 +2063,10 @@ private fun EditorScreen(
         }
         Spacer(Modifier.height(12.dp))
         if (tool == Tool.Resize) {
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())) {
-                listOf("px" to "Pixels", "in" to "Inches", "cm" to "cm", "mm" to "mm").forEach { (value, label) ->
-                    val selected = sizeUnit == value
-                    Surface(modifier = Modifier.clickable { onSizeUnit(value) }, shape = RoundedCornerShape(9.dp), color = if (selected) SkyBlue else PaleBlue) {
-                        Text(label, modifier = Modifier.padding(horizontal = 12.dp, vertical = 9.dp), fontSize = 11.sp, color = if (selected) Color.White else DeepNavy, textAlign = TextAlign.Center, maxLines = 1, softWrap = false)
-                    }
-                }
-            }
-            if (sizeUnit != "px") {
-                OutlinedTextField(
-                    value = resizeDpi,
-                    onValueChange = onResizeDpi,
-                    modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
-                    label = { Text("DPI - 300 is standard for print") },
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                    singleLine = true
-                )
-            }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 8.dp)) {
-                OutlinedTextField(value = widthText, onValueChange = onWidth, modifier = Modifier.weight(1f), label = { Text("Width ($sizeUnit)") }, keyboardOptions = KeyboardOptions(keyboardType = if (sizeUnit == "px") KeyboardType.Number else KeyboardType.Decimal), singleLine = true)
-                OutlinedTextField(value = heightText, onValueChange = onHeight, modifier = Modifier.weight(1f), label = { Text("Height ($sizeUnit)") }, keyboardOptions = KeyboardOptions(keyboardType = if (sizeUnit == "px") KeyboardType.Number else KeyboardType.Decimal), singleLine = true)
-            }
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Checkbox(checked = lockRatio, onCheckedChange = onLockRatio)
-                Text("Lock aspect ratio", color = DeepNavy, fontSize = 14.sp)
+            // Size is chosen in ONE place only: the options sheet that Process opens
+            // (user decision on v0.4.5: no duplicated size fields on this page).
+            Card(colors = CardDefaults.cardColors(containerColor = PaleBlue), shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth()) {
+                Text("Tap Process to choose the new size - quick sizes, percentage, exact pixels or a target file size, all in one place.", color = Slate, fontSize = 13.sp, lineHeight = 18.sp, modifier = Modifier.padding(16.dp))
             }
         } else {
             Text("${tool.label} controls will be added in the next development stages. Resize and export are available now.", color = DeepNavy, fontSize = 13.sp)
