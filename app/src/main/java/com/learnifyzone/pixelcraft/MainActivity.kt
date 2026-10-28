@@ -311,7 +311,11 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                     "${queueNamePattern.trim()}-${queueIndex + 1}"
                 else suggestBaseName(loaded.width, loaded.height)
                 beforeAfter = false
-                if (!isCamera) withContext(Dispatchers.IO) { RecentsStore.add(context, uri) }
+                if (!isCamera) withContext(Dispatchers.IO) {
+                    RecentsStore.add(context, uri)
+                    // Cache from the bitmap that just decoded, never a second read of the URI.
+                    runCatching { RecentsStore.cacheThumbnailFromBitmap(context, uri, loaded) }
+                }
                 pendingPreset?.let { preset ->
                     applyTarget(preset.width, preset.height)
                     pendingPreset = null
@@ -803,7 +807,12 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                 uris.forEach { u ->
                     runCatching { RecentsStore.add(context, u) }
                     val t = decodeThumbnail(context, u)
-                    if (t != null) queueThumbs[u.toString()] = t.asImageBitmap()
+                    if (t != null) {
+                        queueThumbs[u.toString()] = t.asImageBitmap()
+                        // Cache the SAME bitmap that just decoded successfully, so the
+                        // recents tile never depends on a second decode of the picker URI.
+                        runCatching { RecentsStore.cacheThumbnailFromBitmap(context, u, t) }
+                    }
                 }
             }
             scope.launch { snackbar.showSnackbar("${uris.size} photos selected. Tap Resize to process them all together.") }
@@ -848,7 +857,12 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                 uris.forEach { u ->
                     runCatching { RecentsStore.add(context, u) }
                     val t = decodeThumbnail(context, u)
-                    if (t != null) queueThumbs[u.toString()] = t.asImageBitmap()
+                    if (t != null) {
+                        queueThumbs[u.toString()] = t.asImageBitmap()
+                        // Cache the SAME bitmap that just decoded successfully, so the
+                        // recents tile never depends on a second decode of the picker URI.
+                        runCatching { RecentsStore.cacheThumbnailFromBitmap(context, u, t) }
+                    }
                 }
             }
             scope.launch { snackbar.showSnackbar("${uris.size} photos selected. Tap Resize to process them all together.") }
@@ -967,21 +981,25 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
         lastUsedTarget = loadLastUsedTarget(context)
     }
     LaunchedEffect(recents) {
-        val dead = mutableListOf<Uri>()
-        recents.forEach { uri ->
+        recents.toList().forEach { uri ->
             val key = uri.toString()
             if (!recentThumbs.containsKey(key)) {
                 recentThumbs[key] = null
-                val thumb = withContext(Dispatchers.IO) { RecentsStore.loadThumbnail(context, uri) }
-                if (thumb != null) recentThumbs[key] = thumb.asImageBitmap()
-                else dead += uri
+                // One child coroutine per photo: a slow or hanging source can only delay
+                // its own tile, never the other tiles or the pruning of dead entries.
+                launch {
+                    val thumb = withContext(Dispatchers.IO) { RecentsStore.loadThumbnail(context, uri) }
+                    if (thumb != null) {
+                        recentThumbs[key] = thumb.asImageBitmap()
+                    } else {
+                        // No cached thumbnail and an unreadable source means a dead picker
+                        // grant or a deleted photo: drop the entry instead of showing a
+                        // permanent placeholder.
+                        withContext(Dispatchers.IO) { RecentsStore.remove(context, uri) }
+                        recents = recents.filterNot { it == uri }
+                    }
+                }
             }
-        }
-        // No cached thumbnail and an unreadable source means a dead picker grant or a
-        // deleted photo: drop the entry instead of showing a permanent placeholder.
-        if (dead.isNotEmpty()) {
-            withContext(Dispatchers.IO) { dead.forEach { RecentsStore.remove(context, it) } }
-            recents = recents.filterNot { dead.contains(it) }
         }
     }
 
@@ -1043,7 +1061,7 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
         containerColor = MaterialTheme.colorScheme.background,
         snackbarHost = { SnackbarHost(snackbar) },
         topBar = {
-            if (screen == Screen.Editor || screen == Screen.Export || screen == Screen.Print || screen == Screen.QueueOverview) {
+            if (screen == Screen.Editor || screen == Screen.Export || screen == Screen.Print || screen == Screen.QueueOverview || screen == Screen.QueueResult) {
                 TopAppBar(
                     title = {
                         Text(
@@ -1051,7 +1069,7 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                                 Screen.Editor -> "Resize Image"
                                 Screen.Export -> "Export"
                                 Screen.QueueOverview -> "Photos to resize"
-                                Screen.QueueResult -> "Resize"
+                                Screen.QueueResult -> "Resized photos"
                                 else -> "Print Size & DPI"
                             },
                             fontWeight = FontWeight.SemiBold

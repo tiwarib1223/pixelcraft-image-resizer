@@ -138,14 +138,32 @@ object RecentsStore {
         return ordered.split("\n").filter { it.isNotBlank() }.map { Uri.parse(it) }
     }
 
-    /** Small thumbnail for the recents row; null when the photo is no longer readable. */
+    /**
+     * Small thumbnail for the recents row; null when the photo is no longer readable.
+     * Three layers, fastest and most reliable first:
+     * 1. the app-private cached copy (works even when the picker grant is gone);
+     * 2. Android's own MediaStore thumbnailer (no permission needed while the URI is
+     *    readable; uses the system thumbnail cache, no network for local photos);
+     * 3. a raw decode of the source as the last resort.
+     */
     fun loadThumbnail(context: Context, uri: Uri, maxDim: Int = 256): Bitmap? {
-        return try {
+        try {
             val cached = File(thumbDir(context), thumbName(uri))
             if (cached.exists()) {
                 val bmp = BitmapFactory.decodeFile(cached.absolutePath)
                 if (bmp != null) return bmp
             }
+        } catch (e: Exception) {
+            // Fall through to the next layer.
+        }
+        if (android.os.Build.VERSION.SDK_INT >= 29) {
+            try {
+                return context.contentResolver.loadThumbnail(uri, android.util.Size(maxDim, maxDim), null)
+            } catch (e: Exception) {
+                // Fall through to the raw decode.
+            }
+        }
+        return try {
             decodeSampled(context, uri, maxDim)
         } catch (e: Exception) {
             null
