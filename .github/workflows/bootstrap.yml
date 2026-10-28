@@ -1,0 +1,59 @@
+name: Bootstrap project
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  bootstrap:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Find and unpack the project zip
+        run: |
+          set -e
+          shopt -s nullglob
+          ZIPS=( *.zip )
+          if [ ${#ZIPS[@]} -eq 0 ]; then
+            echo "ERROR: No .zip file found at the repository root."
+            echo "Upload the project zip first (Add file > Upload files)."
+            exit 1
+          fi
+          ZIP="${ZIPS[0]}"
+          echo "Found project archive: $ZIP"
+          rm -rf unpacked
+          unzip -o -q "$ZIP" -d unpacked
+          if [ ! -d unpacked/pixelcraft_android_v1 ]; then
+            echo "ERROR: The zip does not contain the expected pixelcraft_android_v1/ folder. Found:"
+            find unpacked -maxdepth 2
+            exit 1
+          fi
+
+      - name: Move project files to the repository root
+        run: |
+          set -e
+          cp -r unpacked/pixelcraft_android_v1/. .
+          rm -rf unpacked
+          rm -f ./*.zip
+          rm -f .github/workflows/bootstrap.yml
+          echo "Project files are now at the repository root:"
+          ls -la
+
+      - name: Commit and push project files
+        run: |
+          set -e
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Import PixelCraft Stage 1 project files (bootstrap)" || echo "Nothing to commit."
+          git push origin main
+
+      - name: Start the Android build workflow
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh workflow run android-build.yml --ref main && echo "Android build started" || echo "Start it manually: Actions tab > Android build > Run workflow."
