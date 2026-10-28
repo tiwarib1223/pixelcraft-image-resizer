@@ -2,6 +2,15 @@ name: Bootstrap project
 
 on:
   workflow_dispatch:
+    inputs:
+      zip_url:
+        description: "Project zip link (paste the link from WhatsApp). Leave empty only if you uploaded a zip file to the repository instead."
+        required: false
+        default: ""
+      sha256:
+        description: "sha256 check code for the zip (optional - paste it if you were given one)"
+        required: false
+        default: ""
 
 permissions:
   contents: write
@@ -14,10 +23,17 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v4
 
-      - name: Show what is in the repository
+      - name: Download the project zip from the pasted link
+        if: ${{ inputs.zip_url != '' }}
         run: |
-          echo "=== Files at repository root ==="
-          ls -la
+          set -e
+          echo "=== Downloading project zip from the pasted link ==="
+          curl -fL --retry 3 -o project.zip "${{ inputs.zip_url }}"
+          if [ -n "${{ inputs.sha256 }}" ]; then
+            echo "${{ inputs.sha256 }}  project.zip" | sha256sum -c -
+          fi
+          unzip -tq project.zip > /dev/null
+          echo "=== Download OK ==="
 
       - name: Find and unpack the project zip
         run: |
@@ -25,7 +41,7 @@ jobs:
           shopt -s nullglob
           ZIPS=( *.zip )
           if [ ${#ZIPS[@]} -eq 0 ]; then
-            echo "ERROR: No .zip file at the repository root. Upload the project zip first."
+            echo "ERROR: No zip to unpack. Run this workflow again and paste the zip link into the 'zip_url' box (or upload a zip file to the repository root)."
             exit 1
           fi
           ZIP="${ZIPS[0]}"
