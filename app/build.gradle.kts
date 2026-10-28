@@ -12,8 +12,8 @@ android {
         applicationId = "com.learnifyzone.pixelcraft"
         minSdk = 26
         targetSdk = 36
-        versionCode = 16
-        versionName = "0.5.2"
+        versionCode = 17
+        versionName = "0.6.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
@@ -59,6 +59,7 @@ dependencies {
     implementation("androidx.activity:activity-compose:1.11.0")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.9.4")
     implementation("androidx.exifinterface:exifinterface:1.4.1")
+    implementation("com.google.android.gms:play-services-mlkit-subject-segmentation:16.0.0-beta1")
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.ui:ui-tooling-preview")
     implementation("androidx.compose.material3:material3")

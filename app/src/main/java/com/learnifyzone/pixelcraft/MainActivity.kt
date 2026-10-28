@@ -52,6 +52,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.ContentCut
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Collections
 import androidx.compose.material.icons.filled.Home
@@ -127,6 +128,7 @@ import com.learnifyzone.pixelcraft.data.DraftsStore
 import com.learnifyzone.pixelcraft.data.Preset
 import com.learnifyzone.pixelcraft.data.PresetStore
 import com.learnifyzone.pixelcraft.data.RecentsStore
+import com.learnifyzone.pixelcraft.image.BackgroundRemoval
 import com.learnifyzone.pixelcraft.image.ExportFormat
 import com.learnifyzone.pixelcraft.image.SaveUtils
 import com.learnifyzone.pixelcraft.image.Transforms
@@ -164,6 +166,7 @@ class MainActivity : ComponentActivity() {
 private enum class MainTab { Home, MyPhotos, Presets, Settings }
 private enum class Screen { Home, Editor, Export, Print, Success, QueueOverview, QueueResult }
 private enum class Tool(val label: String) { Resize("Resize"), Presets("Presets"), Crop("Crop"), Background("Background"), Format("Format") }
+private enum class BgChoice(val label: String) { TRANSPARENT("Transparent"), WHITE("White"), CUSTOM("Custom Color") }
 private enum class AdaptMode(val label: String) { FIT("Fit"), CROP("Crop"), STRETCH("Stretch") }
 private data class Feature(val title: String, val description: String, val icon: String, val active: Boolean = false)
 private data class AdaptRequest(val width: Int, val height: Int)
@@ -213,6 +216,18 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
     var recents by remember { mutableStateOf<List<Uri>>(emptyList()) }
     val recentThumbs = remember { mutableStateMapOf<String, ImageBitmap?>() }
     var pendingPreset by remember { mutableStateOf<Preset?>(null) }
+    var pendingBgTool by remember { mutableStateOf(false) }
+    var bgCutout by remember { mutableStateOf<Bitmap?>(null) }
+    var bgPreview by remember { mutableStateOf<Bitmap?>(null) }
+    var bgChoice by remember { mutableStateOf(BgChoice.TRANSPARENT) }
+    var bgCustomColor by remember { mutableLongStateOf(0xFF42A5F5) }
+    var bgUnit by remember { mutableStateOf("px") }
+    var bgWidth by remember { mutableStateOf("") }
+    var bgHeight by remember { mutableStateOf("") }
+    var bgDpi by remember { mutableStateOf("300") }
+    var bgError by remember { mutableStateOf("") }
+    var exportDpi by remember { mutableIntStateOf(0) }
+    fun bgDpiValue(): Double = bgDpi.trim().replace(',', '.').toDoubleOrNull()?.takeIf { it > 0 } ?: 300.0
     var pendingDraft by remember { mutableStateOf<Draft?>(null) }
     var pendingCameraUri by remember { mutableStateOf<Uri?>(null) }
     var legacySaveAfterGrant by rememberSaveable { mutableStateOf(false) }
@@ -298,6 +313,12 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                 val bytes = withContext(Dispatchers.IO) { querySourceSize(context, uri) }
                 workingBitmap = loaded
                 processedBitmap = null
+                bgCutout = null
+                bgPreview = null
+                bgError = ""
+                bgWidth = ""
+                bgHeight = ""
+                exportDpi = 0
                 estimatedBytes = -1L
                 sourceUri = uri
                 sourceIsCamera = isCamera
@@ -345,7 +366,7 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                     }
                 }
                 screen = Screen.Editor
-                tool = Tool.Resize
+                tool = if (pendingBgTool) { pendingBgTool = false; Tool.Background } else Tool.Resize
                 // Clear busy BEFORE the snackbar: showSnackbar suspends until dismissal,
                 // so gating busy on it left the Process button spinning for ~4s after every load.
                 busy = false
@@ -369,15 +390,81 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
         }
     }
 
+    // Live preview of the cut-out on the chosen background (small canvas for speed;
+    // the full-size composite is only built at export time).
+    LaunchedEffect(bgCutout, bgChoice, bgCustomColor, bgWidth, bgHeight, bgUnit, bgDpi) {
+        val cut = bgCutout
+        bgPreview = if (cut == null) null else withContext(Dispatchers.Default) {
+            val dpi = bgDpiValue()
+            val tw = parseToPx(bgWidth, bgUnit, dpi) ?: cut.width
+            val th = parseToPx(bgHeight, bgUnit, dpi) ?: cut.height
+            val scale = minOf(1f, 1200f / maxOf(tw, th).coerceAtLeast(1))
+            composeOnBackground(cut, maxOf(1, (tw * scale).roundToInt()), maxOf(1, (th * scale).roundToInt()), bgChoice, bgCustomColor)
+        }
+    }
+
+    fun runRemoveBackground() {
+        val src = workingBitmap ?: return
+        busy = true
+        busyLabel = "Removing background\u2026"
+        scope.launch {
+            try {
+                val fg = withContext(Dispatchers.IO) { BackgroundRemoval.cutOut(src) }
+                bgCutout = fg
+                bgError = ""
+                if (bgWidth.isBlank()) bgWidth = fmtUnit(fg.width.toDouble(), bgUnit, bgDpiValue())
+                if (bgHeight.isBlank()) bgHeight = fmtUnit(fg.height.toDouble(), bgUnit, bgDpiValue())
+            } catch (e: Exception) {
+                bgError = "Couldn't remove the background. If this is the first use, connect to the internet once so the on-device model can download, then try again."
+            } finally {
+                busy = false
+                busyLabel = ""
+            }
+        }
+    }
+
+    fun convertBgToUnit(from: String, to: String) {
+        if (from == to) return
+        val dpi = bgDpiValue()
+        val wPx = parseToPx(bgWidth, from, dpi)
+        val hPx = parseToPx(bgHeight, from, dpi)
+        bgUnit = to
+        bgWidth = wPx?.let { fmtUnit(it.toDouble(), to, dpi) } ?: ""
+        bgHeight = hPx?.let { fmtUnit(it.toDouble(), to, dpi) } ?: ""
+    }
+
+    fun continueBgExport() {
+        val cut = bgCutout ?: return
+        val dpi = bgDpiValue().coerceIn(72.0, 1200.0)
+        val tw = parseToPx(bgWidth, bgUnit, dpi)?.coerceIn(16, 12000) ?: cut.width
+        val th = parseToPx(bgHeight, bgUnit, dpi)?.coerceIn(16, 12000) ?: cut.height
+        busy = true
+        busyLabel = "Preparing export\u2026"
+        scope.launch {
+            try {
+                val out = withContext(Dispatchers.Default) { composeOnBackground(cut, tw, th, bgChoice, bgCustomColor) }
+                processedBitmap = out
+                exportDpi = dpi.roundToInt()
+                if (bgChoice == BgChoice.TRANSPARENT && outFormat() == ExportFormat.JPEG) chosenFormat = "PNG"
+                estimatedBytes = withContext(Dispatchers.IO) { estimateBytes(out, outFormat(), quality) }
+                screen = Screen.Export
+            } finally {
+                busy = false
+                busyLabel = ""
+            }
+        }
+    }
+
     fun encodeProcessed(format: ExportFormat = outFormat()): ByteArray {
         val processed = processedBitmap ?: throw IllegalStateException("Nothing processed yet")
-        return encodeImage(context, sourceUri, processed, format, quality)
+        return encodeImage(context, sourceUri, processed, format, quality, exportDpi)
     }
 
     fun runProcess(targetW: Int, targetH: Int, mode: AdaptMode, anchor: CropAnchor, pad: FitPad) {
         val src = workingBitmap ?: return
         busy = true
         busyLabel = "Processing…"
+        exportDpi = 0
         batchProgress = BatchProgress("Processing", 1, 1, 10)
         adaptRequest = null
         lastUsedTarget = targetW to targetH
@@ -1158,6 +1245,10 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                             "Resize" -> pickPhotos()
                             "Print Size & DPI" -> screen = Screen.Print
                             "Social & Shop Sizes" -> tab = MainTab.Presets
+                            "Remove Background" -> {
+                                if (workingBitmap != null) { screen = Screen.Editor; tool = Tool.Background }
+                                else { pendingBgTool = true; pickPhotos() }
+                            }
                             else -> scope.launch { snackbar.showSnackbar("$feature is planned for a later development stage.") }
                         }
                     }
@@ -1259,6 +1350,7 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                     when (selected) {
                         Tool.Resize -> Unit
                         Tool.Presets -> { saveDraftIfNeeded(); screen = Screen.Home; tab = MainTab.Presets }
+                        Tool.Background -> Unit
                         else -> scope.launch { snackbar.showSnackbar("${selected.label} is planned for a later stage. Resize and export are available now.") }
                     }
                 },
@@ -1272,7 +1364,24 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                     }
                 },
                 onProcess = { showDimensionsSheet = true },
-                onExport = { screen = Screen.Export }
+                onExport = { screen = Screen.Export },
+                bgPreview = bgPreview,
+                bgCutoutReady = bgCutout != null,
+                bgChoice = bgChoice,
+                bgCustomColor = bgCustomColor,
+                bgUnit = bgUnit,
+                bgWidth = bgWidth,
+                bgHeight = bgHeight,
+                bgDpi = bgDpi,
+                bgError = bgError,
+                onBgChoice = { bgChoice = it },
+                onBgCustomColor = { bgCustomColor = it },
+                onBgUnit = { convertBgToUnit(bgUnit, it) },
+                onBgWidth = { bgWidth = it.filter { c -> c.isDigit() || c == '.' || c == ',' } },
+                onBgHeight = { bgHeight = it.filter { c -> c.isDigit() || c == '.' || c == ',' } },
+                onBgDpi = { bgDpi = it.filter { c -> c.isDigit() } },
+                onRemoveBackground = { runRemoveBackground() },
+                onBgExport = { continueBgExport() }
             )
             Screen.Export -> ExportScreen(
                 modifier = Modifier.padding(padding),
@@ -2018,7 +2127,24 @@ private fun EditorScreen(
     onResizeDpi: (String) -> Unit,
     onRotate: () -> Unit,
     onProcess: () -> Unit,
-    onExport: () -> Unit
+    onExport: () -> Unit,
+    bgPreview: Bitmap?,
+    bgCutoutReady: Boolean,
+    bgChoice: BgChoice,
+    bgCustomColor: Long,
+    bgUnit: String,
+    bgWidth: String,
+    bgHeight: String,
+    bgDpi: String,
+    bgError: String,
+    onBgChoice: (BgChoice) -> Unit,
+    onBgCustomColor: (Long) -> Unit,
+    onBgUnit: (String) -> Unit,
+    onBgWidth: (String) -> Unit,
+    onBgHeight: (String) -> Unit,
+    onBgDpi: (String) -> Unit,
+    onRemoveBackground: () -> Unit,
+    onBgExport: () -> Unit
 ) {
     Column(modifier.fillMaxSize().padding(horizontal = 16.dp).verticalScroll(rememberScrollState())) {
         if (queueLabel != null) {
@@ -2050,7 +2176,7 @@ private fun EditorScreen(
             Modifier.fillMaxWidth().padding(vertical = 8.dp).height(260.dp).clip(RoundedCornerShape(18.dp)).background(SoftGrey).border(1.dp, BorderGrey, RoundedCornerShape(18.dp)),
             contentAlignment = Alignment.Center
         ) {
-            val display = working
+            val display = if (tool == Tool.Background && bgPreview != null) bgPreview else working
             val displayImage = remember(display) { display?.asImageBitmap() }
             if (displayImage != null) {
                 Image(bitmap = displayImage, contentDescription = "Image preview", modifier = Modifier.fillMaxSize().padding(8.dp), contentScale = ContentScale.Fit)
@@ -2117,10 +2243,80 @@ private fun EditorScreen(
             Card(colors = CardDefaults.cardColors(containerColor = PaleBlue), shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth()) {
                 Text("Tap Process to choose the new size - quick sizes, percentage, exact pixels or a target file size, all in one place.", color = Slate, fontSize = 13.sp, lineHeight = 18.sp, modifier = Modifier.padding(16.dp))
             }
+        } else if (tool == Tool.Background) {
+            if (!bgCutoutReady) {
+                Card(colors = CardDefaults.cardColors(containerColor = PaleBlue), shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth()) {
+                    Text("Cut the subject out of your photo, right on your phone - nothing is uploaded. The first use downloads a small model once (internet needed); after that it works fully offline.", color = Slate, fontSize = 13.sp, lineHeight = 18.sp, modifier = Modifier.padding(16.dp))
+                }
+            }
+            Button(
+                onClick = onRemoveBackground,
+                modifier = Modifier.fillMaxWidth().padding(top = if (bgCutoutReady) 0.dp else 10.dp).height(52.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = Orange, contentColor = Color.White),
+                shape = RoundedCornerShape(14.dp),
+                enabled = !busy && working != null
+            ) {
+                if (busy) CircularProgressIndicator(modifier = Modifier.size(20.dp), color = Color.White, strokeWidth = 2.dp) else {
+                    Icon(Icons.Default.ContentCut, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text(if (bgCutoutReady) "Remove Again" else "Remove Background", fontWeight = FontWeight.Bold)
+                }
+            }
+            if (bgError.isNotBlank()) {
+                Text(bgError, color = Color(0xFFB3261E), fontSize = 12.sp, lineHeight = 16.sp, modifier = Modifier.padding(top = 8.dp))
+            }
+            if (bgCutoutReady) {
+                Text("Output Background", color = DeepNavy, fontWeight = FontWeight.SemiBold, fontSize = 14.sp, modifier = Modifier.padding(top = 14.dp, bottom = 8.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())) {
+                    BgChoice.values().forEach { item ->
+                        val selected = bgChoice == item
+                        Surface(modifier = Modifier.clickable { onBgChoice(item) }, shape = RoundedCornerShape(10.dp), color = if (selected) SkyBlue else SoftGrey) {
+                            Text(item.label, modifier = Modifier.padding(horizontal = 14.dp, vertical = 9.dp), fontSize = 12.sp, color = if (selected) Color.White else DeepNavy, fontWeight = FontWeight.SemiBold, maxLines = 1, softWrap = false)
+                        }
+                    }
+                }
+                if (bgChoice == BgChoice.CUSTOM) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth().padding(top = 10.dp)) {
+                        listOf(0xFF42A5F5, 0xFFFF7043, 0xFF66BB6A, 0xFFEC407A, 0xFFAB47BC, 0xFFFFCA28, 0xFF8D6E63, 0xFF212121).forEach { colorValue ->
+                            val selected = bgCustomColor == colorValue
+                            Box(
+                                Modifier.size(34.dp).clip(CircleShape).background(Color(colorValue))
+                                    .border(if (selected) 3.dp else 1.dp, if (selected) SkyBlue else BorderGrey, CircleShape)
+                                    .clickable { onBgCustomColor(colorValue) }
+                            )
+                        }
+                    }
+                }
+                Text("Output size and DPI", color = DeepNavy, fontWeight = FontWeight.SemiBold, fontSize = 14.sp, modifier = Modifier.padding(top = 14.dp, bottom = 8.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())) {
+                    listOf("px" to "Pixels", "in" to "Inches", "cm" to "cm", "mm" to "mm").forEach { (value, label) ->
+                        val selected = bgUnit == value
+                        Surface(modifier = Modifier.clickable { onBgUnit(value) }, shape = RoundedCornerShape(9.dp), color = if (selected) SkyBlue else PaleBlue) {
+                            Text(label, modifier = Modifier.padding(horizontal = 12.dp, vertical = 9.dp), fontSize = 11.sp, color = if (selected) Color.White else DeepNavy, textAlign = TextAlign.Center, maxLines = 1, softWrap = false)
+                        }
+                    }
+                }
+                Row(Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(value = bgWidth, onValueChange = onBgWidth, modifier = Modifier.weight(1f), label = { Text(if (bgUnit == "px") "Width (px)" else "Width ($bgUnit)") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), singleLine = true)
+                    OutlinedTextField(value = bgHeight, onValueChange = onBgHeight, modifier = Modifier.weight(1f), label = { Text(if (bgUnit == "px") "Height (px)" else "Height ($bgUnit)") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), singleLine = true)
+                }
+                OutlinedTextField(value = bgDpi, onValueChange = onBgDpi, modifier = Modifier.fillMaxWidth().padding(top = 8.dp), label = { Text("DPI - 300 is standard for print") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), singleLine = true)
+                Text("Transparent stays see-through in PNG and WebP. JPG and PDF put the photo on white.", color = Slate, fontSize = 11.sp, lineHeight = 15.sp, modifier = Modifier.padding(top = 8.dp))
+                Button(
+                    onClick = onBgExport,
+                    modifier = Modifier.fillMaxWidth().padding(top = 10.dp).height(52.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = SkyBlue, contentColor = Color.White),
+                    shape = RoundedCornerShape(14.dp),
+                    enabled = !busy
+                ) {
+                    Text("Continue to Export", fontWeight = FontWeight.Bold)
+                }
+            }
         } else {
             Text("${tool.label} controls will be added in the next development stages. Resize and export are available now.", color = DeepNavy, fontSize = 13.sp)
         }
         Spacer(Modifier.height(12.dp))
+        if (tool != Tool.Background) {
         Button(
             onClick = onProcess,
             modifier = Modifier.fillMaxWidth().height(52.dp),
@@ -2143,6 +2339,7 @@ private fun EditorScreen(
             Text("Tap Process first, then Export saves the result.", color = Slate, fontSize = 11.sp, lineHeight = 15.sp, modifier = Modifier.padding(top = 8.dp, bottom = 12.dp))
         } else {
             Spacer(Modifier.height(12.dp))
+        }
         }
     }
 }
@@ -2678,6 +2875,25 @@ private fun loadSavedThumbnail(context: Context, uri: Uri): Bitmap? {
     return RecentsStore.loadThumbnail(context, uri)
 }
 
+/** Composite the cut-out onto the chosen background, fit and centered on the target canvas. */
+private fun composeOnBackground(cutout: Bitmap, targetW: Int, targetH: Int, choice: BgChoice, customColor: Long): Bitmap {
+    val out = Bitmap.createBitmap(targetW, targetH, Bitmap.Config.ARGB_8888)
+    val canvas = android.graphics.Canvas(out)
+    when (choice) {
+        BgChoice.TRANSPARENT -> {}
+        BgChoice.WHITE -> canvas.drawColor(android.graphics.Color.WHITE)
+        BgChoice.CUSTOM -> canvas.drawColor(customColor.toInt())
+    }
+    val scale = minOf(targetW.toFloat() / cutout.width, targetH.toFloat() / cutout.height)
+    val w = (cutout.width * scale).coerceAtLeast(1f)
+    val h = (cutout.height * scale).coerceAtLeast(1f)
+    val left = (targetW - w) / 2f
+    val top = (targetH - h) / 2f
+    val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG or android.graphics.Paint.FILTER_BITMAP_FLAG)
+    canvas.drawBitmap(cutout, null, android.graphics.RectF(left, top, left + w, top + h), paint)
+    return out
+}
+
 private fun querySavedExports(context: Context): List<SavedPhoto> {
     if (Build.VERSION.SDK_INT < 29) return emptyList()
     val out = mutableListOf<SavedPhoto>()
@@ -2921,12 +3137,25 @@ private fun decodeOrientedBitmap(context: Context, uri: Uri): Bitmap {
  * own metadata (date, camera info, GPS) is copied across best-effort;
  * orientation is normalised because the pixels are already rotated correctly.
  */
-private fun encodeImage(context: Context, exifSource: Uri?, bitmap: Bitmap, format: ExportFormat, quality: Int): ByteArray {
+private fun encodeImage(context: Context, exifSource: Uri?, bitmap: Bitmap, format: ExportFormat, quality: Int, dpi: Int = 0): ByteArray {
+    // JPEG and PDF have no alpha channel: flatten onto white instead of dropping
+    // transparency onto black (matters for the Remove Background export).
+    val flat = if ((format == ExportFormat.JPEG || format == ExportFormat.PDF) && bitmap.hasAlpha()) {
+        val out = Bitmap.createBitmap(bitmap.width, bitmap.height, Bitmap.Config.ARGB_8888)
+        val canvas = android.graphics.Canvas(out)
+        canvas.drawColor(android.graphics.Color.WHITE)
+        canvas.drawBitmap(bitmap, 0f, 0f, null)
+        out
+    } else bitmap
     if (format == ExportFormat.PDF) {
         val document = PdfDocument()
         try {
-            val page = document.startPage(PdfDocument.PageInfo.Builder(bitmap.width, bitmap.height, 1).create())
-            page.canvas.drawBitmap(bitmap, 0f, 0f, null)
+            // PDF pages are sized in 1/72 inch points: with a DPI we honor the
+            // intended physical print size, otherwise one point per pixel.
+            val pageW = if (dpi > 0) (flat.width * 72f / dpi).roundToInt().coerceAtLeast(1) else flat.width
+            val pageH = if (dpi > 0) (flat.height * 72f / dpi).roundToInt().coerceAtLeast(1) else flat.height
+            val page = document.startPage(PdfDocument.PageInfo.Builder(pageW, pageH, 1).create())
+            page.canvas.drawBitmap(flat, null, android.graphics.RectF(0f, 0f, pageW.toFloat(), pageH.toFloat()), null)
             document.finishPage(page)
             val baos = ByteArrayOutputStream()
             document.writeTo(baos)
@@ -2939,11 +3168,12 @@ private fun encodeImage(context: Context, exifSource: Uri?, bitmap: Bitmap, form
         val tmp = File(context.cacheDir, "encode_${System.currentTimeMillis()}.jpg")
         try {
             FileOutputStream(tmp).use { out ->
-                if (!bitmap.compress(Bitmap.CompressFormat.JPEG, quality, out)) {
+                if (!flat.compress(Bitmap.CompressFormat.JPEG, quality, out)) {
                     throw IllegalStateException("Image encoding failed")
                 }
             }
-            if (exifSource != null) copyExifBestEffort(context, exifSource, tmp, bitmap.width, bitmap.height)
+            if (exifSource != null) copyExifBestEffort(context, exifSource, tmp, flat.width, flat.height, dpi)
+            else if (dpi > 0) writeDpiTags(ExifInterface(tmp.absolutePath), dpi)
             return tmp.readBytes()
         } finally {
             tmp.delete()
@@ -2981,7 +3211,18 @@ private val EXIF_TAGS_TO_COPY = listOf(
     ExifInterface.TAG_IMAGE_DESCRIPTION
 )
 
-private fun copyExifBestEffort(context: Context, source: Uri, outFile: File, width: Int, height: Int) {
+private fun writeDpiTags(dst: ExifInterface, dpi: Int) {
+    try {
+        dst.setAttribute(ExifInterface.TAG_X_RESOLUTION, dpi.toString())
+        dst.setAttribute(ExifInterface.TAG_Y_RESOLUTION, dpi.toString())
+        dst.setAttribute(ExifInterface.TAG_RESOLUTION_UNIT, "2")
+        dst.saveAttributes()
+    } catch (e: Exception) {
+        // Best effort: resolution metadata is informational.
+    }
+}
+
+private fun copyExifBestEffort(context: Context, source: Uri, outFile: File, width: Int, height: Int, dpi: Int = 0) {
     try {
         val src = context.contentResolver.openFileDescriptor(source, "r")?.use { ExifInterface(it.fileDescriptor) } ?: return
         val dst = ExifInterface(outFile.absolutePath)
@@ -2991,6 +3232,11 @@ private fun copyExifBestEffort(context: Context, source: Uri, outFile: File, wid
         dst.setAttribute(ExifInterface.TAG_IMAGE_WIDTH, width.toString())
         dst.setAttribute(ExifInterface.TAG_IMAGE_LENGTH, height.toString())
         dst.setAttribute(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL.toString())
+        if (dpi > 0) {
+            dst.setAttribute(ExifInterface.TAG_X_RESOLUTION, dpi.toString())
+            dst.setAttribute(ExifInterface.TAG_Y_RESOLUTION, dpi.toString())
+            dst.setAttribute(ExifInterface.TAG_RESOLUTION_UNIT, "2")
+        }
         dst.saveAttributes()
     } catch (e: Exception) {
         // Best effort: a JPEG without copied metadata is still a correct photo.

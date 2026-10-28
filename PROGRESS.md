@@ -1,7 +1,7 @@
 # PixelCraft Image Resizer — Progress
 
 ## Current stage
-Stage 2D v0.5.2 (built on Stage 2C v0.3.0): queue overview screen, the full "Select new dimensions" Process sheet, batch processing of the whole queue with live percent progress, a result screen with savings summary, and batch save (new copies or replace originals). Stage 2C delivered: "My Photos" library screen, export format picker (JPG/PNG/WEBP/PDF), size unit picker (pixels/inch/cm/mm), queue thumbnail strip, and a persistent debug signing key. Stage 2 delivered: process-then-export workflow, aspect-ratio adaptation, camera capture, multi-select (up to 50) with one-by-one queue, recently edited photos, quality control.
+Stage 2E v0.6.0 (built on Stage 2C v0.3.0): queue overview screen, the full "Select new dimensions" Process sheet, batch processing of the whole queue with live percent progress, a result screen with savings summary, and batch save (new copies or replace originals). Stage 2C delivered: "My Photos" library screen, export format picker (JPG/PNG/WEBP/PDF), size unit picker (pixels/inch/cm/mm), queue thumbnail strip, and a persistent debug signing key. Stage 2 delivered: process-then-export workflow, aspect-ratio adaptation, camera capture, multi-select (up to 50) with one-by-one queue, recently edited photos, quality control.
 
 ## Stage 2C: implemented in source
 - New bottom-nav tab "My Photos" with three internal tabs, all zero-permission and on-device:
@@ -73,6 +73,15 @@ Stage 2D v0.5.2 (built on Stage 2C v0.3.0): queue overview screen, the full "Sel
 
 
 
+
+## v0.6.0 feature (his ask: "Now build remove background" - the real feature, with his structure screenshot)
+- REMOVE BACKGROUND is live: home toolkit tile and the editor's Background tab both open the new tool (tile picks a photo first when none is loaded). Flow follows his structure screenshot in the app's design language: photo preview > "Remove Background" main action > Output Background (Transparent / White / Custom Color with swatches) > Width x Height with the SAME unit chips as Resize (px / Inches / cm / mm, same conversion behavior, DPI field visible under all units) > Continue to Export, where the existing Save as format row (Original / JPG / PNG / WEBP / PDF) and Download/save options take over.
+- The cut-out runs ON-DEVICE with ML Kit subject segmentation (no upload, works offline). Honest caveat: Play Services downloads the small model once on first use, so the very first tap needs internet; the UI says this, and first-use failure shows a plain-English retry hint. Model quality varies by photo - he should test with his real product photos.
+- Live preview: after removal the preview box shows the cut-out on the chosen background/color and updates as options change (small preview canvas; full size is built at export).
+- DPI is real: stored in JPEG EXIF resolution tags and used for the physical page size of PDF exports.
+- Transparency is honest: PNG/WebP keep see-through; JPG and PDF flatten onto white (before, a transparent bitmap saved as JPG could come out on black). If Transparent is chosen while the export format would be JPG, the export defaults to PNG.
+- Held for later, only on his explicit ask: the My Photos gallery upgrade and the Presets catalog (Etsy/YouTube/Pinterest verified entries) - both built during earlier scope reads and unbuilt after his corrections.
+- NOT VERIFIABLE HERE: ML Kit cannot run on this build machine (no emulator) - the segmentation path is compile-verified and unit-test-safe only; real-device behavior is his to confirm.
 ## v0.5.2 fix (user-reported on v0.5.1: remove Before/After from the editor page)
 - Editor (Resize Image) page: removed the Before/After tabs and the "After:" info line - the editor simply shows the photo being edited. The before/after comparison now lives only on the result page (where it was added in v0.5.1).
 ## v0.5.1 fix (user-reported on v0.5.0: no DPI field under Pixels in the multi-photo sheet)

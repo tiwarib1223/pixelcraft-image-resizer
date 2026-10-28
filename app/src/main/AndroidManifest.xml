@@ -14,6 +14,12 @@
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
         android:theme="@style/Theme.PixelCraft">
+        <!-- Lets Play Services fetch the subject-segmentation model at install time
+             when the app comes from the Play Store; sideloaded installs fetch it once
+             on first use instead. -->
+        <meta-data
+            android:name="com.google.mlkit.vision.DEPENDENCIES"
+            android:value="subject_segment" />
         <activity
             android:name="com.learnifyzone.pixelcraft.MainActivity"
             android:exported="true">
