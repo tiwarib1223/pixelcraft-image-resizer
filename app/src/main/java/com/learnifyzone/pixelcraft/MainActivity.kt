@@ -1755,15 +1755,11 @@ private fun QueueResultScreen(
         AlertDialog(
             onDismissRequest = { showSaveOptions = false },
             title = { Text("Save resized photos", color = DeepNavy, fontWeight = FontWeight.Bold) },
-            text = { Text("Save new copies in Pictures/PixelCraft (originals stay untouched), or replace the original files with the resized versions.", color = Slate, fontSize = 13.sp, lineHeight = 18.sp) },
+            text = { Text("Save new copies in Pictures/PixelCraft. Your original photos stay untouched.", color = Slate, fontSize = 13.sp, lineHeight = 18.sp) },
             confirmButton = {
                 Column {
                     Button(onClick = { showSaveOptions = false; onSaveAsNew() }, modifier = Modifier.fillMaxWidth(), colors = ButtonDefaults.buttonColors(containerColor = Orange, contentColor = Color.White), shape = RoundedCornerShape(10.dp)) {
                         Text("Save as new files", fontWeight = FontWeight.Bold)
-                    }
-                    Spacer(Modifier.height(8.dp))
-                    OutlinedButton(onClick = { showSaveOptions = false; onReplaceAll() }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(10.dp)) {
-                        Text("Replace originals", color = DeepNavy, fontWeight = FontWeight.Bold)
                     }
                     TextButton(onClick = { showSaveOptions = false }, modifier = Modifier.fillMaxWidth().padding(top = 4.dp)) {
                         Text("Cancel", color = Slate)

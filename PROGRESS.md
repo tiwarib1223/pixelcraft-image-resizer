@@ -1,7 +1,7 @@
 # PixelCraft Image Resizer — Progress
 
 ## Current stage
-Stage 2D v0.4.2 (built on Stage 2C v0.3.0): queue overview screen, the full "Select new dimensions" Process sheet, batch processing of the whole queue with live percent progress, a result screen with savings summary, and batch save (new copies or replace originals). Stage 2C delivered: "My Photos" library screen, export format picker (JPG/PNG/WEBP/PDF), size unit picker (pixels/inch/cm/mm), queue thumbnail strip, and a persistent debug signing key. Stage 2 delivered: process-then-export workflow, aspect-ratio adaptation, camera capture, multi-select (up to 50) with one-by-one queue, recently edited photos, quality control.
+Stage 2D v0.4.3 (built on Stage 2C v0.3.0): queue overview screen, the full "Select new dimensions" Process sheet, batch processing of the whole queue with live percent progress, a result screen with savings summary, and batch save (new copies or replace originals). Stage 2C delivered: "My Photos" library screen, export format picker (JPG/PNG/WEBP/PDF), size unit picker (pixels/inch/cm/mm), queue thumbnail strip, and a persistent debug signing key. Stage 2 delivered: process-then-export workflow, aspect-ratio adaptation, camera capture, multi-select (up to 50) with one-by-one queue, recently edited photos, quality control.
 
 ## Stage 2C: implemented in source
 - New bottom-nav tab "My Photos" with three internal tabs, all zero-permission and on-device:
@@ -35,6 +35,9 @@ Stage 2D v0.4.2 (built on Stage 2C v0.3.0): queue overview screen, the full "Sel
 - Save dialog layout: "Cancel" was squeezed onto the same row as "Replace originals"; all three actions (Save as new files / Replace originals / Cancel) are now stacked full-width.
 - Result screen now has a way home: the back arrow returns to Home and a "Done" action sits in the top bar.
 - (No code change, packaging note: after uploading a zip, TWO Android builds run - one on the zip-upload commit with the OLD code, one after Bootstrap with the NEW code. Always install the APK from the build that runs after "Bootstrap project" finishes.)
+
+## v0.4.3 change
+- Replace-originals option removed from the batch Save dialog: queue photos come from the system photo picker (read-only URIs), where in-place replace is unreliable; the dialog now goes straight to "Save as new files" + Cancel. The replace code path stays in the app, dormant, for the parked full-gallery feature (custom picker with photo-library permission) where replace becomes real.
 
 ## Implemented in source
 - Sky-blue, orange, white and deep-navy theme (unchanged from Stage 1).
