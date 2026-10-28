@@ -9,6 +9,7 @@ import android.graphics.BitmapFactory
 import android.graphics.Matrix
 import android.net.Uri
 import android.os.Build
+import android.os.Bundle
 import android.provider.MediaStore
 import android.provider.OpenableColumns
 import androidx.activity.ComponentActivity
@@ -195,47 +196,7 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
     var legacySaveAfterGrant by rememberSaveable { mutableStateOf(false) }
     var photoQueue by remember { mutableStateOf<List<Uri>>(emptyList()) }
     var queueIndex by rememberSaveable { mutableIntStateOf(0) }
-
-    val photoPicker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
-        if (uri != null) loadPhoto(uri, isCamera = false)
-    }
-    val multiPicker = rememberLauncherForActivityResult(ActivityResultContracts.PickMultipleVisualMedia(50)) { uris ->
-        if (uris.size == 1) {
-            loadPhoto(uris[0], isCamera = false)
-        } else if (uris.size > 1) {
-            photoQueue = uris
-            queueIndex = 0
-            loadPhoto(uris[0], isCamera = false, fromQueue = true)
-            scope.launch { snackbar.showSnackbar("${uris.size} photos selected. You process and export them one by one.") }
-        }
-    }
-    val takePicture = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { ok ->
-        val uri = pendingCameraUri
-        if (ok && uri != null) loadPhoto(uri, isCamera = true)
-        pendingCameraUri = null
-    }
-    val writeConsent = rememberLauncherForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) { result ->
-        if (result.resultCode == Activity.RESULT_OK) performReplace()
-        else scope.launch { snackbar.showSnackbar("Replace cancelled. Nothing was changed.") }
-    }
-    val createJpeg = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("image/jpeg")) { uri ->
-        if (uri != null) saveToChosenFolder(uri)
-    }
-    val createPng = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("image/png")) { uri ->
-        if (uri != null) saveToChosenFolder(uri)
-    }
-    val createWebp = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("image/webp")) { uri ->
-        if (uri != null) saveToChosenFolder(uri)
-    }
-    val legacyWritePermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-        if (granted && legacySaveAfterGrant) {
-            legacySaveAfterGrant = false
-            doSaveAsNew()
-        } else if (!granted) {
-            legacySaveAfterGrant = false
-            scope.launch { snackbar.showSnackbar("Storage access was not granted, so the photo was not saved.") }
-        }
-    }
+    var pendingLaunch by remember { mutableStateOf<String?>(null) }
 
     fun outFormat(): ExportFormat = if (sourceFormat == ExportFormat.UNKNOWN) ExportFormat.JPEG else sourceFormat
 
@@ -392,7 +353,8 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
             android.content.pm.PackageManager.PERMISSION_GRANTED
         ) {
             legacySaveAfterGrant = true
-            legacyWritePermission.launch(android.Manifest.permission.WRITE_EXTERNAL_STORAGE)
+            pendingLaunch = "legacySave"
+
         } else {
             doSaveAsNew()
         }
@@ -421,10 +383,9 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
     }
 
     fun requestReplaceOriginal() {
-        val uri = sourceUri ?: return
+        if (sourceUri == null) return
         if (Build.VERSION.SDK_INT >= 30) {
-            val pendingIntent = MediaStore.createWriteRequest(context.contentResolver, listOf(uri))
-            writeConsent.launch(IntentSenderRequest.Builder(pendingIntent.intentSender).build())
+            pendingLaunch = "replace"
         } else {
             scope.launch { snackbar.showSnackbar("Replace original needs Android 11 or newer. Use 'Save as new file' instead.") }
         }
@@ -451,13 +412,7 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
     }
 
     fun launchSaveToFolder() {
-        val suggested = buildFileName(exportName, outFormat())
-        when (outFormat()) {
-            ExportFormat.JPEG -> createJpeg.launch(suggested)
-            ExportFormat.PNG -> createPng.launch(suggested)
-            ExportFormat.WEBP -> createWebp.launch(suggested)
-            ExportFormat.UNKNOWN -> createJpeg.launch(suggested)
-        }
+        pendingLaunch = "saf"
     }
 
     fun shareProcessed() {
@@ -488,11 +443,7 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
     }
 
     fun openCamera() {
-        val dir = File(context.cacheDir, "images").apply { mkdirs() }
-        val file = File(dir, "capture_${System.currentTimeMillis()}.jpg")
-        val uri = FileProvider.getUriForFile(context, context.packageName + ".fileprovider", file)
-        pendingCameraUri = uri
-        takePicture.launch(uri)
+        pendingLaunch = "camera"
     }
 
     val multiPickerUnlimited = rememberLauncherForActivityResult(ActivityResultContracts.PickMultipleVisualMedia()) { uris ->
@@ -507,12 +458,86 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
     }
 
     fun pickPhotos() {
-        try {
-            multiPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
-        } catch (e: IllegalArgumentException) {
-            // Very old pickers enforce a lower system maximum; fall back to no app-side limit.
-            multiPickerUnlimited.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+        pendingLaunch = "pick"
+    }
+
+    val photoPicker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
+        if (uri != null) loadPhoto(uri, isCamera = false)
+    }
+    val multiPicker = rememberLauncherForActivityResult(ActivityResultContracts.PickMultipleVisualMedia(50)) { uris ->
+        if (uris.size == 1) {
+            loadPhoto(uris[0], isCamera = false)
+        } else if (uris.size > 1) {
+            photoQueue = uris
+            queueIndex = 0
+            loadPhoto(uris[0], isCamera = false, fromQueue = true)
+            scope.launch { snackbar.showSnackbar("${uris.size} photos selected. You process and export them one by one.") }
         }
+    }
+    val takePicture = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { ok ->
+        val uri = pendingCameraUri
+        if (ok && uri != null) loadPhoto(uri, isCamera = true)
+        pendingCameraUri = null
+    }
+    val writeConsent = rememberLauncherForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) { result ->
+        if (result.resultCode == Activity.RESULT_OK) performReplace()
+        else scope.launch { snackbar.showSnackbar("Replace cancelled. Nothing was changed.") }
+    }
+    val createJpeg = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("image/jpeg")) { uri ->
+        if (uri != null) saveToChosenFolder(uri)
+    }
+    val createPng = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("image/png")) { uri ->
+        if (uri != null) saveToChosenFolder(uri)
+    }
+    val createWebp = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("image/webp")) { uri ->
+        if (uri != null) saveToChosenFolder(uri)
+    }
+    val legacyWritePermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted && legacySaveAfterGrant) {
+            legacySaveAfterGrant = false
+            doSaveAsNew()
+        } else if (!granted) {
+            legacySaveAfterGrant = false
+            scope.launch { snackbar.showSnackbar("Storage access was not granted, so the photo was not saved.") }
+        }
+    }
+
+    LaunchedEffect(pendingLaunch) {
+        when (pendingLaunch) {
+            "pick" -> {
+                try {
+                    multiPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+                } catch (e: IllegalArgumentException) {
+                    // Very old pickers enforce a lower system maximum; fall back to no app-side limit.
+                    multiPickerUnlimited.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+                }
+            }
+            "camera" -> {
+                val dir = File(context.cacheDir, "images").apply { mkdirs() }
+                val file = File(dir, "capture_${System.currentTimeMillis()}.jpg")
+                val uri = FileProvider.getUriForFile(context, context.packageName + ".fileprovider", file)
+                pendingCameraUri = uri
+                takePicture.launch(uri)
+            }
+            "replace" -> {
+                val uri = sourceUri
+                if (uri != null && Build.VERSION.SDK_INT >= 30) {
+                    val pendingIntent = MediaStore.createWriteRequest(context.contentResolver, listOf(uri))
+                    writeConsent.launch(IntentSenderRequest.Builder(pendingIntent.intentSender).build())
+                }
+            }
+            "saf" -> {
+                val suggested = buildFileName(exportName, outFormat())
+                when (outFormat()) {
+                    ExportFormat.JPEG -> createJpeg.launch(suggested)
+                    ExportFormat.PNG -> createPng.launch(suggested)
+                    ExportFormat.WEBP -> createWebp.launch(suggested)
+                    ExportFormat.UNKNOWN -> createJpeg.launch(suggested)
+                }
+            }
+            "legacySave" -> legacyWritePermission.launch(android.Manifest.permission.WRITE_EXTERNAL_STORAGE)
+        }
+        pendingLaunch = null
     }
 
     LaunchedEffect(screen) {
