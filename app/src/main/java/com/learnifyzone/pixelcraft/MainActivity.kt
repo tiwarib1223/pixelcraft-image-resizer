@@ -383,7 +383,10 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                 beforeAfter = true
                 batchProgress = BatchProgress("Processing", 1, 1, 90)
                 estimatedBytes = withContext(Dispatchers.IO) { estimateBytes(result, outFormat(), quality) }
-                snackbar.showSnackbar("Processed: $targetW × $targetH px. Tap Export to save.")
+                // Straight to the result page (preview, before/after sizes, export options) -
+                // closing the size sheet must not drop the user back on the editor.
+                screen = Screen.Export
+                snackbar.showSnackbar("Processed: $targetW × $targetH px.")
             } catch (e: Exception) {
                 snackbar.showSnackbar("Couldn't process this image. Try smaller dimensions.")
             } finally {
@@ -413,7 +416,8 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                 beforeAfter = true
                 lastUsedTarget = fit.first.width to fit.first.height
                 saveLastUsedTarget(context, fit.first.width, fit.first.height)
-                snackbar.showSnackbar("Processed: ${fit.first.width} × ${fit.first.height} px · ${formatBytes(fit.second)}. Tap Export to save.")
+                screen = Screen.Export
+                snackbar.showSnackbar("Processed: ${fit.first.width} × ${fit.first.height} px · ${formatBytes(fit.second)}.")
             } catch (e: Exception) {
                 snackbar.showSnackbar("Couldn't reach that file size. Try a larger target.")
             } finally {
