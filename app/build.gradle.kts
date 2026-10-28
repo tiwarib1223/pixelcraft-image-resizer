@@ -12,8 +12,8 @@ android {
         applicationId = "com.learnifyzone.pixelcraft"
         minSdk = 26
         targetSdk = 36
-        versionCode = 12
-        versionName = "0.4.8"
+        versionCode = 13
+        versionName = "0.4.9"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 

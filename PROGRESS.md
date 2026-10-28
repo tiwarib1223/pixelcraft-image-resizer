@@ -1,7 +1,7 @@
 # PixelCraft Image Resizer — Progress
 
 ## Current stage
-Stage 2D v0.4.8 (built on Stage 2C v0.3.0): queue overview screen, the full "Select new dimensions" Process sheet, batch processing of the whole queue with live percent progress, a result screen with savings summary, and batch save (new copies or replace originals). Stage 2C delivered: "My Photos" library screen, export format picker (JPG/PNG/WEBP/PDF), size unit picker (pixels/inch/cm/mm), queue thumbnail strip, and a persistent debug signing key. Stage 2 delivered: process-then-export workflow, aspect-ratio adaptation, camera capture, multi-select (up to 50) with one-by-one queue, recently edited photos, quality control.
+Stage 2D v0.4.9 (built on Stage 2C v0.3.0): queue overview screen, the full "Select new dimensions" Process sheet, batch processing of the whole queue with live percent progress, a result screen with savings summary, and batch save (new copies or replace originals). Stage 2C delivered: "My Photos" library screen, export format picker (JPG/PNG/WEBP/PDF), size unit picker (pixels/inch/cm/mm), queue thumbnail strip, and a persistent debug signing key. Stage 2 delivered: process-then-export workflow, aspect-ratio adaptation, camera capture, multi-select (up to 50) with one-by-one queue, recently edited photos, quality control.
 
 ## Stage 2C: implemented in source
 - New bottom-nav tab "My Photos" with three internal tabs, all zero-permission and on-device:
@@ -62,6 +62,10 @@ Stage 2D v0.4.8 (built on Stage 2C v0.3.0): queue overview screen, the full "Sel
 ## v0.4.8 fixes (user-reported on v0.4.7)
 - Unit carry-over now works EVERY time: the options sheet starts on the editor's current unit at each open (the carried-in value was previously remembered from the first open, so changing pixels > inches > cm on the editor never reached the sheet).
 - The DPI field on the editor page now shows under ALL four units, including Pixels (user request), not only inch/cm/mm.
+
+
+## v0.4.9 fix (user-reported on v0.4.8: sheet still shows pixels after choosing inch/cm)
+- The options sheet now DISPLAYS every dimension in the unit chosen on the editor page: the Resolution subtitle and presets, Percentage computed sizes, Last used, the Custom summary and the big action button all convert (e.g. choosing Inches shows "1.6 × 2.4 in" instead of "480 × 719 px", using the editor's DPI). Processing still works in pixels internally; only the labels convert. Root cause of the v0.4.7/0.4.8 miss: only the collapsed Custom row's fields followed the unit - everything visible stayed hardcoded in pixels.
 
 ## Implemented in source
 - Sky-blue, orange, white and deep-navy theme (unchanged from Stage 1).

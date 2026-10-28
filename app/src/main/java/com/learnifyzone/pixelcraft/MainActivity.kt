@@ -1517,6 +1517,14 @@ private fun DimensionsSheet(
     // starts on the editor's CURRENT unit (rememberSaveable kept the first-ever value).
     var customUnit by remember(initialUnit) { mutableStateOf(initialUnit) }
     var customDpi by remember(initialDpi) { mutableStateOf(initialDpi) }
+    // The whole sheet DISPLAYS dimensions in the unit carried in from the editor
+    // (user request: pick inch on the editor -> the sheet shows inches everywhere).
+    // Processing stays in pixels; only the labels are converted.
+    val dispDpi = initialDpi.trim().replace(',', '.').toDoubleOrNull()?.takeIf { it > 0 } ?: 300.0
+    fun dimLabel(w: Int, h: Int): String =
+        if (initialUnit == "px") "$w \u00D7 $h px"
+        else "${fmtUnit(w.toDouble(), initialUnit, dispDpi)} \u00D7 ${fmtUnit(h.toDouble(), initialUnit, dispDpi)} $initialUnit"
+    val unitWord = when (initialUnit) { "px" -> "pixels"; "in" -> "inches"; "cm" -> "cm"; else -> "mm" }
     var easyEstimates by remember { mutableStateOf<Map<String, Long>>(emptyMap()) }
     LaunchedEffect(baseBitmap, baseWidth, baseHeight, baseBytes, format, quality) {
         easyEstimates = easy.mapNotNull { (label, side) ->
@@ -1550,7 +1558,7 @@ private fun DimensionsSheet(
         else -> null
     }
     val buttonLabel = when (val c = sheetChoice) {
-        is SheetChoice.Absolute -> "Resize to ${c.w}\u00D7${c.h}"
+        is SheetChoice.Absolute -> "Resize to ${dimLabel(c.w, c.h)}"
         is SheetChoice.Longest -> "Resize to ${c.label}"
         is SheetChoice.Percent -> "Resize to ${c.p}%"
         is SheetChoice.FileTarget -> "Shrink to ${c.label}"
@@ -1565,7 +1573,7 @@ private fun DimensionsSheet(
             Spacer(Modifier.height(6.dp))
             if (lastUsed != null) {
                 SheetSectionHeader("Last used", lastExpanded) { lastExpanded = !lastExpanded }
-                if (lastExpanded) SheetRadioRow("${lastUsed.first} \u00D7 ${lastUsed.second} px", "", choice == "last") { choice = "last" }
+                if (lastExpanded) SheetRadioRow(dimLabel(lastUsed.first, lastUsed.second), "", choice == "last") { choice = "last" }
                 Spacer(Modifier.height(10.dp))
             }
             SheetSectionHeader("Easy resize", easyExpanded) { easyExpanded = !easyExpanded }
@@ -1575,7 +1583,7 @@ private fun DimensionsSheet(
                     val est = easyEstimates[label]
                     val info = when {
                         est != null -> "~${formatBytes(est)}"
-                        scaled(side) != null -> "${scaled(side)!!.first}\u00D7${scaled(side)!!.second}"
+                        scaled(side) != null -> dimLabel(scaled(side)!!.first, scaled(side)!!.second)
                         else -> "\u2026"
                     }
                     SheetRadioRow(label, info, choice == "easy:$label") { choice = "easy:$label" }
@@ -1586,10 +1594,10 @@ private fun DimensionsSheet(
             if (pctExpanded) {
                 Text("Resize to a % of the original resolution", color = Slate, fontSize = 12.sp, modifier = Modifier.padding(bottom = 6.dp, top = 8.dp))
                 percents.forEach { p ->
-                    val dims = if (baseWidth > 0 && baseHeight > 0) "${(baseWidth * p / 100.0).toInt()}\u00D7${(baseHeight * p / 100.0).toInt()}" else "\u2026"
+                    val dims = if (baseWidth > 0 && baseHeight > 0) dimLabel((baseWidth * p / 100.0).toInt(), (baseHeight * p / 100.0).toInt()) else "\u2026"
                     SheetRadioRow("$p%", dims, choice == "pct:$p") { choice = "pct:$p" }
                 }
-                val customInfo = customPctInt?.let { p -> if (baseWidth > 0 && baseHeight > 0) "$p% | ${(baseWidth * p / 100.0).toInt()}\u00D7${(baseHeight * p / 100.0).toInt()}" else "$p%" } ?: ""
+                val customInfo = customPctInt?.let { p -> if (baseWidth > 0 && baseHeight > 0) "$p% | ${dimLabel((baseWidth * p / 100.0).toInt(), (baseHeight * p / 100.0).toInt())}" else "$p%" } ?: ""
                 SheetRadioRow("Custom", customInfo, choice == "pctcustom") { choice = "pctcustom" }
                 if (choice == "pctcustom") {
                     OutlinedTextField(
@@ -1605,11 +1613,11 @@ private fun DimensionsSheet(
             Spacer(Modifier.height(10.dp))
             SheetSectionHeader("Resolution", resExpanded) { resExpanded = !resExpanded }
             if (resExpanded) {
-                Text("Set width & height in pixels", color = Slate, fontSize = 12.sp, modifier = Modifier.padding(bottom = 6.dp, top = 8.dp))
+                Text("Set width & height in $unitWord", color = Slate, fontSize = 12.sp, modifier = Modifier.padding(bottom = 6.dp, top = 8.dp))
                 resPresets.forEach { (w, h) ->
-                    SheetRadioRow("${w}\u00D7${h}", "", choice == "res:${w}x${h}") { choice = "res:${w}x${h}" }
+                    SheetRadioRow(dimLabel(w, h), "", choice == "res:${w}x${h}") { choice = "res:${w}x${h}" }
                 }
-                val resInfo = if (customWpx != null && customHpx != null) "${customWpx}\u00D7${customHpx}" else ""
+                val resInfo = if (customWpx != null && customHpx != null) dimLabel(customWpx, customHpx) else ""
                 SheetRadioRow("Custom", resInfo, choice == "rescustom") { choice = "rescustom" }
                 if (choice == "rescustom") {
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth().padding(top = 4.dp)) {
