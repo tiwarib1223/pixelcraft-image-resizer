@@ -1,0 +1,109 @@
+package com.learnifyzone.pixelcraft.image
+
+import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.Color
+import kotlin.math.abs
+import kotlin.math.max
+import kotlin.math.min
+import kotlin.math.roundToInt
+
+/**
+ * Bitmap transforms for the Process step: Fit, Crop and Stretch when the
+ * target size has a different aspect ratio than the photo, plus thumbnail
+ * helpers for the live dialog previews. All on-device, no libraries.
+ */
+object Transforms {
+
+    enum class FitPad(val label: String) { BLUR("Blur"), WHITE("White"), BLACK("Black") }
+
+    /** 3x3 anchor grid for choosing which part of the photo a crop keeps. */
+    enum class CropAnchor(val label: String, val fx: Float, val fy: Float) {
+        TOP_LEFT("Top left", 0f, 0f), TOP_CENTER("Top", 0.5f, 0f), TOP_RIGHT("Top right", 1f, 0f),
+        CENTER_LEFT("Left", 0f, 0.5f), CENTER("Center", 0.5f, 0.5f), CENTER_RIGHT("Right", 1f, 0.5f),
+        BOTTOM_LEFT("Bottom left", 0f, 1f), BOTTOM_CENTER("Bottom", 0.5f, 1f), BOTTOM_RIGHT("Bottom right", 1f, 1f)
+    }
+
+    /** True when both sizes have (nearly) the same aspect ratio. */
+    fun sameAspect(w1: Int, h1: Int, w2: Int, h2: Int): Boolean {
+        if (w1 <= 0 || h1 <= 0 || w2 <= 0 || h2 <= 0) return true
+        val r1 = w1.toDouble() / h1
+        val r2 = w2.toDouble() / h2
+        return abs(r1 - r2) / max(r1, r2) < 0.005
+    }
+
+    fun stretch(src: Bitmap, w: Int, h: Int): Bitmap =
+        Bitmap.createScaledBitmap(src, w, h, true)
+
+    /**
+     * Fit: scale the photo to fit INSIDE the target, pad the remaining area.
+     * Padding is a blurred enlargement of the photo, or plain white / black.
+     */
+    fun fit(src: Bitmap, w: Int, h: Int, pad: FitPad): Bitmap {
+        val out = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(out)
+        when (pad) {
+            FitPad.WHITE -> canvas.drawColor(Color.WHITE)
+            FitPad.BLACK -> canvas.drawColor(Color.BLACK)
+            FitPad.BLUR -> canvas.drawBitmap(stretch(blurred(src), w, h), 0f, 0f, null)
+        }
+        val scale = min(w.toFloat() / src.width, h.toFloat() / src.height)
+        val dw = max(1, (src.width * scale).roundToInt())
+        val dh = max(1, (src.height * scale).roundToInt())
+        val fg = stretch(src, dw, dh)
+        canvas.drawBitmap(fg, (w - dw) / 2f, (h - dh) / 2f, null)
+        return out
+    }
+
+    /** Largest rectangle of the target aspect inside the source, at the chosen anchor. */
+    fun cropRect(srcW: Int, srcH: Int, targetW: Int, targetH: Int, anchor: CropAnchor): IntArray {
+        val targetRatio = targetW.toDouble() / targetH
+        var rw = srcW
+        var rh = (rw / targetRatio).roundToInt()
+        if (rh > srcH) {
+            rh = srcH
+            rw = (rh * targetRatio).roundToInt()
+        }
+        rw = rw.coerceIn(1, srcW)
+        rh = rh.coerceIn(1, srcH)
+        val left = ((srcW - rw) * anchor.fx).roundToInt().coerceIn(0, srcW - rw)
+        val top = ((srcH - rh) * anchor.fy).roundToInt().coerceIn(0, srcH - rh)
+        return intArrayOf(left, top, rw, rh)
+    }
+
+    /** Crop: keep the anchored region of the photo, then scale it to the exact target. */
+    fun crop(src: Bitmap, targetW: Int, targetH: Int, anchor: CropAnchor): Bitmap {
+        val (left, top, rw, rh) = cropRect(src.width, src.height, targetW, targetH, anchor)
+        val cut = Bitmap.createBitmap(src, left, top, rw, rh)
+        return stretch(cut, targetW, targetH)
+    }
+
+    /** Cheap blur: shrink hard, then re-enlarge. Good enough for padding backgrounds. */
+    fun blurred(src: Bitmap): Bitmap {
+        val smallW = 32
+        val smallH = max(1, (32.0 * src.height / src.width).roundToInt())
+        val small = Bitmap.createScaledBitmap(src, smallW, smallH, true)
+        return Bitmap.createScaledBitmap(small, src.width, src.height, true)
+    }
+
+    /** Downscale a copy for fast dialog/preview thumbnails. */
+    fun thumbnail(src: Bitmap, maxDim: Int = 360): Bitmap {
+        val longest = max(src.width, src.height)
+        if (longest <= maxDim) return src
+        val scale = maxDim.toFloat() / longest
+        return Bitmap.createScaledBitmap(
+            src,
+            max(1, (src.width * scale).roundToInt()),
+            max(1, (src.height * scale).roundToInt()),
+            true
+        )
+    }
+
+    /** Scale a target size down so its longest side is at most maxDim (for previews). */
+    fun scaledTarget(w: Int, h: Int, maxDim: Int = 360): Pair<Int, Int> {
+        val longest = max(w, h)
+        if (longest <= maxDim) return w to h
+        val scale = maxDim.toDouble() / longest
+        return max(1, (w * scale).roundToInt()) to max(1, (h * scale).roundToInt())
+    }
+}
