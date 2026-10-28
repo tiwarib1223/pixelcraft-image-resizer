@@ -160,7 +160,7 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
         }
     }
     val multiplePicker = rememberLauncherForActivityResult(ActivityResultContracts.PickMultipleVisualMedia(20)) { uris ->
-        if (uris.isNotEmpty()) snackbar.showSnackbar("Batch selection is recognised. Batch processing is planned for a later stage.")
+        if (uris.isNotEmpty()) scope.launch { snackbar.showSnackbar("Batch selection is planned for a later stage.") }
     }
 
     BackHandler(enabled = screen != Screen.Home) {
