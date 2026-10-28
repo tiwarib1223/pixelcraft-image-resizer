@@ -15,8 +15,8 @@ android {
         // arm64 - restricting keeps the APK small instead of carrying x86 slices.
         ndk { abiFilters += "arm64-v8a" }
         targetSdk = 36
-        versionCode = 19
-        versionName = "0.7.0"
+        versionCode = 20
+        versionName = "0.8.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 

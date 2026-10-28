@@ -1,7 +1,7 @@
 # PixelCraft Image Resizer — Progress
 
 ## Current stage
-Stage 2E v0.7.0 (built on Stage 2C v0.3.0): queue overview screen, the full "Select new dimensions" Process sheet, batch processing of the whole queue with live percent progress, a result screen with savings summary, and batch save (new copies or replace originals). Stage 2C delivered: "My Photos" library screen, export format picker (JPG/PNG/WEBP/PDF), size unit picker (pixels/inch/cm/mm), queue thumbnail strip, and a persistent debug signing key. Stage 2 delivered: process-then-export workflow, aspect-ratio adaptation, camera capture, multi-select (up to 50) with one-by-one queue, recently edited photos, quality control.
+Stage 2E v0.8.0 (built on Stage 2C v0.3.0): queue overview screen, the full "Select new dimensions" Process sheet, batch processing of the whole queue with live percent progress, a result screen with savings summary, and batch save (new copies or replace originals). Stage 2C delivered: "My Photos" library screen, export format picker (JPG/PNG/WEBP/PDF), size unit picker (pixels/inch/cm/mm), queue thumbnail strip, and a persistent debug signing key. Stage 2 delivered: process-then-export workflow, aspect-ratio adaptation, camera capture, multi-select (up to 50) with one-by-one queue, recently edited photos, quality control.
 
 ## Stage 2C: implemented in source
 - New bottom-nav tab "My Photos" with three internal tabs, all zero-permission and on-device:
@@ -74,6 +74,11 @@ Stage 2E v0.7.0 (built on Stage 2C v0.3.0): queue overview screen, the full "Sel
 
 
 
+## v0.8.0 feature (his ask: "make more strong background remover")
+- STRONGEST ON-DEVICE ENGINE: the cut-out now runs ISNet (isnet-general-use, dynamically quantized to 46 MB, bundled in the app) - the current best general-purpose open segmentation model (rembg's top default), dichotomous segmentation at 1024px. Fallback chain: ISNet > U-2-Netp > ML Kit, all on-device and offline. Validated HERE before shipping: quantized model output differs from the full model by 0.7% on average, and a real-photo test (car + person, busy background) produced a clean full-subject cut-out with sharp edges.
+- Mask normalization is now min-max (matches the reference pipeline).
+- APK grows to ~106 MB (ISNet 46 MB + U-2-Netp 4.6 MB + ONNX runtime 34 MB, arm64-only). He accepted a bigger app for quality; downloads are one-time per install.
+- HONEST LIMIT: this is the top of what runs on a phone. remove.bg-class cloud services still win on the hardest cases (loose hair strands against busy backgrounds) because they use much bigger models; on product photos and clear subjects ISNet is very close.
 ## v0.7.0 feature+fix (his asks: "Reset should open remove background tab and select image option" + "make perfect remove background, like professional tool")
 - QUALITY: the cut-out engine is now U-2-Netp (u2netp.onnx, 4.6 MB, bundled in the app) running on ONNX Runtime - the open model family behind popular offline cut-out tools. It outputs a full alpha MATTE (soft per-pixel transparency) instead of ML Kit's coarse binary mask, so edges (hair, fur, product outlines) come out visibly cleaner; the matte is upscaled with filtering which feathers the edge. ML Kit subject segmentation stays as automatic fallback if the ONNX engine cannot initialize on a device. Still 100% on-device, works offline, no upload, no API key. APK is restricted to arm64-v8a (all modern phones) to carry the native runtime without x86 bloat. HONEST LIMIT: remove.bg-style services use much larger server-side models; u2netp is close on clear subjects (product photos on plain-ish backgrounds) but fine wisps of hair and very busy backgrounds are still a notch below paid cloud tools. He should compare with his real product photos.
 - RESET UX: Reset now stays INSIDE the current tool. In Remove Background (and the other editor tools) it clears the photo and every editing trace and shows a "Select Image - Choose a photo from your phone" card right on the page; picking a photo in the Background tool reopens the Background tool. No more jump to the homepage.
