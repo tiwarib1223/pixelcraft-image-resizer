@@ -1,7 +1,7 @@
 # PixelCraft Image Resizer — Progress
 
 ## Current stage
-Stage 2D v0.4.6 (built on Stage 2C v0.3.0): queue overview screen, the full "Select new dimensions" Process sheet, batch processing of the whole queue with live percent progress, a result screen with savings summary, and batch save (new copies or replace originals). Stage 2C delivered: "My Photos" library screen, export format picker (JPG/PNG/WEBP/PDF), size unit picker (pixels/inch/cm/mm), queue thumbnail strip, and a persistent debug signing key. Stage 2 delivered: process-then-export workflow, aspect-ratio adaptation, camera capture, multi-select (up to 50) with one-by-one queue, recently edited photos, quality control.
+Stage 2D v0.4.7 (built on Stage 2C v0.3.0): queue overview screen, the full "Select new dimensions" Process sheet, batch processing of the whole queue with live percent progress, a result screen with savings summary, and batch save (new copies or replace originals). Stage 2C delivered: "My Photos" library screen, export format picker (JPG/PNG/WEBP/PDF), size unit picker (pixels/inch/cm/mm), queue thumbnail strip, and a persistent debug signing key. Stage 2 delivered: process-then-export workflow, aspect-ratio adaptation, camera capture, multi-select (up to 50) with one-by-one queue, recently edited photos, quality control.
 
 ## Stage 2C: implemented in source
 - New bottom-nav tab "My Photos" with three internal tabs, all zero-permission and on-device:
@@ -53,6 +53,10 @@ Stage 2D v0.4.6 (built on Stage 2C v0.3.0): queue overview screen, the full "Sel
 ## v0.4.6 changes (user-requested on v0.4.5)
 - Size is chosen in ONE place only (user decision): the editor page no longer shows width/height fields, unit chips, DPI or the aspect-lock checkbox - its Resize tab now shows a short hint ("Tap Process to choose the new size") and the Process button opens the options sheet, which keeps every sizing option (quick sizes, percentage + custom %, exact pixels + custom, target file size). Nothing about processing itself changed. (Vetoable.)
 - Back navigation audit: every pushed page now has the top bar with a working back arrow - the final "Saved" page was the last one missing it (back arrow + title "Saved"; its on-page Done button still returns Home). Home / My Photos / Presets / Settings are root tabs with the bottom bar and need no back arrow.
+
+
+## v0.4.7 refinement (user-requested on v0.4.6)
+- Unit chips (Pixels / Inches / cm / mm) are back on the editor page, without the width/height fields: the chosen unit (and DPI, shown for inch/cm/mm) now carries into the options sheet - its Resolution Custom row and DPI field start on the editor's choice. Size values themselves are still chosen only in the sheet. Aspect-lock stays off the editor page: it only mattered for linked width/height typing, which no longer exists there.
 
 ## Implemented in source
 - Sky-blue, orange, white and deep-navy theme (unchanged from Stage 1).

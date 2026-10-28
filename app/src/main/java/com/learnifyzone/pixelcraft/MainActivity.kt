@@ -1024,6 +1024,8 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
             quality = quality,
             lastUsed = lastUsedTarget,
             fromQueue = photoQueue.size > 1,
+            initialUnit = sizeUnit,
+            initialDpi = resizeDpi,
             onDismiss = { showDimensionsSheet = false },
             onApply = { choice ->
                 showDimensionsSheet = false
@@ -1222,6 +1224,8 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                 },
                 working = workingBitmap,
                 processed = processedBitmap,
+                sizeUnit = sizeUnit,
+                resizeDpi = resizeDpi,
                 busy = busy,
                 busyLabel = busyLabel,
                 beforeAfter = beforeAfter,
@@ -1229,6 +1233,8 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                 sourceBytes = sourceBytes,
                 estimatedBytes = estimatedBytes,
                 onBeforeAfter = { beforeAfter = it },
+                onSizeUnit = { convertInputsToUnit(sizeUnit, it) },
+                onResizeDpi = { resizeDpi = it },
                 onTool = { selected ->
                     tool = selected
                     when (selected) {
@@ -1480,6 +1486,8 @@ private fun DimensionsSheet(
     quality: Int,
     lastUsed: Pair<Int, Int>?,
     fromQueue: Boolean,
+    initialUnit: String = "px",
+    initialDpi: String = "300",
     onDismiss: () -> Unit,
     onApply: (SheetChoice) -> Unit
 ) {
@@ -1505,8 +1513,8 @@ private fun DimensionsSheet(
     var customPct by rememberSaveable { mutableStateOf("45") }
     var customW by rememberSaveable { mutableStateOf("") }
     var customH by rememberSaveable { mutableStateOf("") }
-    var customUnit by rememberSaveable { mutableStateOf("px") }
-    var customDpi by rememberSaveable { mutableStateOf("300") }
+    var customUnit by rememberSaveable { mutableStateOf(initialUnit) }
+    var customDpi by rememberSaveable { mutableStateOf(initialDpi) }
     var easyEstimates by remember { mutableStateOf<Map<String, Long>>(emptyMap()) }
     LaunchedEffect(baseBitmap, baseWidth, baseHeight, baseBytes, format, quality) {
         easyEstimates = easy.mapNotNull { (label, side) ->
@@ -1964,6 +1972,8 @@ private fun EditorScreen(
     onQueueSelect: (Int) -> Unit,
     working: Bitmap?,
     processed: Bitmap?,
+    sizeUnit: String,
+    resizeDpi: String,
     busy: Boolean,
     busyLabel: String,
     beforeAfter: Boolean,
@@ -1972,6 +1982,8 @@ private fun EditorScreen(
     estimatedBytes: Long,
     onBeforeAfter: (Boolean) -> Unit,
     onTool: (Tool) -> Unit,
+    onSizeUnit: (String) -> Unit,
+    onResizeDpi: (String) -> Unit,
     onRotate: () -> Unit,
     onProcess: () -> Unit,
     onExport: () -> Unit
@@ -2063,6 +2075,27 @@ private fun EditorScreen(
         }
         Spacer(Modifier.height(12.dp))
         if (tool == Tool.Resize) {
+            // Unit chips stay on this page (user request); the chosen unit carries into
+            // the options sheet. Size VALUES are chosen in the sheet only.
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())) {
+                listOf("px" to "Pixels", "in" to "Inches", "cm" to "cm", "mm" to "mm").forEach { (value, label) ->
+                    val selected = sizeUnit == value
+                    Surface(modifier = Modifier.clickable { onSizeUnit(value) }, shape = RoundedCornerShape(9.dp), color = if (selected) SkyBlue else PaleBlue) {
+                        Text(label, modifier = Modifier.padding(horizontal = 12.dp, vertical = 9.dp), fontSize = 11.sp, color = if (selected) Color.White else DeepNavy, textAlign = TextAlign.Center, maxLines = 1, softWrap = false)
+                    }
+                }
+            }
+            if (sizeUnit != "px") {
+                OutlinedTextField(
+                    value = resizeDpi,
+                    onValueChange = onResizeDpi,
+                    modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                    label = { Text("DPI - 300 is standard for print") },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    singleLine = true
+                )
+            }
+            Spacer(Modifier.height(10.dp))
             // Size is chosen in ONE place only: the options sheet that Process opens
             // (user decision on v0.4.5: no duplicated size fields on this page).
             Card(colors = CardDefaults.cardColors(containerColor = PaleBlue), shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth()) {
