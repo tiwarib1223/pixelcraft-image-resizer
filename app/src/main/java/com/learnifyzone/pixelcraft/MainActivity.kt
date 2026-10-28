@@ -409,7 +409,7 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
         busyLabel = "Removing background\u2026"
         scope.launch {
             try {
-                val fg = withContext(Dispatchers.IO) { BackgroundRemoval.cutOut(src) }
+                val fg = withContext(Dispatchers.IO) { BackgroundRemoval.cutOut(context, src) }
                 bgCutout = fg
                 bgError = ""
                 if (bgWidth.isBlank()) bgWidth = fmtUnit(fg.width.toDouble(), bgUnit, bgDpiValue())
@@ -945,10 +945,12 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
     }
 
     // Full reset (his request): clear the loaded photo(s) and every editing trace -
-    // including the auto-saved draft, so close/reopen cannot bring the photo back -
-    // and land on Home where he can pick a new image.
+    // including the auto-saved draft, so close/reopen cannot bring the photo back.
+    // Stays INSIDE the current tool (e.g. Remove Background) where a Select Image
+    // option appears; pendingBgTool makes the next picked photo reopen that tool.
     fun resetEditor() {
         val uri = sourceUri
+        val stayInBackground = tool == Tool.Background
         clearProcessedResults()
         workingBitmap = null
         processedBitmap = null
@@ -975,13 +977,12 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
         exportDpi = 0
         pendingPreset = null
         pendingDraft = null
-        pendingBgTool = false
+        pendingBgTool = stayInBackground
         if (uri != null) {
             scope.launch(Dispatchers.IO) { DraftsStore.remove(context, uri.toString()) }
         }
-        tool = Tool.Resize
-        screen = Screen.Home
-        tab = MainTab.Home
+        tool = if (stayInBackground) Tool.Background else Tool.Resize
+        screen = Screen.Editor
     }
 
     fun pickPhotos() {
@@ -1421,7 +1422,8 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                 onBgHeight = { bgHeight = it.filter { c -> c.isDigit() || c == '.' || c == ',' } },
                 onBgDpi = { bgDpi = it.filter { c -> c.isDigit() } },
                 onRemoveBackground = { runRemoveBackground() },
-                onBgExport = { continueBgExport() }
+                onBgExport = { continueBgExport() },
+                onSelectImage = { pickPhotos() }
             )
             Screen.Export -> ExportScreen(
                 modifier = Modifier.padding(padding),
@@ -2184,7 +2186,8 @@ private fun EditorScreen(
     onBgHeight: (String) -> Unit,
     onBgDpi: (String) -> Unit,
     onRemoveBackground: () -> Unit,
-    onBgExport: () -> Unit
+    onBgExport: () -> Unit,
+    onSelectImage: () -> Unit
 ) {
     Column(modifier.fillMaxSize().padding(horizontal = 16.dp).verticalScroll(rememberScrollState())) {
         if (queueLabel != null) {
@@ -2221,7 +2224,14 @@ private fun EditorScreen(
             if (displayImage != null) {
                 Image(bitmap = displayImage, contentDescription = "Image preview", modifier = Modifier.fillMaxSize().padding(8.dp), contentScale = ContentScale.Fit)
             } else {
-                Text("Select a photo to begin", color = DeepNavy)
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    modifier = Modifier.clip(RoundedCornerShape(14.dp)).clickable { onSelectImage() }.padding(24.dp)
+                ) {
+                    Icon(Icons.Default.Image, contentDescription = null, tint = SkyBlue, modifier = Modifier.size(40.dp))
+                    Text("Select Image", color = DeepNavy, fontWeight = FontWeight.Bold, fontSize = 17.sp, modifier = Modifier.padding(top = 10.dp))
+                    Text("Choose a photo from your phone", color = Slate, fontSize = 13.sp, modifier = Modifier.padding(top = 4.dp))
+                }
             }
             if (busy) CircularProgressIndicator(color = Orange)
             IconButton(

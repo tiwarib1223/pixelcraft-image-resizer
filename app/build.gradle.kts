@@ -11,9 +11,12 @@ android {
     defaultConfig {
         applicationId = "com.learnifyzone.pixelcraft"
         minSdk = 26
+        // The U-2-Net ONNX runtime ships native libs; every phone this app targets is
+        // arm64 - restricting keeps the APK small instead of carrying x86 slices.
+        ndk { abiFilters += "arm64-v8a" }
         targetSdk = 36
-        versionCode = 18
-        versionName = "0.6.1"
+        versionCode = 19
+        versionName = "0.7.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
@@ -60,6 +63,7 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.9.4")
     implementation("androidx.exifinterface:exifinterface:1.4.1")
     implementation("com.google.android.gms:play-services-mlkit-subject-segmentation:16.0.0-beta1")
+    implementation("com.microsoft.onnxruntime:onnxruntime-android:1.31.1")
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.ui:ui-tooling-preview")
     implementation("androidx.compose.material3:material3")
