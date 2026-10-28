@@ -138,6 +138,7 @@ import kotlinx.coroutines.withContext
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.FileOutputStream
+import java.io.InputStream
 import java.text.DecimalFormat
 import kotlin.math.roundToInt
 import java.text.SimpleDateFormat
@@ -345,6 +346,10 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                 }
                 screen = Screen.Editor
                 tool = Tool.Resize
+                // Clear busy BEFORE the snackbar: showSnackbar suspends until dismissal,
+                // so gating busy on it left the Process button spinning for ~4s after every load.
+                busy = false
+                busyLabel = ""
                 snackbar.showSnackbar("Photo loaded (${loaded.width} × ${loaded.height} px).")
             } catch (e: Exception) {
                 snackbar.showSnackbar("Couldn't open this image. Try another photo.")
@@ -352,6 +357,15 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                 busy = false
                 busyLabel = ""
             }
+        }
+    }
+
+    // Test hook (JVM UI tests): a file path in this intent extra pre-loads that photo,
+    // skipping the system photo picker, which cannot run under Robolectric.
+    LaunchedEffect(Unit) {
+        val testPath = (context as? Activity)?.intent?.getStringExtra("pixelcraft.test.photo")
+        if (!testPath.isNullOrBlank() && sourceUri == null && workingBitmap == null) {
+            loadPhoto(Uri.fromFile(File(testPath)), isCamera = false)
         }
     }
 
@@ -659,7 +673,8 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
             busyLabel = ""
             batchProgress = null
             when {
-                done > 0 && failed == 0 -> snackbar.showSnackbar("All $done photos processed.")
+                // Full success: the green result card already says it - no snackbar (user asked).
+                done > 0 && failed == 0 -> Unit
                 done > 0 -> snackbar.showSnackbar("$done of $total photos processed ($failed failed).")
                 else -> snackbar.showSnackbar("Couldn't process these photos. Try smaller dimensions.")
             }
@@ -1262,7 +1277,10 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
             Screen.Export -> ExportScreen(
                 modifier = Modifier.padding(padding),
                 processed = processedBitmap,
+                source = workingBitmap,
                 sourceBytes = sourceBytes,
+                sourceWidth = workingBitmap?.width ?: 0,
+                sourceHeight = workingBitmap?.height ?: 0,
                 estimatedBytes = estimatedBytes,
                 exportName = exportName,
                 onName = { exportName = it },
@@ -1378,14 +1396,14 @@ private fun HomeScreen(
     Column(modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).padding(horizontal = 16.dp).verticalScroll(rememberScrollState())) {
         Row(Modifier.fillMaxWidth().padding(top = 12.dp, bottom = 12.dp), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
-                Text("PixelCraft", color = DeepNavy, fontSize = 25.sp, fontWeight = FontWeight.Bold)
+                Text("A2Z Image Craft", color = DeepNavy, fontSize = 25.sp, fontWeight = FontWeight.Bold)
                 Text("IMAGE RESIZER", color = SkyBlue, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 2.sp)
             }
             Icon(Icons.Default.Tune, contentDescription = "Settings", tint = DeepNavy, modifier = Modifier.size(26.dp))
         }
         Card(colors = CardDefaults.cardColors(containerColor = PaleBlue), shape = RoundedCornerShape(22.dp), modifier = Modifier.fillMaxWidth()) {
             Column(Modifier.padding(18.dp)) {
-                Text("Resize, crop and prepare photos in seconds", color = DeepNavy, fontSize = 20.sp, fontWeight = FontWeight.Bold, lineHeight = 26.sp)
+                Text("Resize. Remove. Convert. Create.", color = DeepNavy, fontSize = 20.sp, fontWeight = FontWeight.Bold, lineHeight = 26.sp)
                 Spacer(Modifier.height(14.dp))
                 Button(onClick = onSelectPhotos, modifier = Modifier.fillMaxWidth().height(52.dp), colors = ButtonDefaults.buttonColors(containerColor = Orange, contentColor = Color.White), shape = RoundedCornerShape(14.dp)) {
                     Icon(Icons.Default.Image, contentDescription = null); Spacer(Modifier.width(8.dp)); Text("Select Photos", fontWeight = FontWeight.Bold)
@@ -1425,7 +1443,7 @@ private fun HomeScreen(
                     Card(
                         modifier = Modifier.weight(1f).clickable { onFeature(feature.title) },
                         shape = RoundedCornerShape(16.dp),
-                        border = BorderStroke(1.dp, Color(0xFFE5EEF4)),
+                        border = BorderStroke(1.dp, BorderGrey),
                         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
                         elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
                     ) {
@@ -1636,9 +1654,9 @@ private fun DimensionsSheet(
                             }
                         }
                     }
-                    if (customUnit != "px") {
-                        OutlinedTextField(value = customDpi, onValueChange = { customDpi = it }, modifier = Modifier.fillMaxWidth().padding(top = 8.dp), label = { Text("DPI") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), singleLine = true)
-                    }
+                    // DPI shown under every unit (px included, same as the editor page) -
+                    // he wants the field always visible even though px input ignores it.
+                    OutlinedTextField(value = customDpi, onValueChange = { customDpi = it }, modifier = Modifier.fillMaxWidth().padding(top = 8.dp), label = { Text("DPI") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), singleLine = true)
                 }
             }
             Spacer(Modifier.height(10.dp))
@@ -2302,7 +2320,10 @@ private fun AdaptCard(
 private fun ExportScreen(
     modifier: Modifier,
     processed: Bitmap?,
+    source: Bitmap?,
     sourceBytes: Long,
+    sourceWidth: Int,
+    sourceHeight: Int,
     estimatedBytes: Long,
     exportName: String,
     onName: (String) -> Unit,
@@ -2322,14 +2343,29 @@ private fun ExportScreen(
     onSaveToFolder: () -> Unit,
     onShare: () -> Unit
 ) {
+    // Before/After visual comparison on the result page (his request: same tabs as the editor).
+    var showAfter by rememberSaveable { mutableStateOf(true) }
     Column(modifier.fillMaxSize().padding(horizontal = 16.dp).verticalScroll(rememberScrollState())) {
+        Row(Modifier.fillMaxWidth().padding(vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            listOf(false to "Before", true to "After").forEach { (after, label) ->
+                val selected = showAfter == after
+                val enabled = if (after) processed != null else source != null
+                OutlinedButton(
+                    onClick = { showAfter = after },
+                    modifier = Modifier.weight(1f),
+                    enabled = enabled,
+                    colors = ButtonDefaults.outlinedButtonColors(containerColor = if (selected) PaleBlue else Color.Transparent)
+                ) { Text(label, color = if (enabled) DeepNavy else Slate) }
+            }
+        }
         Box(
-            Modifier.fillMaxWidth().padding(vertical = 8.dp).height(220.dp).clip(RoundedCornerShape(18.dp)).background(SoftGrey).border(1.dp, BorderGrey, RoundedCornerShape(18.dp)),
+            Modifier.fillMaxWidth().padding(bottom = 8.dp).height(220.dp).clip(RoundedCornerShape(18.dp)).background(SoftGrey).border(1.dp, BorderGrey, RoundedCornerShape(18.dp)),
             contentAlignment = Alignment.Center
         ) {
-            val preview = remember(processed) { processed?.asImageBitmap() }
+            val shown = if (showAfter) processed else source
+            val preview = remember(shown) { shown?.asImageBitmap() }
             if (preview != null) {
-                Image(bitmap = preview, contentDescription = "Processed image preview", modifier = Modifier.fillMaxSize().padding(8.dp), contentScale = ContentScale.Fit)
+                Image(bitmap = preview, contentDescription = if (showAfter) "Resized photo preview" else "Original photo preview", modifier = Modifier.fillMaxSize().padding(8.dp), contentScale = ContentScale.Fit)
             } else {
                 Text("Process the photo first, then come back to export.", color = DeepNavy)
             }
@@ -2342,6 +2378,9 @@ private fun ExportScreen(
             Column(Modifier.padding(14.dp)) {
                 if (processed != null) {
                     Text("Result: ${processed.width} × ${processed.height} px", color = DeepNavy, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
+                    if (sourceWidth > 0 && sourceHeight > 0) {
+                        Text("Original: $sourceWidth × $sourceHeight px", color = Slate, fontSize = 12.sp, modifier = Modifier.padding(top = 3.dp))
+                    }
                     if (estimatedBytes >= 0) {
                         Text("Estimated size: ${formatBytes(estimatedBytes)}", color = DeepNavy, fontSize = 13.sp, modifier = Modifier.padding(top = 3.dp))
                     }
@@ -2428,10 +2467,10 @@ private fun ExportScreen(
 @Composable
 private fun SuccessScreen(modifier: Modifier, name: String, size: String, nextLabel: String?, onNext: () -> Unit, onDone: () -> Unit, onAnother: () -> Unit) {
     Column(modifier.fillMaxSize().padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
-        Icon(Icons.Default.CheckCircle, contentDescription = null, tint = Color(0xFF2E9D68), modifier = Modifier.size(70.dp))
+        Icon(Icons.Default.CheckCircle, contentDescription = null, tint = SuccessGreen, modifier = Modifier.size(70.dp))
         Spacer(Modifier.height(16.dp))
-        Text("Saved successfully", color = DeepNavy, fontSize = 24.sp, fontWeight = FontWeight.Bold)
-        Text(name, color = DeepNavy, modifier = Modifier.padding(top = 8.dp), textAlign = TextAlign.Center)
+        Text("Saved successfully", color = DeepNavy, fontSize = 26.sp, fontWeight = FontWeight.Bold)
+        Text(name, color = DeepNavy, modifier = Modifier.padding(top = 8.dp), textAlign = TextAlign.Center, maxLines = 2, overflow = TextOverflow.Ellipsis)
         Text(size, color = Slate, modifier = Modifier.padding(top = 4.dp, bottom = 24.dp))
         if (nextLabel != null) {
             Button(onClick = onNext, modifier = Modifier.fillMaxWidth().height(52.dp), colors = ButtonDefaults.buttonColors(containerColor = SkyBlue, contentColor = Color.White)) { Text(nextLabel, color = Color.White) }
@@ -2686,7 +2725,7 @@ private suspend fun shareExported(context: Context, uri: Uri, displayName: Strin
         val dir = File(context.cacheDir, "images").apply { mkdirs() }
         val ext = displayName.substringAfterLast('.', "jpg")
         val file = File(dir, "share_${System.currentTimeMillis()}.$ext")
-        context.contentResolver.openInputStream(uri)?.use { input ->
+        openImageStream(context, uri)?.use { input ->
             FileOutputStream(file).use { output -> input.copyTo(output) }
         } ?: throw IllegalStateException("Could not read the saved photo")
         val shareUri = FileProvider.getUriForFile(context, context.packageName + ".fileprovider", file)
@@ -2752,7 +2791,7 @@ private fun PresetsScreen(modifier: Modifier, onPreset: (Preset) -> Unit) {
                                     Text("${preset.width} × ${preset.height} px · ${preset.ratio}", color = Slate, fontSize = 12.sp)
                                 }
                                 if (preset.status == "verified") {
-                                    Text("Verified", color = Color(0xFF2E9D68), fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                                    Text("Verified", color = SuccessGreen, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
                                 }
                             }
                         }
@@ -2800,7 +2839,7 @@ private fun PrintCalculator(modifier: Modifier, hasPhoto: Boolean, onApply: (Int
     val pxW = if (w != null && density != null && w > 0 && density > 0) (w / 2.54 * density).toInt() else null
     val pxH = if (h != null && density != null && h > 0 && density > 0) (h / 2.54 * density).toInt() else null
     Column(modifier.fillMaxSize().padding(18.dp).verticalScroll(rememberScrollState())) {
-        Text("Print Size & DPI", color = DeepNavy, fontSize = 24.sp, fontWeight = FontWeight.Bold)
+        Text("Print Size & DPI", color = DeepNavy, fontSize = 26.sp, fontWeight = FontWeight.Bold)
         Text("Print size → required pixels", color = Slate, modifier = Modifier.padding(top = 4.dp, bottom = 18.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             OutlinedTextField(width, { width = it }, modifier = Modifier.weight(1f), label = { Text("Width (cm)") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), singleLine = true)
@@ -2832,7 +2871,7 @@ private data class QueueItemInfo(val width: Int, val height: Int, val bytes: Lon
 
 private fun probeImageInfo(context: Context, uri: Uri): QueueItemInfo? {
     return try {
-        val bounds = context.contentResolver.openInputStream(uri)?.use { stream ->
+        val bounds = openImageStream(context, uri)?.use { stream ->
             BitmapFactory.Options().apply { inJustDecodeBounds = true }.also { BitmapFactory.decodeStream(stream, null, it) }
         } ?: return null
         if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
@@ -2844,13 +2883,13 @@ private fun probeImageInfo(context: Context, uri: Uri): QueueItemInfo? {
 
 private fun decodeThumbnail(context: Context, uri: Uri, maxSide: Int = 192): Bitmap? {
     return try {
-        val bounds = context.contentResolver.openInputStream(uri)?.use { stream ->
+        val bounds = openImageStream(context, uri)?.use { stream ->
             BitmapFactory.Options().apply { inJustDecodeBounds = true }.also { BitmapFactory.decodeStream(stream, null, it) }
         } ?: return null
         if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
         var sample = 1
         while (maxOf(bounds.outWidth, bounds.outHeight) / (sample * 2) > maxSide) sample *= 2
-        context.contentResolver.openInputStream(uri)?.use { stream ->
+        openImageStream(context, uri)?.use { stream ->
             BitmapFactory.decodeStream(stream, null, BitmapFactory.Options().apply { inSampleSize = sample })
         }
     } catch (e: Exception) {
@@ -2858,17 +2897,22 @@ private fun decodeThumbnail(context: Context, uri: Uri, maxSide: Int = 192): Bit
     }
 }
 
+/** Opens an image stream for content:// AND file:// URIs (file:// lets JVM UI tests feed photos). */
+private fun openImageStream(context: Context, uri: Uri): InputStream? =
+    if (uri.scheme == "file") runCatching { File(uri.path!!).inputStream() }.getOrNull()
+    else context.contentResolver.openInputStream(uri)
+
 private fun decodeOrientedBitmap(context: Context, uri: Uri): Bitmap {
-    val bounds = context.contentResolver.openInputStream(uri)?.use { stream ->
+    val bounds = openImageStream(context, uri)?.use { stream ->
         BitmapFactory.Options().apply { inJustDecodeBounds = true }.also { options -> BitmapFactory.decodeStream(stream, null, options) }
     } ?: throw IllegalArgumentException("Cannot read image")
     val maxSide = maxOf(bounds.outWidth, bounds.outHeight)
     var sample = 1
     while (maxSide / sample > 4096) sample *= 2
-    val bitmap = context.contentResolver.openInputStream(uri)?.use { stream ->
+    val bitmap = openImageStream(context, uri)?.use { stream ->
         BitmapFactory.decodeStream(stream, null, BitmapFactory.Options().apply { inSampleSize = sample; inPreferredConfig = Bitmap.Config.ARGB_8888 })
     } ?: throw IllegalArgumentException("Unsupported image")
-    val orientation = context.contentResolver.openInputStream(uri)?.use { stream ->
+    val orientation = openImageStream(context, uri)?.use { stream ->
         ExifInterface(stream).getAttributeInt(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL)
     } ?: ExifInterface.ORIENTATION_NORMAL
     val matrix = Matrix().apply {
