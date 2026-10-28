@@ -5,6 +5,8 @@ import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
+import java.io.File
+import java.io.FileOutputStream
 
 /**
  * "Recently edited": remembers photos the user opened in PixelCraft, using
@@ -27,11 +29,48 @@ object RecentsStore {
             // do not remember the photo. Editing still works.
             return
         }
+        // Cache a small thumbnail in app-private storage so the "Recently edited"
+        // row always has an image, even when the picker grant can no longer be
+        // read in a later session.
+        runCatching { cacheThumbnail(context, uri) }
         val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         val current = list(context).map { it.toString() }.toMutableList()
         current.remove(uri.toString())
         current.add(0, uri.toString())
-        prefs.edit().putString(KEY_ORDER, current.take(MAX).joinToString("\n")).apply()
+        val kept = current.take(MAX)
+        current.drop(MAX).forEach { dropped -> File(thumbDir(context), thumbName(Uri.parse(dropped))).delete() }
+        prefs.edit().putString(KEY_ORDER, kept.joinToString("\n")).apply()
+    }
+
+    private fun thumbDir(context: Context): File = File(context.filesDir, "recents_thumbs").apply { mkdirs() }
+
+    private fun thumbName(uri: Uri): String = "t_" + uri.toString().hashCode().toString(16) + ".jpg"
+
+    private fun decodeSampled(context: Context, uri: Uri, maxDim: Int): Bitmap? {
+        val bounds = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        context.contentResolver.openInputStream(uri)?.use {
+            BitmapFactory.decodeStream(it, null, bounds)
+        } ?: return null
+        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
+        var sample = 1
+        while (maxOf(bounds.outWidth, bounds.outHeight) / sample > maxDim) sample *= 2
+        return context.contentResolver.openInputStream(uri)?.use {
+            BitmapFactory.decodeStream(
+                it, null,
+                android.graphics.BitmapFactory.Options().apply { inSampleSize = sample }
+            )
+        }
+    }
+
+    private fun cacheThumbnail(context: Context, uri: Uri, maxDim: Int = 256) {
+        val bmp = decodeSampled(context, uri, maxDim) ?: return
+        try {
+            FileOutputStream(File(thumbDir(context), thumbName(uri))).use {
+                bmp.compress(Bitmap.CompressFormat.JPEG, 85, it)
+            }
+        } finally {
+            bmp.recycle()
+        }
     }
 
     fun list(context: Context): List<Uri> {
@@ -44,19 +83,12 @@ object RecentsStore {
     /** Small thumbnail for the recents row; null when the photo is no longer readable. */
     fun loadThumbnail(context: Context, uri: Uri, maxDim: Int = 256): Bitmap? {
         return try {
-            val bounds = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
-            context.contentResolver.openInputStream(uri)?.use {
-                BitmapFactory.decodeStream(it, null, bounds)
-            } ?: return null
-            if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
-            var sample = 1
-            while (maxOf(bounds.outWidth, bounds.outHeight) / sample > maxDim) sample *= 2
-            context.contentResolver.openInputStream(uri)?.use {
-                BitmapFactory.decodeStream(
-                    it, null,
-                    android.graphics.BitmapFactory.Options().apply { inSampleSize = sample }
-                )
+            val cached = File(thumbDir(context), thumbName(uri))
+            if (cached.exists()) {
+                val bmp = BitmapFactory.decodeFile(cached.absolutePath)
+                if (bmp != null) return bmp
             }
+            decodeSampled(context, uri, maxDim)
         } catch (e: Exception) {
             null
         }

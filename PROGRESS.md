@@ -1,7 +1,7 @@
 # PixelCraft Image Resizer — Progress
 
 ## Current stage
-Stage 2D v0.4.0 (built on Stage 2C v0.3.0): queue overview screen, the full "Select new dimensions" Process sheet, batch processing of the whole queue with live percent progress, a result screen with savings summary, and batch save (new copies or replace originals). Stage 2C delivered: "My Photos" library screen, export format picker (JPG/PNG/WEBP/PDF), size unit picker (pixels/inch/cm/mm), queue thumbnail strip, and a persistent debug signing key. Stage 2 delivered: process-then-export workflow, aspect-ratio adaptation, camera capture, multi-select (up to 50) with one-by-one queue, recently edited photos, quality control.
+Stage 2D v0.4.1 (built on Stage 2C v0.3.0): queue overview screen, the full "Select new dimensions" Process sheet, batch processing of the whole queue with live percent progress, a result screen with savings summary, and batch save (new copies or replace originals). Stage 2C delivered: "My Photos" library screen, export format picker (JPG/PNG/WEBP/PDF), size unit picker (pixels/inch/cm/mm), queue thumbnail strip, and a persistent debug signing key. Stage 2 delivered: process-then-export workflow, aspect-ratio adaptation, camera capture, multi-select (up to 50) with one-by-one queue, recently edited photos, quality control.
 
 ## Stage 2C: implemented in source
 - New bottom-nav tab "My Photos" with three internal tabs, all zero-permission and on-device:
@@ -24,6 +24,12 @@ Stage 2D v0.4.0 (built on Stage 2C v0.3.0): queue overview screen, the full "Sel
 - RESULT screen after batch processing: green success card ("6 photos have been resized" + "4.4 MB -> 782 kB | Saved 3.6 MB (83%)"), a grid of the resized photos (real resized previews; new dimensions; new size in bold with the old size struck through), and the same bottom bar with Save now ACTIVE.
 - Batch SAVE with two options: "Save as new files" (writes resized copies to Pictures/PixelCraft, one progress dialog, name pattern or automatic names, chosen format applies) and "Replace originals" (one system confirmation dialog for the whole queue via MediaStore createWriteRequest, then each original is overwritten in its OWN original format; Android 11+ only). No ads anywhere (the reference app's banner is not replicated).
 - Single-photo flow is unchanged apart from the new sheet: Process > sheet > resize applied > Export screen.
+
+## v0.4.1 fix (user-reported crash on his phone)
+- Bottom bar buttons on the overview and result screens are now sky blue (user request), white icon + label, full labels readable; the inactive Save keeps the pale style.
+- Fixed truncated bottom-bar labels on the queue overview and result screens ("Conv..." / "Renam..."): the bar now uses the reference layout - icon on top, full label below - so Convert / Rename / Resize / Save always render completely.
+- Fixed "Recently edited" placeholders on Home: a small thumbnail is now cached on the phone the moment a photo is opened, so the row always shows real photos, even in a later session. (Photos opened before this fix may still show a placeholder if their picker grant expired; new opens always cache.)
+- Fixed a crash when saving a large batch (8 photos): resized bitmaps were all held in memory until Save, which could exceed the app's heap and close the app. Resized photos are now written to a private on-device cache file one by one during processing and decoded only for the single photo being viewed or saved; each save re-encodes from that lossless cached copy and frees it immediately. Batch cache files are cleaned up when the queue is cleared. (Also: "Save as new files" with format "Original" now keeps EACH photo's own original format instead of one format for the whole queue, and the Replace-originals permission path is guarded so a system error shows a message instead of closing the app.)
 
 ## Implemented in source
 - Sky-blue, orange, white and deep-navy theme (unchanged from Stage 1).

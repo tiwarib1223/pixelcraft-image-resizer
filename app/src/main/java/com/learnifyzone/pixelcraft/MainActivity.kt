@@ -32,6 +32,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -59,7 +60,10 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.PhotoCamera
 import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.filled.Create
+import androidx.compose.material.icons.filled.PhotoSizeSelectLarge
 import androidx.compose.material.icons.filled.RotateRight
+import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.AlertDialog
@@ -105,6 +109,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
@@ -227,6 +232,11 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
     var sizeUnit by rememberSaveable { mutableStateOf("px") }
     var resizeDpi by rememberSaveable { mutableStateOf("300") }
 
+    fun clearProcessedResults() {
+        processedResults.values.forEach { runCatching { File(it.cachePath).delete() } }
+        processedResults.clear()
+    }
+
     fun sourceOutFormat(): ExportFormat = if (sourceFormat == ExportFormat.UNKNOWN) ExportFormat.JPEG else sourceFormat
 
     fun outFormat(): ExportFormat = when (chosenFormat) {
@@ -274,7 +284,7 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
         if (!fromQueue) {
             photoQueue = emptyList()
             queueIndex = 0
-            processedResults.clear()
+            clearProcessedResults()
         }
         val keepTarget = fromQueue && queueIndex > 0
         busy = true
@@ -321,10 +331,13 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                     if (sw != null && sh != null) applyTarget(sw, sh)
                 }
                 processedResults[uri.toString()]?.let { stored ->
-                    applyTarget(stored.bitmap.width, stored.bitmap.height)
-                    processedBitmap = stored.bitmap
-                    estimatedBytes = stored.bytes
-                    beforeAfter = true
+                    val cached = withContext(Dispatchers.IO) { BitmapFactory.decodeFile(stored.cachePath) }
+                    if (cached != null) {
+                        applyTarget(stored.width, stored.height)
+                        processedBitmap = cached
+                        estimatedBytes = stored.bytes
+                        beforeAfter = true
+                    }
                 }
                 screen = Screen.Editor
                 tool = Tool.Resize
@@ -426,14 +439,23 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                 } else {
                     try {
                         totalBytes += withContext(Dispatchers.IO) {
-                            val fmt = outFormat()
-                            val encoded = encodeImage(context, uri, stored.bitmap, fmt, quality)
-                            val base = if (queueNamePattern.isNotBlank()) "${queueNamePattern.trim()}-${i + 1}"
-                                else suggestBaseName(stored.bitmap.width, stored.bitmap.height)
-                            val name = buildFileName(base, fmt)
-                            if (fmt == ExportFormat.PDF) saveToDownloads(context, name, fmt.mimeType, encoded)
-                            else saveToGallery(context, name, fmt.mimeType, encoded)
-                            encoded.size.toLong()
+                            val bmp = BitmapFactory.decodeFile(stored.cachePath)
+                                ?: throw IllegalStateException("Processed image is missing")
+                            try {
+                                val fmt = if (chosenFormat == "original") {
+                                    val probed = ExportFormat.of(context.contentResolver, uri)
+                                    if (probed == ExportFormat.UNKNOWN || probed == ExportFormat.PDF) ExportFormat.JPEG else probed
+                                } else outFormat()
+                                val encoded = encodeImage(context, uri, bmp, fmt, quality)
+                                val base = if (queueNamePattern.isNotBlank()) "${queueNamePattern.trim()}-${i + 1}"
+                                    else suggestBaseName(stored.width, stored.height)
+                                val name = buildFileName(base, fmt)
+                                if (fmt == ExportFormat.PDF) saveToDownloads(context, name, fmt.mimeType, encoded)
+                                else saveToGallery(context, name, fmt.mimeType, encoded)
+                                encoded.size.toLong()
+                            } finally {
+                                bmp.recycle()
+                            }
                         }
                         saved++
                     } catch (e: Exception) {
@@ -480,12 +502,18 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                 } else {
                     try {
                         val size = withContext(Dispatchers.IO) {
-                            val probed = ExportFormat.of(context.contentResolver, uri)
-                            val effective = if (probed == ExportFormat.UNKNOWN || probed == ExportFormat.PDF) ExportFormat.JPEG else probed
-                            val bytes = encodeImage(context, uri, stored.bitmap, effective, quality)
-                            context.contentResolver.openOutputStream(uri, "wt")?.use { it.write(bytes) }
-                                ?: throw IllegalStateException("Could not open the original photo for writing")
-                            bytes.size.toLong()
+                            val bmp = BitmapFactory.decodeFile(stored.cachePath)
+                                ?: throw IllegalStateException("Processed image is missing")
+                            try {
+                                val probed = ExportFormat.of(context.contentResolver, uri)
+                                val effective = if (probed == ExportFormat.UNKNOWN || probed == ExportFormat.PDF) ExportFormat.JPEG else probed
+                                val bytes = encodeImage(context, uri, bmp, effective, quality)
+                                context.contentResolver.openOutputStream(uri, "wt")?.use { it.write(bytes) }
+                                    ?: throw IllegalStateException("Could not open the original photo for writing")
+                                bytes.size.toLong()
+                            } finally {
+                                bmp.recycle()
+                            }
                         }
                         if (sourceUri == uri) sourceBytes = size
                         saved++
@@ -570,11 +598,17 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                                 outBmp to estimateBytes(outBmp, outFormat(), quality)
                             }
                         }
-                        if (result.first !== decoded) decoded.recycle()
-                        result
+                        // Keep resized pixels on disk, not in memory: a queue of full-size
+                        // bitmaps can exceed the app's heap and crash the save step.
+                        val file = File(File(context.cacheDir, "batch").apply { mkdirs() }, "resized_${i}_${System.currentTimeMillis()}.png")
+                        FileOutputStream(file).use { result.first.compress(Bitmap.CompressFormat.PNG, 100, it) }
+                        val dims = result.first.width to result.first.height
+                        if (result.first !== decoded) result.first.recycle()
+                        decoded.recycle()
+                        Triple(file.absolutePath, dims, result.second)
                     }
                     val old = queueInfo[uri.toString()]
-                    processedResults[uri.toString()] = ProcessedResult(outcome.first, outcome.second, old?.bytes ?: -1L, old?.width ?: 0, old?.height ?: 0)
+                    processedResults[uri.toString()] = ProcessedResult(outcome.first, outcome.second.first, outcome.second.second, outcome.third, old?.bytes ?: -1L, old?.width ?: 0, old?.height ?: 0)
                     done++
                 } catch (e: Exception) {
                     failed++
@@ -584,16 +618,19 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
             if (done > 0) {
                 processedResults[uris.first().toString()]?.let { firstStored ->
                     if (choice !is SheetChoice.FileTarget) {
-                        lastUsedTarget = firstStored.bitmap.width to firstStored.bitmap.height
-                        saveLastUsedTarget(context, firstStored.bitmap.width, firstStored.bitmap.height)
+                        lastUsedTarget = firstStored.width to firstStored.height
+                        saveLastUsedTarget(context, firstStored.width, firstStored.height)
                     }
                 }
                 sourceUri?.toString()?.let { key ->
                     processedResults[key]?.let { current ->
-                        applyTarget(current.bitmap.width, current.bitmap.height)
-                        processedBitmap = current.bitmap
-                        estimatedBytes = current.bytes
-                        beforeAfter = true
+                        val cached = withContext(Dispatchers.IO) { BitmapFactory.decodeFile(current.cachePath) }
+                        if (cached != null) {
+                            applyTarget(current.width, current.height)
+                            processedBitmap = cached
+                            estimatedBytes = current.bytes
+                            beforeAfter = true
+                        }
                     }
                 }
                 screen = Screen.QueueResult
@@ -745,7 +782,7 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
         } else if (uris.size > 1) {
             photoQueue = uris
             queueIndex = 0
-            processedResults.clear()
+            clearProcessedResults()
             screen = Screen.QueueOverview
             scope.launch(Dispatchers.IO) {
                 uris.forEach { u ->
@@ -789,7 +826,7 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
         } else if (uris.size > 1) {
             photoQueue = uris
             queueIndex = 0
-            processedResults.clear()
+            clearProcessedResults()
             screen = Screen.QueueOverview
             scope.launch(Dispatchers.IO) {
                 uris.forEach { u ->
@@ -870,9 +907,13 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                 }
             }
             "replaceBatch" -> {
-                if (Build.VERSION.SDK_INT >= 30 && photoQueue.isNotEmpty()) {
-                    val pendingIntent = MediaStore.createWriteRequest(context.contentResolver, photoQueue)
-                    writeConsentBatch.launch(IntentSenderRequest.Builder(pendingIntent.intentSender).build())
+                try {
+                    if (Build.VERSION.SDK_INT >= 30 && photoQueue.isNotEmpty()) {
+                        val pendingIntent = MediaStore.createWriteRequest(context.contentResolver, photoQueue)
+                        writeConsentBatch.launch(IntentSenderRequest.Builder(pendingIntent.intentSender).build())
+                    }
+                } catch (e: Exception) {
+                    scope.launch { snackbar.showSnackbar("Replace isn't available for these photos. Use 'Save as new files' instead.") }
                 }
             }
             "legacySave" -> legacyWritePermission.launch(android.Manifest.permission.WRITE_EXTERNAL_STORAGE)
@@ -1266,7 +1307,7 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                     sourceUri = null
                     photoQueue = emptyList()
                     queueIndex = 0
-                    processedResults.clear()
+                    clearProcessedResults()
                 },
                 onAnother = {
                     screen = Screen.Home
@@ -1276,7 +1317,7 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                     sourceUri = null
                     photoQueue = emptyList()
                     queueIndex = 0
-                    processedResults.clear()
+                    clearProcessedResults()
                     pickPhotos()
                 }
             )
@@ -1381,6 +1422,18 @@ private fun HomeScreen(
             }
         }
         Text("Stage 2 · Resize, adapt, rotate and export are live", modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp), color = Slate, fontSize = 11.sp)
+    }
+}
+
+@Composable
+private fun RowScope.QueueAction(label: String, enabled: Boolean, icon: ImageVector, onClick: () -> Unit) {
+    Column(
+        Modifier.weight(1f).padding(horizontal = 3.dp).clip(RoundedCornerShape(10.dp)).background(if (enabled) SkyBlue else PaleBlue).clickable(enabled = enabled) { onClick() }.padding(vertical = 8.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Icon(icon, contentDescription = null, tint = if (enabled) Color.White else Slate, modifier = Modifier.size(22.dp))
+        Spacer(Modifier.height(3.dp))
+        Text(label, color = if (enabled) Color.White else Slate, fontSize = 11.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, softWrap = false)
     }
 }
 
@@ -1645,16 +1698,15 @@ private fun QueueResultScreen(
                         Modifier.fillMaxWidth().height(110.dp).clip(RoundedCornerShape(12.dp)).background(SoftGrey).border(1.dp, BorderGrey, RoundedCornerShape(12.dp)),
                         contentAlignment = Alignment.Center
                     ) {
-                        if (r != null) {
-                            Image(bitmap = r.bitmap.asImageBitmap(), contentDescription = "Photo ${index + 1}", modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+                        val thumb = queueThumbs[uri.toString()]
+                        if (thumb != null) {
+                            Image(bitmap = thumb, contentDescription = "Photo ${index + 1}", modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
                         } else {
-                            val thumb = queueThumbs[uri.toString()]
-                            if (thumb != null) Image(bitmap = thumb, contentDescription = "Photo ${index + 1}", modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
-                            else Text("${index + 1}", color = Slate, fontSize = 14.sp)
+                            Text("${index + 1}", color = Slate, fontSize = 14.sp)
                         }
                     }
                     if (r != null) {
-                        Text("${r.bitmap.width} \u00D7 ${r.bitmap.height} px", color = DeepNavy, fontSize = 11.sp, maxLines = 1, softWrap = false, modifier = Modifier.padding(top = 4.dp))
+                        Text("${r.width} \u00D7 ${r.height} px", color = DeepNavy, fontSize = 11.sp, maxLines = 1, softWrap = false, modifier = Modifier.padding(top = 4.dp))
                         Row {
                             Text(if (r.bytes >= 0) formatBytes(r.bytes) else "\u2026", color = DeepNavy, fontWeight = FontWeight.Bold, fontSize = 11.sp, maxLines = 1, softWrap = false)
                             if (r.oldBytes >= 0) {
@@ -1668,19 +1720,11 @@ private fun QueueResultScreen(
                 }
             }
         }
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth().padding(top = 10.dp, bottom = 12.dp)) {
-            OutlinedButton(onClick = { showConvert = true }, modifier = Modifier.weight(1f), shape = RoundedCornerShape(10.dp)) {
-                Text("Convert", color = DeepNavy, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, softWrap = false)
-            }
-            OutlinedButton(onClick = { showRename = true }, modifier = Modifier.weight(1f), shape = RoundedCornerShape(10.dp)) {
-                Text("Rename", color = DeepNavy, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, softWrap = false)
-            }
-            OutlinedButton(onClick = { showResize = true }, modifier = Modifier.weight(1f), shape = RoundedCornerShape(10.dp)) {
-                Text("Resize", color = DeepNavy, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, softWrap = false)
-            }
-            Button(onClick = { showSaveOptions = true }, modifier = Modifier.weight(1f), shape = RoundedCornerShape(10.dp), colors = ButtonDefaults.buttonColors(containerColor = Orange, contentColor = Color.White)) {
-                Text("Save", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold, maxLines = 1, softWrap = false)
-            }
+        Row(Modifier.fillMaxWidth().padding(top = 10.dp, bottom = 12.dp)) {
+            QueueAction("Convert", true, Icons.Default.Sync) { showConvert = true }
+            QueueAction("Rename", true, Icons.Default.Create) { showRename = true }
+            QueueAction("Resize", true, Icons.Default.PhotoSizeSelectLarge) { showResize = true }
+            QueueAction("Save", true, Icons.Default.CheckCircle) { showSaveOptions = true }
         }
     }
     if (showResize) {
@@ -1827,19 +1871,11 @@ private fun QueueOverviewScreen(
                 }
             }
         }
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth().padding(top = 10.dp)) {
-            OutlinedButton(onClick = { showConvert = true }, modifier = Modifier.weight(1f), shape = RoundedCornerShape(10.dp)) {
-                Text("Convert", color = DeepNavy, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, softWrap = false)
-            }
-            OutlinedButton(onClick = { showRename = true }, modifier = Modifier.weight(1f), shape = RoundedCornerShape(10.dp)) {
-                Text("Rename", color = DeepNavy, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, softWrap = false)
-            }
-            OutlinedButton(onClick = { showResize = true }, modifier = Modifier.weight(1f), shape = RoundedCornerShape(10.dp)) {
-                Text("Resize", color = DeepNavy, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, softWrap = false)
-            }
-            OutlinedButton(onClick = { }, enabled = false, modifier = Modifier.weight(1f), shape = RoundedCornerShape(10.dp)) {
-                Text("Save", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, softWrap = false)
-            }
+        Row(Modifier.fillMaxWidth().padding(top = 10.dp)) {
+            QueueAction("Convert", true, Icons.Default.Sync) { showConvert = true }
+            QueueAction("Rename", true, Icons.Default.Create) { showRename = true }
+            QueueAction("Resize", true, Icons.Default.PhotoSizeSelectLarge) { showResize = true }
+            QueueAction("Save", false, Icons.Default.CheckCircle) { }
         }
         Text(
             "Resize processes every photo one after another and takes you to the results, where Save exports them all (new copies, or replacing the originals). You can also open any photo and export it on its own.",
@@ -3033,7 +3069,7 @@ private sealed class SheetChoice {
     data class FileTarget(val bytes: Long, val label: String) : SheetChoice()
 }
 
-private data class ProcessedResult(val bitmap: Bitmap, val bytes: Long, val oldBytes: Long, val oldWidth: Int, val oldHeight: Int)
+private data class ProcessedResult(val cachePath: String, val width: Int, val height: Int, val bytes: Long, val oldBytes: Long, val oldWidth: Int, val oldHeight: Int)
 
 private data class BatchProgress(val action: String, val current: Int, val total: Int, val percent: Int)
 
