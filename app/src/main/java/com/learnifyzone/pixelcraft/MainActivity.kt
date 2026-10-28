@@ -1513,8 +1513,10 @@ private fun DimensionsSheet(
     var customPct by rememberSaveable { mutableStateOf("45") }
     var customW by rememberSaveable { mutableStateOf("") }
     var customH by rememberSaveable { mutableStateOf("") }
-    var customUnit by rememberSaveable { mutableStateOf(initialUnit) }
-    var customDpi by rememberSaveable { mutableStateOf(initialDpi) }
+    // Plain remember keyed on the carried-in unit: every time this sheet opens it
+    // starts on the editor's CURRENT unit (rememberSaveable kept the first-ever value).
+    var customUnit by remember(initialUnit) { mutableStateOf(initialUnit) }
+    var customDpi by remember(initialDpi) { mutableStateOf(initialDpi) }
     var easyEstimates by remember { mutableStateOf<Map<String, Long>>(emptyMap()) }
     LaunchedEffect(baseBitmap, baseWidth, baseHeight, baseBytes, format, quality) {
         easyEstimates = easy.mapNotNull { (label, side) ->
@@ -2085,16 +2087,14 @@ private fun EditorScreen(
                     }
                 }
             }
-            if (sizeUnit != "px") {
-                OutlinedTextField(
-                    value = resizeDpi,
-                    onValueChange = onResizeDpi,
-                    modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
-                    label = { Text("DPI - 300 is standard for print") },
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                    singleLine = true
-                )
-            }
+            OutlinedTextField(
+                value = resizeDpi,
+                onValueChange = onResizeDpi,
+                modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                label = { Text("DPI - 300 is standard for print") },
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                singleLine = true
+            )
             Spacer(Modifier.height(10.dp))
             // Size is chosen in ONE place only: the options sheet that Process opens
             // (user decision on v0.4.5: no duplicated size fields on this page).
