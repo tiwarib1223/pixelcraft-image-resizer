@@ -73,6 +73,8 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.OutlinedButton
@@ -106,6 +108,7 @@ import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -143,6 +146,7 @@ private val PaleBlue = Color(0xFFF0FAFF)
 private val SoftGrey = Color(0xFFF3F6F9)
 private val Slate = Color(0xFF66758A)
 private val BorderGrey = Color(0xFFE0E8EE)
+private val SuccessGreen = Color(0xFF1E9E50)
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -152,7 +156,7 @@ class MainActivity : ComponentActivity() {
 }
 
 private enum class MainTab { Home, MyPhotos, Presets, Settings }
-private enum class Screen { Home, Editor, Export, Print, Success }
+private enum class Screen { Home, Editor, Export, Print, Success, QueueOverview, QueueResult }
 private enum class Tool(val label: String) { Resize("Resize"), Presets("Presets"), Crop("Crop"), Background("Background"), Format("Format") }
 private enum class AdaptMode(val label: String) { FIT("Fit"), CROP("Crop"), STRETCH("Stretch") }
 private data class Feature(val title: String, val description: String, val icon: String, val active: Boolean = false)
@@ -209,6 +213,15 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
     var photoQueue by remember { mutableStateOf<List<Uri>>(emptyList()) }
     var queueIndex by rememberSaveable { mutableIntStateOf(0) }
     val queueThumbs = remember { mutableStateMapOf<String, ImageBitmap?>() }
+    var queueTargetW by rememberSaveable { mutableStateOf("") }
+    var queueTargetH by rememberSaveable { mutableStateOf("") }
+    var queueNamePattern by rememberSaveable { mutableStateOf("") }
+    val queueInfo = remember { mutableStateMapOf<String, QueueItemInfo>() }
+    var showDimensionsSheet by rememberSaveable { mutableStateOf(false) }
+    var lastUsedTarget by remember { mutableStateOf<Pair<Int, Int>?>(null) }
+    var batchProgress by remember { mutableStateOf<BatchProgress?>(null) }
+    var batchSaveNote by remember { mutableStateOf<String?>(null) }
+    val processedResults = remember { mutableStateMapOf<String, ProcessedResult>() }
     var pendingLaunch by remember { mutableStateOf<String?>(null) }
     var chosenFormat by rememberSaveable { mutableStateOf("original") }
     var sizeUnit by rememberSaveable { mutableStateOf("px") }
@@ -261,6 +274,7 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
         if (!fromQueue) {
             photoQueue = emptyList()
             queueIndex = 0
+            processedResults.clear()
         }
         val keepTarget = fromQueue && queueIndex > 0
         busy = true
@@ -283,7 +297,9 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                     customPercent = ""
                     percentError = ""
                 }
-                exportName = suggestBaseName(loaded.width, loaded.height)
+                exportName = if (fromQueue && queueNamePattern.isNotBlank())
+                    "${queueNamePattern.trim()}-${queueIndex + 1}"
+                else suggestBaseName(loaded.width, loaded.height)
                 beforeAfter = false
                 if (!isCamera) withContext(Dispatchers.IO) { RecentsStore.add(context, uri) }
                 pendingPreset?.let { preset ->
@@ -298,6 +314,17 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                     quality = draft.quality
                     pendingDraft = null
                     invalidateProcessed()
+                }
+                if (fromQueue && queueTargetW.isNotBlank() && queueTargetH.isNotBlank()) {
+                    val sw = queueTargetW.toIntOrNull()
+                    val sh = queueTargetH.toIntOrNull()
+                    if (sw != null && sh != null) applyTarget(sw, sh)
+                }
+                processedResults[uri.toString()]?.let { stored ->
+                    applyTarget(stored.bitmap.width, stored.bitmap.height)
+                    processedBitmap = stored.bitmap
+                    estimatedBytes = stored.bytes
+                    beforeAfter = true
                 }
                 screen = Screen.Editor
                 tool = Tool.Resize
@@ -320,7 +347,10 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
         val src = workingBitmap ?: return
         busy = true
         busyLabel = "Processing…"
+        batchProgress = BatchProgress("Processing", 1, 1, 10)
         adaptRequest = null
+        lastUsedTarget = targetW to targetH
+        saveLastUsedTarget(context, targetW, targetH)
         scope.launch {
             try {
                 val result = withContext(Dispatchers.Default) {
@@ -331,8 +361,10 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                     }
                 }
                 processedBitmap = result
+                batchProgress = BatchProgress("Processing", 1, 1, 60)
                 exportName = suggestBaseName(targetW, targetH)
                 beforeAfter = true
+                batchProgress = BatchProgress("Processing", 1, 1, 90)
                 estimatedBytes = withContext(Dispatchers.IO) { estimateBytes(result, outFormat(), quality) }
                 snackbar.showSnackbar("Processed: $targetW × $targetH px. Tap Export to save.")
             } catch (e: Exception) {
@@ -340,6 +372,136 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
             } finally {
                 busy = false
                 busyLabel = ""
+                batchProgress = null
+            }
+        }
+    }
+
+    fun runFitToFileSize(targetBytes: Long) {
+        val src = workingBitmap ?: return
+        busy = true
+        busyLabel = "Processing…"
+        batchProgress = BatchProgress("Processing", 1, 1, 10)
+        scope.launch {
+            try {
+                val fit = withContext(Dispatchers.Default) {
+                    fitToFileSize(src, outFormat(), quality, targetBytes) { pct ->
+                        batchProgress = BatchProgress("Processing", 1, 1, pct.coerceIn(5, 95))
+                    }
+                }
+                applyTarget(fit.first.width, fit.first.height)
+                processedBitmap = fit.first
+                estimatedBytes = fit.second
+                exportName = suggestBaseName(fit.first.width, fit.first.height)
+                beforeAfter = true
+                lastUsedTarget = fit.first.width to fit.first.height
+                saveLastUsedTarget(context, fit.first.width, fit.first.height)
+                snackbar.showSnackbar("Processed: ${fit.first.width} × ${fit.first.height} px · ${formatBytes(fit.second)}. Tap Export to save.")
+            } catch (e: Exception) {
+                snackbar.showSnackbar("Couldn't reach that file size. Try a larger target.")
+            } finally {
+                busy = false
+                busyLabel = ""
+                batchProgress = null
+            }
+        }
+    }
+
+    fun runBatchSave() {
+        val uris = photoQueue
+        if (uris.isEmpty()) return
+        busy = true
+        busyLabel = "Saving…"
+        val total = uris.size
+        batchProgress = BatchProgress("Saving", 0, total, 0)
+        scope.launch {
+            var saved = 0
+            var failed = 0
+            var totalBytes = 0L
+            uris.forEachIndexed { i, uri ->
+                batchProgress = BatchProgress("Saving", i + 1, total, (i * 100) / total)
+                val stored = processedResults[uri.toString()]
+                if (stored == null) {
+                    failed++
+                } else {
+                    try {
+                        totalBytes += withContext(Dispatchers.IO) {
+                            val fmt = outFormat()
+                            val encoded = encodeImage(context, uri, stored.bitmap, fmt, quality)
+                            val base = if (queueNamePattern.isNotBlank()) "${queueNamePattern.trim()}-${i + 1}"
+                                else suggestBaseName(stored.bitmap.width, stored.bitmap.height)
+                            val name = buildFileName(base, fmt)
+                            if (fmt == ExportFormat.PDF) saveToDownloads(context, name, fmt.mimeType, encoded)
+                            else saveToGallery(context, name, fmt.mimeType, encoded)
+                            encoded.size.toLong()
+                        }
+                        saved++
+                    } catch (e: Exception) {
+                        failed++
+                    }
+                }
+                batchProgress = BatchProgress("Saving", i + 1, total, ((i + 1) * 100) / total)
+            }
+            busy = false
+            busyLabel = ""
+            batchProgress = null
+            batchSaveNote = when {
+                failed == 0 -> "All $saved photos saved (${formatBytes(totalBytes)}). Find them in your gallery, in the PixelCraft album."
+                saved == 0 -> "Saving failed. Please try again."
+                else -> "$saved of $total photos saved; $failed failed. Saved photos are in your gallery."
+            }
+        }
+    }
+
+    fun requestBatchReplace() {
+        if (photoQueue.isEmpty()) return
+        if (Build.VERSION.SDK_INT >= 30) {
+            pendingLaunch = "replaceBatch"
+        } else {
+            scope.launch { snackbar.showSnackbar("Replace original needs Android 11 or newer. Use 'Save as new files' instead.") }
+        }
+    }
+
+    fun performBatchReplace() {
+        val uris = photoQueue
+        if (uris.isEmpty()) return
+        busy = true
+        busyLabel = "Replacing originals…"
+        val total = uris.size
+        batchProgress = BatchProgress("Saving", 0, total, 0)
+        scope.launch {
+            var saved = 0
+            var failed = 0
+            uris.forEachIndexed { i, uri ->
+                batchProgress = BatchProgress("Saving", i + 1, total, (i * 100) / total)
+                val stored = processedResults[uri.toString()]
+                if (stored == null) {
+                    failed++
+                } else {
+                    try {
+                        val size = withContext(Dispatchers.IO) {
+                            val probed = ExportFormat.of(context.contentResolver, uri)
+                            val effective = if (probed == ExportFormat.UNKNOWN || probed == ExportFormat.PDF) ExportFormat.JPEG else probed
+                            val bytes = encodeImage(context, uri, stored.bitmap, effective, quality)
+                            context.contentResolver.openOutputStream(uri, "wt")?.use { it.write(bytes) }
+                                ?: throw IllegalStateException("Could not open the original photo for writing")
+                            bytes.size.toLong()
+                        }
+                        if (sourceUri == uri) sourceBytes = size
+                        saved++
+                    } catch (e: Exception) {
+                        failed++
+                    }
+                }
+                batchProgress = BatchProgress("Saving", i + 1, total, ((i + 1) * 100) / total)
+            }
+            busy = false
+            busyLabel = ""
+            batchProgress = null
+            batchSaveNote = when {
+                failed == 0 -> "All $saved originals replaced with the resized versions."
+                saved == 0 -> "Replacing failed. Nothing was changed. Try 'Save as new files' instead."
+                else -> "$saved of $total originals replaced; $failed failed."
             }
         }
     }
@@ -365,6 +527,85 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
             runProcess(valid.width, valid.height, AdaptMode.STRETCH, CropAnchor.CENTER, FitPad.BLUR)
         } else {
             adaptRequest = AdaptRequest(valid.width, valid.height)
+        }
+    }
+
+    fun runSingleChoice(choice: SheetChoice) {
+        val bmp = workingBitmap ?: return
+        when (choice) {
+            is SheetChoice.FileTarget -> runFitToFileSize(choice.bytes)
+            else -> {
+                val target = choiceTargetFor(choice, bmp.width, bmp.height) ?: return
+                applyTarget(target.first, target.second)
+                onProcess()
+            }
+        }
+    }
+
+    fun runBatchResize(choice: SheetChoice) {
+        val uris = photoQueue
+        if (uris.size < 2) { runSingleChoice(choice); return }
+        busy = true
+        busyLabel = "Processing…"
+        val total = uris.size
+        batchProgress = BatchProgress("Processing", 0, total, 0)
+        scope.launch {
+            var done = 0
+            var failed = 0
+            uris.forEachIndexed { i, uri ->
+                batchProgress = BatchProgress("Processing", i + 1, total, (i * 100) / total)
+                try {
+                    val outcome = withContext(Dispatchers.Default) {
+                        val decoded = decodeOrientedBitmap(context, uri)
+                        val result = when (choice) {
+                            is SheetChoice.FileTarget -> fitToFileSize(decoded, outFormat(), quality, choice.bytes) { sub ->
+                                batchProgress = BatchProgress("Processing", i + 1, total, ((i * 100) + sub) / total)
+                            }
+                            else -> {
+                                val target = choiceTargetFor(choice, decoded.width, decoded.height)
+                                    ?: throw IllegalStateException("Invalid resize target")
+                                val outBmp = if (Transforms.sameAspect(decoded.width, decoded.height, target.first, target.second))
+                                    Transforms.stretch(decoded, target.first, target.second)
+                                else Transforms.fit(decoded, target.first, target.second, FitPad.BLUR)
+                                outBmp to estimateBytes(outBmp, outFormat(), quality)
+                            }
+                        }
+                        if (result.first !== decoded) decoded.recycle()
+                        result
+                    }
+                    val old = queueInfo[uri.toString()]
+                    processedResults[uri.toString()] = ProcessedResult(outcome.first, outcome.second, old?.bytes ?: -1L, old?.width ?: 0, old?.height ?: 0)
+                    done++
+                } catch (e: Exception) {
+                    failed++
+                }
+                batchProgress = BatchProgress("Processing", i + 1, total, ((i + 1) * 100) / total)
+            }
+            if (done > 0) {
+                processedResults[uris.first().toString()]?.let { firstStored ->
+                    if (choice !is SheetChoice.FileTarget) {
+                        lastUsedTarget = firstStored.bitmap.width to firstStored.bitmap.height
+                        saveLastUsedTarget(context, firstStored.bitmap.width, firstStored.bitmap.height)
+                    }
+                }
+                sourceUri?.toString()?.let { key ->
+                    processedResults[key]?.let { current ->
+                        applyTarget(current.bitmap.width, current.bitmap.height)
+                        processedBitmap = current.bitmap
+                        estimatedBytes = current.bytes
+                        beforeAfter = true
+                    }
+                }
+                screen = Screen.QueueResult
+            }
+            busy = false
+            busyLabel = ""
+            batchProgress = null
+            when {
+                done > 0 && failed == 0 -> snackbar.showSnackbar("All $done photos processed.")
+                done > 0 -> snackbar.showSnackbar("$done of $total photos processed ($failed failed).")
+                else -> snackbar.showSnackbar("Couldn't process these photos. Try smaller dimensions.")
+            }
         }
     }
 
@@ -504,8 +745,15 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
         } else if (uris.size > 1) {
             photoQueue = uris
             queueIndex = 0
-            loadPhoto(uris[0], isCamera = false, fromQueue = true)
-            scope.launch { snackbar.showSnackbar("${uris.size} photos selected. You process and export them one by one.") }
+            processedResults.clear()
+            screen = Screen.QueueOverview
+            scope.launch(Dispatchers.IO) {
+                uris.forEach { u ->
+                    val t = decodeThumbnail(context, u)
+                    if (t != null) queueThumbs[u.toString()] = t.asImageBitmap()
+                }
+            }
+            scope.launch { snackbar.showSnackbar("${uris.size} photos selected. Tap Resize to process them all together.") }
         }
     }
 
@@ -541,8 +789,15 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
         } else if (uris.size > 1) {
             photoQueue = uris
             queueIndex = 0
-            loadPhoto(uris[0], isCamera = false, fromQueue = true)
-            scope.launch { snackbar.showSnackbar("${uris.size} photos selected. You process and export them one by one.") }
+            processedResults.clear()
+            screen = Screen.QueueOverview
+            scope.launch(Dispatchers.IO) {
+                uris.forEach { u ->
+                    val t = decodeThumbnail(context, u)
+                    if (t != null) queueThumbs[u.toString()] = t.asImageBitmap()
+                }
+            }
+            scope.launch { snackbar.showSnackbar("${uris.size} photos selected. Tap Resize to process them all together.") }
         }
     }
     val takePicture = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { ok ->
@@ -552,6 +807,10 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
     }
     val writeConsent = rememberLauncherForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) { result ->
         if (result.resultCode == Activity.RESULT_OK) performReplace()
+        else scope.launch { snackbar.showSnackbar("Replace cancelled. Nothing was changed.") }
+    }
+    val writeConsentBatch = rememberLauncherForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) { result ->
+        if (result.resultCode == Activity.RESULT_OK) performBatchReplace()
         else scope.launch { snackbar.showSnackbar("Replace cancelled. Nothing was changed.") }
     }
     val createJpeg = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("image/jpeg")) { uri ->
@@ -610,6 +869,12 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                     ExportFormat.UNKNOWN -> createJpeg.launch(suggested)
                 }
             }
+            "replaceBatch" -> {
+                if (Build.VERSION.SDK_INT >= 30 && photoQueue.isNotEmpty()) {
+                    val pendingIntent = MediaStore.createWriteRequest(context.contentResolver, photoQueue)
+                    writeConsentBatch.launch(IntentSenderRequest.Builder(pendingIntent.intentSender).build())
+                }
+            }
             "legacySave" -> legacyWritePermission.launch(android.Manifest.permission.WRITE_EXTERNAL_STORAGE)
         }
         pendingLaunch = null
@@ -630,12 +895,18 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
     LaunchedEffect(photoQueue) {
         photoQueue.forEach { uri ->
             val key = uri.toString()
-            if (!queueThumbs.containsKey(key)) {
-                queueThumbs[key] = null
-                val thumb = withContext(Dispatchers.IO) { RecentsStore.loadThumbnail(context, uri) }
-                queueThumbs[key] = thumb?.asImageBitmap()
+            if (queueThumbs[key] == null) {
+                val thumb = withContext(Dispatchers.IO) { decodeThumbnail(context, uri) }
+                if (thumb != null) queueThumbs[key] = thumb.asImageBitmap()
+            }
+            if (!queueInfo.containsKey(key)) {
+                val info = withContext(Dispatchers.IO) { probeImageInfo(context, uri) }
+                if (info != null) queueInfo[key] = info
             }
         }
+    }
+    LaunchedEffect(Unit) {
+        lastUsedTarget = loadLastUsedTarget(context)
     }
     LaunchedEffect(recents) {
         recents.forEach { uri ->
@@ -651,22 +922,70 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
     BackHandler(enabled = screen != Screen.Home) {
         when (screen) {
             Screen.Export -> screen = Screen.Editor
+            Screen.QueueResult -> screen = Screen.QueueOverview
             Screen.Editor -> leaveEditorToHome()
             else -> screen = Screen.Home
         }
+    }
+
+    if (showDimensionsSheet) {
+        val bmp = workingBitmap
+        DimensionsSheet(
+            title = "Select new dimensions",
+            baseWidth = bmp?.width ?: 0,
+            baseHeight = bmp?.height ?: 0,
+            baseBytes = sourceBytes,
+            baseBitmap = bmp,
+            format = outFormat(),
+            quality = quality,
+            lastUsed = lastUsedTarget,
+            fromQueue = photoQueue.size > 1,
+            onDismiss = { showDimensionsSheet = false },
+            onApply = { choice ->
+                showDimensionsSheet = false
+                if (photoQueue.size > 1) runBatchResize(choice) else runSingleChoice(choice)
+            }
+        )
+    }
+
+    batchProgress?.let { p ->
+        AlertDialog(
+            onDismissRequest = { },
+            title = { Text("${p.action} photos", color = DeepNavy, fontWeight = FontWeight.Bold) },
+            text = {
+                Column {
+                    Text("${p.action} ${p.current}/${p.total} - ${p.percent}%", color = DeepNavy, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                    Spacer(Modifier.height(12.dp))
+                    Box(Modifier.fillMaxWidth().height(10.dp).clip(RoundedCornerShape(5.dp)).background(PaleBlue)) {
+                        Box(Modifier.fillMaxWidth((p.percent.coerceIn(0, 100)) / 100f).height(10.dp).clip(RoundedCornerShape(5.dp)).background(SkyBlue))
+                    }
+                }
+            },
+            confirmButton = { }
+        )
+    }
+    batchSaveNote?.let { note ->
+        AlertDialog(
+            onDismissRequest = { batchSaveNote = null },
+            title = { Text("Save", color = DeepNavy, fontWeight = FontWeight.Bold) },
+            text = { Text(note, color = Slate, fontSize = 13.sp, lineHeight = 18.sp) },
+            confirmButton = { TextButton(onClick = { batchSaveNote = null }) { Text("OK", color = DeepNavy, fontWeight = FontWeight.Bold) } }
+        )
     }
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
         snackbarHost = { SnackbarHost(snackbar) },
         topBar = {
-            if (screen == Screen.Editor || screen == Screen.Export || screen == Screen.Print) {
+            if (screen == Screen.Editor || screen == Screen.Export || screen == Screen.Print || screen == Screen.QueueOverview) {
                 TopAppBar(
                     title = {
                         Text(
                             when (screen) {
                                 Screen.Editor -> "Resize Image"
                                 Screen.Export -> "Export"
+                                Screen.QueueOverview -> "Photos to resize"
+                                Screen.QueueResult -> "Resize"
                                 else -> "Print Size & DPI"
                             },
                             fontWeight = FontWeight.SemiBold
@@ -676,6 +995,7 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                         IconButton(onClick = {
                             when (screen) {
                                 Screen.Export -> screen = Screen.Editor
+                                Screen.QueueResult -> screen = Screen.QueueOverview
                                 Screen.Editor -> leaveEditorToHome()
                                 else -> screen = Screen.Home
                             }
@@ -753,6 +1073,49 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                 )
                 MainTab.Settings -> SettingsScreen(Modifier.padding(padding), darkMode = darkMode, onDarkMode = onDarkMode)
             }
+            Screen.QueueOverview -> QueueOverviewScreen(
+                modifier = Modifier.padding(padding),
+                queueUris = photoQueue,
+                queueThumbs = queueThumbs,
+                queueInfo = queueInfo,
+                currentFormatKey = chosenFormat,
+                sharedTargetLabel = if (queueTargetW.isNotBlank() && queueTargetH.isNotBlank()) "$queueTargetW × $queueTargetH px" else "",
+                namePattern = queueNamePattern,
+                baseFormat = outFormat(),
+                quality = quality,
+                lastUsed = lastUsedTarget,
+                onPhoto = { index ->
+                    queueIndex = index
+                    loadPhoto(photoQueue[index], isCamera = false, fromQueue = true)
+                },
+                onApplyTargetAll = { w, h -> queueTargetW = w.toString(); queueTargetH = h.toString() },
+                onFormatAll = { chosenFormat = it },
+                onPatternAll = { queueNamePattern = it },
+                onProcessAll = { choice -> runBatchResize(choice) }
+            )
+            Screen.QueueResult -> QueueResultScreen(
+                modifier = Modifier.padding(padding),
+                queueUris = photoQueue,
+                queueThumbs = queueThumbs,
+                results = processedResults,
+                currentFormatKey = chosenFormat,
+                namePattern = queueNamePattern,
+                baseWidth = queueInfo[photoQueue.firstOrNull()?.toString()]?.width ?: 0,
+                baseHeight = queueInfo[photoQueue.firstOrNull()?.toString()]?.height ?: 0,
+                baseBytes = queueInfo[photoQueue.firstOrNull()?.toString()]?.bytes ?: -1L,
+                format = outFormat(),
+                quality = quality,
+                lastUsed = lastUsedTarget,
+                onPhoto = { index ->
+                    queueIndex = index
+                    loadPhoto(photoQueue[index], isCamera = false, fromQueue = true)
+                },
+                onResizeAgain = { choice -> runBatchResize(choice) },
+                onFormatAll = { chosenFormat = it },
+                onPatternAll = { queueNamePattern = it },
+                onSaveAsNew = { runBatchSave() },
+                onReplaceAll = { requestBatchReplace() }
+            )
             Screen.Editor -> EditorScreen(
                 modifier = Modifier.padding(padding),
                 queueLabel = if (photoQueue.size > 1) "Photo ${queueIndex + 1} of ${photoQueue.size}" else null,
@@ -834,7 +1197,7 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                         scope.launch { snackbar.showSnackbar("Rotated 90°. Tap Process when the size is right.") }
                     }
                 },
-                onProcess = { onProcess() },
+                onProcess = { showDimensionsSheet = true },
                 onExport = { screen = Screen.Export }
             )
             Screen.Export -> ExportScreen(
@@ -903,6 +1266,7 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                     sourceUri = null
                     photoQueue = emptyList()
                     queueIndex = 0
+                    processedResults.clear()
                 },
                 onAnother = {
                     screen = Screen.Home
@@ -912,6 +1276,7 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                     sourceUri = null
                     photoQueue = emptyList()
                     queueIndex = 0
+                    processedResults.clear()
                     pickPhotos()
                 }
             )
@@ -1016,6 +1381,534 @@ private fun HomeScreen(
             }
         }
         Text("Stage 2 · Resize, adapt, rotate and export are live", modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp), color = Slate, fontSize = 11.sp)
+    }
+}
+
+@Composable
+private fun SheetSectionHeader(label: String, expanded: Boolean, onToggle: () -> Unit) {
+    Row(
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(PaleBlue).clickable { onToggle() }.padding(horizontal = 14.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(label, color = DeepNavy, fontWeight = FontWeight.Bold, fontSize = 15.sp, modifier = Modifier.weight(1f))
+        Text(if (expanded) "\u25B2" else "\u25BC", color = Slate, fontSize = 12.sp)
+    }
+}
+
+@Composable
+private fun SheetRadioRow(label: String, info: String, selected: Boolean, onSelect: () -> Unit) {
+    Row(Modifier.fillMaxWidth().clickable { onSelect() }.padding(vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+        Text(label, color = DeepNavy, fontSize = 14.sp, modifier = Modifier.weight(1f), maxLines = 1, softWrap = false)
+        if (info.isNotBlank()) Text(info, color = Slate, fontSize = 12.sp, maxLines = 1, softWrap = false)
+        Spacer(Modifier.width(10.dp))
+        Box(Modifier.size(20.dp).border(2.dp, SkyBlue, CircleShape).padding(4.dp)) {
+            if (selected) Box(Modifier.fillMaxSize().clip(CircleShape).background(SkyBlue))
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun DimensionsSheet(
+    title: String,
+    baseWidth: Int,
+    baseHeight: Int,
+    baseBytes: Long,
+    baseBitmap: Bitmap?,
+    format: ExportFormat,
+    quality: Int,
+    lastUsed: Pair<Int, Int>?,
+    fromQueue: Boolean,
+    onDismiss: () -> Unit,
+    onApply: (SheetChoice) -> Unit
+) {
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    fun scaled(maxSide: Int): Pair<Int, Int>? {
+        if (baseWidth <= 0 || baseHeight <= 0) return null
+        val longest = maxOf(baseWidth, baseHeight)
+        val target = minOf(maxSide, longest)
+        val scale = target.toDouble() / longest
+        return maxOf(1, (baseWidth * scale).toInt()) to maxOf(1, (baseHeight * scale).toInt())
+    }
+    val easy = listOf("Small" to 1024, "Medium" to 1920, "Large" to 2560)
+    val percents = listOf(25, 30, 40, 50, 60, 75, 80, 90)
+    val fileSizes = listOf(50 to "50 kB", 100 to "100 kB", 250 to "250 kB", 500 to "500 kB", 750 to "750 kB", 1024 to "1 MB", 1536 to "1.5 MB", 2048 to "2 MB", 2560 to "2.5 MB")
+    val resPresets = if (baseWidth <= 0 || baseHeight <= 0) emptyList()
+        else listOf(480, 600, 768, 1024, 1152, 1536, 2048, 3072).filter { it < baseWidth }.map { w -> w to maxOf(1, (w.toDouble() * baseHeight / baseWidth).toInt()) }
+    var choice by rememberSaveable { mutableStateOf("") }
+    var lastExpanded by rememberSaveable { mutableStateOf(false) }
+    var easyExpanded by rememberSaveable { mutableStateOf(true) }
+    var pctExpanded by rememberSaveable { mutableStateOf(false) }
+    var resExpanded by rememberSaveable { mutableStateOf(false) }
+    var fsExpanded by rememberSaveable { mutableStateOf(false) }
+    var customPct by rememberSaveable { mutableStateOf("45") }
+    var customW by rememberSaveable { mutableStateOf("") }
+    var customH by rememberSaveable { mutableStateOf("") }
+    var customUnit by rememberSaveable { mutableStateOf("px") }
+    var customDpi by rememberSaveable { mutableStateOf("300") }
+    var easyEstimates by remember { mutableStateOf<Map<String, Long>>(emptyMap()) }
+    LaunchedEffect(baseBitmap, baseWidth, baseHeight, baseBytes, format, quality) {
+        easyEstimates = easy.mapNotNull { (label, side) ->
+            val dims = scaled(side) ?: return@mapNotNull null
+            val est = if (baseBitmap != null) {
+                withContext(Dispatchers.Default) {
+                    val scaledBmp = Bitmap.createScaledBitmap(baseBitmap, dims.first, dims.second, true)
+                    val value = estimateBytes(scaledBmp, format, quality)
+                    if (scaledBmp != baseBitmap) scaledBmp.recycle()
+                    value
+                }
+            } else if (baseBytes > 0 && baseWidth > 0 && baseHeight > 0) {
+                val ratio = (dims.first.toDouble() * dims.second) / (baseWidth.toDouble() * baseHeight)
+                (baseBytes * ratio).toLong()
+            } else -1L
+            if (est > 0) label to est else null
+        }.toMap()
+    }
+    val customPctInt = customPct.trim().toIntOrNull()?.takeIf { it in 1..200 }
+    val customDpiVal = customDpi.trim().replace(',', '.').toDoubleOrNull()?.takeIf { it > 0 } ?: 300.0
+    val customWpx = parseToPx(customW, customUnit, customDpiVal)
+    val customHpx = parseToPx(customH, customUnit, customDpiVal)
+    val sheetChoice: SheetChoice? = when {
+        choice == "last" && lastUsed != null -> SheetChoice.Absolute(lastUsed.first, lastUsed.second)
+        choice.startsWith("easy:") -> easy.firstOrNull { "easy:${it.first}" == choice }?.let { SheetChoice.Longest(it.second, it.first) }
+        choice.startsWith("pct:") -> choice.removePrefix("pct:").toIntOrNull()?.let { SheetChoice.Percent(it) }
+        choice == "pctcustom" -> customPctInt?.let { SheetChoice.Percent(it) }
+        choice.startsWith("res:") -> resPresets.firstOrNull { "res:${it.first}x${it.second}" == choice }?.let { SheetChoice.Absolute(it.first, it.second) }
+        choice == "rescustom" -> if (customWpx != null && customHpx != null) SheetChoice.Absolute(customWpx, customHpx) else null
+        choice.startsWith("fs:") -> choice.removePrefix("fs:").toIntOrNull()?.let { kb -> fileSizes.firstOrNull { it.first == kb }?.let { SheetChoice.FileTarget(kb * 1024L, it.second) } }
+        else -> null
+    }
+    val buttonLabel = when (val c = sheetChoice) {
+        is SheetChoice.Absolute -> "Resize to ${c.w}\u00D7${c.h}"
+        is SheetChoice.Longest -> "Resize to ${c.label}"
+        is SheetChoice.Percent -> "Resize to ${c.p}%"
+        is SheetChoice.FileTarget -> "Shrink to ${c.label}"
+        null -> "Resize"
+    }
+    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState, containerColor = Color.White) {
+        Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp)) {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Text(title, color = DeepNavy, fontWeight = FontWeight.Bold, fontSize = 16.sp, modifier = Modifier.weight(1f))
+                Text("\u2715", color = Slate, fontSize = 15.sp, modifier = Modifier.clip(CircleShape).clickable { onDismiss() }.padding(8.dp))
+            }
+            Spacer(Modifier.height(6.dp))
+            if (lastUsed != null) {
+                SheetSectionHeader("Last used", lastExpanded) { lastExpanded = !lastExpanded }
+                if (lastExpanded) SheetRadioRow("${lastUsed.first} \u00D7 ${lastUsed.second} px", "", choice == "last") { choice = "last" }
+                Spacer(Modifier.height(10.dp))
+            }
+            SheetSectionHeader("Easy resize", easyExpanded) { easyExpanded = !easyExpanded }
+            if (easyExpanded) {
+                Text("Simple resize options", color = Slate, fontSize = 12.sp, modifier = Modifier.padding(bottom = 6.dp, top = 8.dp))
+                easy.forEach { (label, side) ->
+                    val est = easyEstimates[label]
+                    val info = when {
+                        est != null -> "~${formatBytes(est)}"
+                        scaled(side) != null -> "${scaled(side)!!.first}\u00D7${scaled(side)!!.second}"
+                        else -> "\u2026"
+                    }
+                    SheetRadioRow(label, info, choice == "easy:$label") { choice = "easy:$label" }
+                }
+            }
+            Spacer(Modifier.height(10.dp))
+            SheetSectionHeader("Percentage", pctExpanded) { pctExpanded = !pctExpanded }
+            if (pctExpanded) {
+                Text("Resize to a % of the original resolution", color = Slate, fontSize = 12.sp, modifier = Modifier.padding(bottom = 6.dp, top = 8.dp))
+                percents.forEach { p ->
+                    val dims = if (baseWidth > 0 && baseHeight > 0) "${(baseWidth * p / 100.0).toInt()}\u00D7${(baseHeight * p / 100.0).toInt()}" else "\u2026"
+                    SheetRadioRow("$p%", dims, choice == "pct:$p") { choice = "pct:$p" }
+                }
+                val customInfo = customPctInt?.let { p -> if (baseWidth > 0 && baseHeight > 0) "$p% | ${(baseWidth * p / 100.0).toInt()}\u00D7${(baseHeight * p / 100.0).toInt()}" else "$p%" } ?: ""
+                SheetRadioRow("Custom", customInfo, choice == "pctcustom") { choice = "pctcustom" }
+                if (choice == "pctcustom") {
+                    OutlinedTextField(
+                        value = customPct,
+                        onValueChange = { v -> customPct = v.filter { it.isDigit() }.take(3) },
+                        modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                        label = { Text("Custom percentage (1-200)") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        singleLine = true
+                    )
+                }
+            }
+            Spacer(Modifier.height(10.dp))
+            SheetSectionHeader("Resolution", resExpanded) { resExpanded = !resExpanded }
+            if (resExpanded) {
+                Text("Set width & height in pixels", color = Slate, fontSize = 12.sp, modifier = Modifier.padding(bottom = 6.dp, top = 8.dp))
+                resPresets.forEach { (w, h) ->
+                    SheetRadioRow("${w}\u00D7${h}", "", choice == "res:${w}x${h}") { choice = "res:${w}x${h}" }
+                }
+                val resInfo = if (customWpx != null && customHpx != null) "${customWpx}\u00D7${customHpx}" else ""
+                SheetRadioRow("Custom", resInfo, choice == "rescustom") { choice = "rescustom" }
+                if (choice == "rescustom") {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth().padding(top = 4.dp)) {
+                        OutlinedTextField(value = customW, onValueChange = { customW = it }, modifier = Modifier.weight(1f), label = { Text("Width ($customUnit)") }, keyboardOptions = KeyboardOptions(keyboardType = if (customUnit == "px") KeyboardType.Number else KeyboardType.Decimal), singleLine = true)
+                        OutlinedTextField(value = customH, onValueChange = { customH = it }, modifier = Modifier.weight(1f), label = { Text("Height ($customUnit)") }, keyboardOptions = KeyboardOptions(keyboardType = if (customUnit == "px") KeyboardType.Number else KeyboardType.Decimal), singleLine = true)
+                    }
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) {
+                        listOf("px", "in", "cm", "mm").forEach { u ->
+                            val sel = customUnit == u
+                            Surface(modifier = Modifier.clickable { customUnit = u }, shape = RoundedCornerShape(9.dp), color = if (sel) SkyBlue else PaleBlue) {
+                                Text(u, modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp), fontSize = 12.sp, color = if (sel) Color.White else DeepNavy, maxLines = 1, softWrap = false)
+                            }
+                        }
+                    }
+                    if (customUnit != "px") {
+                        OutlinedTextField(value = customDpi, onValueChange = { customDpi = it }, modifier = Modifier.fillMaxWidth().padding(top = 8.dp), label = { Text("DPI") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), singleLine = true)
+                    }
+                }
+            }
+            Spacer(Modifier.height(10.dp))
+            SheetSectionHeader("File Size", fsExpanded) { fsExpanded = !fsExpanded }
+            if (fsExpanded) {
+                Text("Resize to a target file size (quality and size adjust automatically)", color = Slate, fontSize = 12.sp, modifier = Modifier.padding(bottom = 6.dp, top = 8.dp))
+                fileSizes.forEach { (kb, label) ->
+                    SheetRadioRow(label, "", choice == "fs:$kb") { choice = "fs:$kb" }
+                }
+            }
+            if (fromQueue) {
+                Text("Applies to every photo in the queue, one after another. Percentage and easy options keep each photo's own shape; fixed sizes fit each photo with blurred padding when the shape differs.", color = Slate, fontSize = 11.sp, lineHeight = 15.sp, modifier = Modifier.padding(top = 10.dp))
+            }
+            Spacer(Modifier.height(14.dp))
+            Button(
+                onClick = { sheetChoice?.let(onApply) },
+                enabled = sheetChoice != null,
+                modifier = Modifier.fillMaxWidth(),
+                colors = ButtonDefaults.buttonColors(containerColor = Orange, contentColor = Color.White),
+                shape = RoundedCornerShape(12.dp)
+            ) { Text(buttonLabel, fontWeight = FontWeight.Bold, maxLines = 1, softWrap = false) }
+            Spacer(Modifier.height(24.dp))
+        }
+    }
+}
+
+@Composable
+private fun QueueResultScreen(
+    modifier: Modifier,
+    queueUris: List<Uri>,
+    queueThumbs: Map<String, ImageBitmap?>,
+    results: Map<String, ProcessedResult>,
+    currentFormatKey: String,
+    namePattern: String,
+    baseWidth: Int,
+    baseHeight: Int,
+    baseBytes: Long,
+    format: ExportFormat,
+    quality: Int,
+    lastUsed: Pair<Int, Int>?,
+    onPhoto: (Int) -> Unit,
+    onResizeAgain: (SheetChoice) -> Unit,
+    onFormatAll: (String) -> Unit,
+    onPatternAll: (String) -> Unit,
+    onSaveAsNew: () -> Unit,
+    onReplaceAll: () -> Unit
+) {
+    var showResize by rememberSaveable { mutableStateOf(false) }
+    var showConvert by rememberSaveable { mutableStateOf(false) }
+    var showRename by rememberSaveable { mutableStateOf(false) }
+    var showSaveOptions by rememberSaveable { mutableStateOf(false) }
+    val entries = queueUris.map { u -> u to results[u.toString()] }
+    val done = entries.filter { it.second != null }
+    val oldTotal = done.mapNotNull { it.second?.oldBytes }.filter { it >= 0 }.sum()
+    val newTotal = done.sumOf { it.second!!.bytes.coerceAtLeast(0) }
+    Column(modifier.fillMaxSize().padding(horizontal = 16.dp)) {
+        Card(colors = CardDefaults.cardColors(containerColor = Color(0xFFE9F9EF)), shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth().padding(top = 10.dp)) {
+            Column(Modifier.padding(16.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.Image, contentDescription = null, tint = DeepNavy, modifier = Modifier.size(24.dp))
+                    Spacer(Modifier.width(10.dp))
+                    Text("${done.size} photos have been resized", color = DeepNavy, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                }
+                Spacer(Modifier.height(8.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.CheckCircle, contentDescription = null, tint = SuccessGreen, modifier = Modifier.size(20.dp))
+                    Spacer(Modifier.width(8.dp))
+                    val savingText = if (oldTotal > 0 && newTotal > 0 && oldTotal >= newTotal) {
+                        val saved = oldTotal - newTotal
+                        val pct = (saved * 100 / oldTotal).toInt()
+                        "${formatBytes(oldTotal)} \u2192 ${formatBytes(newTotal)}  |  Saved ${formatBytes(saved)} ($pct%)"
+                    } else "New total: ${formatBytes(newTotal)}"
+                    Text(savingText, color = SuccessGreen, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                }
+            }
+        }
+        LazyVerticalGrid(
+            columns = GridCells.Fixed(3),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+            modifier = Modifier.weight(1f).padding(top = 10.dp)
+        ) {
+            items(entries.size) { index ->
+                val (uri, r) = entries[index]
+                Column(Modifier.clickable { onPhoto(index) }) {
+                    Box(
+                        Modifier.fillMaxWidth().height(110.dp).clip(RoundedCornerShape(12.dp)).background(SoftGrey).border(1.dp, BorderGrey, RoundedCornerShape(12.dp)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        if (r != null) {
+                            Image(bitmap = r.bitmap.asImageBitmap(), contentDescription = "Photo ${index + 1}", modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+                        } else {
+                            val thumb = queueThumbs[uri.toString()]
+                            if (thumb != null) Image(bitmap = thumb, contentDescription = "Photo ${index + 1}", modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+                            else Text("${index + 1}", color = Slate, fontSize = 14.sp)
+                        }
+                    }
+                    if (r != null) {
+                        Text("${r.bitmap.width} \u00D7 ${r.bitmap.height} px", color = DeepNavy, fontSize = 11.sp, maxLines = 1, softWrap = false, modifier = Modifier.padding(top = 4.dp))
+                        Row {
+                            Text(if (r.bytes >= 0) formatBytes(r.bytes) else "\u2026", color = DeepNavy, fontWeight = FontWeight.Bold, fontSize = 11.sp, maxLines = 1, softWrap = false)
+                            if (r.oldBytes >= 0) {
+                                Spacer(Modifier.width(6.dp))
+                                Text(formatBytes(r.oldBytes), color = Slate, fontSize = 11.sp, maxLines = 1, softWrap = false, style = androidx.compose.ui.text.TextStyle(textDecoration = TextDecoration.LineThrough))
+                            }
+                        }
+                    } else {
+                        Text("Not processed", color = Slate, fontSize = 11.sp, modifier = Modifier.padding(top = 4.dp))
+                    }
+                }
+            }
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth().padding(top = 10.dp, bottom = 12.dp)) {
+            OutlinedButton(onClick = { showConvert = true }, modifier = Modifier.weight(1f), shape = RoundedCornerShape(10.dp)) {
+                Text("Convert", color = DeepNavy, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, softWrap = false)
+            }
+            OutlinedButton(onClick = { showRename = true }, modifier = Modifier.weight(1f), shape = RoundedCornerShape(10.dp)) {
+                Text("Rename", color = DeepNavy, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, softWrap = false)
+            }
+            OutlinedButton(onClick = { showResize = true }, modifier = Modifier.weight(1f), shape = RoundedCornerShape(10.dp)) {
+                Text("Resize", color = DeepNavy, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, softWrap = false)
+            }
+            Button(onClick = { showSaveOptions = true }, modifier = Modifier.weight(1f), shape = RoundedCornerShape(10.dp), colors = ButtonDefaults.buttonColors(containerColor = Orange, contentColor = Color.White)) {
+                Text("Save", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold, maxLines = 1, softWrap = false)
+            }
+        }
+    }
+    if (showResize) {
+        DimensionsSheet(
+            title = "Resize all photos",
+            baseWidth = baseWidth,
+            baseHeight = baseHeight,
+            baseBytes = baseBytes,
+            baseBitmap = null,
+            format = format,
+            quality = quality,
+            lastUsed = lastUsed,
+            fromQueue = true,
+            onDismiss = { showResize = false },
+            onApply = { choice -> showResize = false; onResizeAgain(choice) }
+        )
+    }
+    if (showSaveOptions) {
+        AlertDialog(
+            onDismissRequest = { showSaveOptions = false },
+            title = { Text("Save resized photos", color = DeepNavy, fontWeight = FontWeight.Bold) },
+            text = { Text("Save new copies in Pictures/PixelCraft (originals stay untouched), or replace the original files with the resized versions.", color = Slate, fontSize = 13.sp, lineHeight = 18.sp) },
+            confirmButton = {
+                Column {
+                    Button(onClick = { showSaveOptions = false; onSaveAsNew() }, modifier = Modifier.fillMaxWidth(), colors = ButtonDefaults.buttonColors(containerColor = Orange, contentColor = Color.White), shape = RoundedCornerShape(10.dp)) {
+                        Text("Save as new files", fontWeight = FontWeight.Bold)
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    OutlinedButton(onClick = { showSaveOptions = false; onReplaceAll() }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(10.dp)) {
+                        Text("Replace originals", color = DeepNavy, fontWeight = FontWeight.Bold)
+                    }
+                }
+            },
+            dismissButton = { TextButton(onClick = { showSaveOptions = false }) { Text("Cancel", color = Slate) } }
+        )
+    }
+    if (showConvert) {
+        AlertDialog(
+            onDismissRequest = { showConvert = false },
+            title = { Text("Convert format", color = DeepNavy, fontWeight = FontWeight.Bold) },
+            text = {
+                Column {
+                    Text("Used when you save. You can still change it per photo on its Export screen.", color = Slate, fontSize = 12.sp, lineHeight = 16.sp)
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth().padding(top = 10.dp).horizontalScroll(rememberScrollState())) {
+                        listOf("original" to "Original", "JPEG" to "JPG", "PNG" to "PNG", "WEBP" to "WEBP", "PDF" to "PDF").forEach { (value, label) ->
+                            val selected = currentFormatKey == value
+                            Surface(modifier = Modifier.clickable { onFormatAll(value); showConvert = false }, shape = RoundedCornerShape(9.dp), color = if (selected) SkyBlue else PaleBlue) {
+                                Text(label, modifier = Modifier.padding(horizontal = 12.dp, vertical = 9.dp), fontSize = 11.sp, color = if (selected) Color.White else DeepNavy, maxLines = 1, softWrap = false)
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = { TextButton(onClick = { showConvert = false }) { Text("Close", color = Slate) } }
+        )
+    }
+    if (showRename) {
+        var pattern by rememberSaveable { mutableStateOf(namePattern) }
+        AlertDialog(
+            onDismissRequest = { showRename = false },
+            title = { Text("Name pattern", color = DeepNavy, fontWeight = FontWeight.Bold) },
+            text = {
+                Column {
+                    OutlinedTextField(value = pattern, onValueChange = { pattern = it }, modifier = Modifier.fillMaxWidth(), label = { Text("Base name") }, singleLine = true)
+                    Text(
+                        if (pattern.isBlank()) "Leave empty to use automatic names."
+                        else "Files: ${pattern.trim()}-1, ${pattern.trim()}-2, \u2026 (extension added automatically)",
+                        color = Slate, fontSize = 11.sp, lineHeight = 15.sp, modifier = Modifier.padding(top = 6.dp)
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { onPatternAll(pattern.trim()); showRename = false }) { Text("Apply", color = DeepNavy, fontWeight = FontWeight.Bold) }
+            },
+            dismissButton = { TextButton(onClick = { showRename = false }) { Text("Cancel", color = Slate) } }
+        )
+    }
+}
+
+@Composable
+private fun QueueOverviewScreen(
+    modifier: Modifier,
+    queueUris: List<Uri>,
+    queueThumbs: Map<String, ImageBitmap?>,
+    queueInfo: Map<String, QueueItemInfo>,
+    currentFormatKey: String,
+    sharedTargetLabel: String,
+    namePattern: String,
+    baseFormat: ExportFormat,
+    quality: Int,
+    lastUsed: Pair<Int, Int>?,
+    onPhoto: (Int) -> Unit,
+    onApplyTargetAll: (Int, Int) -> Unit,
+    onFormatAll: (String) -> Unit,
+    onPatternAll: (String) -> Unit,
+    onProcessAll: (SheetChoice) -> Unit
+) {
+    var showResize by rememberSaveable { mutableStateOf(false) }
+    var showConvert by rememberSaveable { mutableStateOf(false) }
+    var showRename by rememberSaveable { mutableStateOf(false) }
+    Column(modifier.fillMaxSize().padding(horizontal = 16.dp)) {
+        Card(colors = CardDefaults.cardColors(containerColor = PaleBlue), shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth().padding(top = 10.dp)) {
+            Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Default.Image, contentDescription = null, tint = DeepNavy, modifier = Modifier.size(28.dp))
+                Spacer(Modifier.width(12.dp))
+                Column {
+                    Text("${queueUris.size} photos", color = DeepNavy, fontWeight = FontWeight.Bold, fontSize = 17.sp)
+                    val infos = queueUris.mapNotNull { queueInfo[it.toString()] }
+                    val ready = infos.size == queueUris.size && infos.all { it.bytes >= 0 }
+                    Text(if (ready) formatBytes(infos.sumOf { it.bytes }) else "\u2026", color = Slate, fontSize = 13.sp)
+                }
+            }
+        }
+        val sharedBits = mutableListOf<String>()
+        if (sharedTargetLabel.isNotBlank()) sharedBits += "Size: $sharedTargetLabel"
+        if (currentFormatKey != "original") sharedBits += "Format: $currentFormatKey"
+        if (namePattern.isNotBlank()) sharedBits += "Names: $namePattern-1, $namePattern-2, \u2026"
+        if (sharedBits.isNotEmpty()) {
+            Text(sharedBits.joinToString("  \u00B7  "), color = SkyBlue, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 8.dp))
+        }
+        LazyVerticalGrid(
+            columns = GridCells.Fixed(3),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+            modifier = Modifier.weight(1f).padding(top = 10.dp)
+        ) {
+            items(queueUris.size) { index ->
+                val key = queueUris[index].toString()
+                val thumb = queueThumbs[key]
+                val info = queueInfo[key]
+                Column(Modifier.clickable { onPhoto(index) }) {
+                    Box(
+                        Modifier.fillMaxWidth().height(110.dp).clip(RoundedCornerShape(12.dp)).background(SoftGrey).border(1.dp, BorderGrey, RoundedCornerShape(12.dp)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        if (thumb != null) {
+                            Image(bitmap = thumb, contentDescription = "Photo ${index + 1}", modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+                        } else {
+                            Text("${index + 1}", color = Slate, fontSize = 14.sp)
+                        }
+                    }
+                    Text(info?.let { "${it.width} \u00D7 ${it.height} px" } ?: "\u2026", color = DeepNavy, fontSize = 11.sp, maxLines = 1, softWrap = false, modifier = Modifier.padding(top = 4.dp))
+                    Text(info?.let { if (it.bytes >= 0) formatBytes(it.bytes) else "\u2026" } ?: "", color = Slate, fontSize = 11.sp, maxLines = 1, softWrap = false)
+                }
+            }
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth().padding(top = 10.dp)) {
+            OutlinedButton(onClick = { showConvert = true }, modifier = Modifier.weight(1f), shape = RoundedCornerShape(10.dp)) {
+                Text("Convert", color = DeepNavy, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, softWrap = false)
+            }
+            OutlinedButton(onClick = { showRename = true }, modifier = Modifier.weight(1f), shape = RoundedCornerShape(10.dp)) {
+                Text("Rename", color = DeepNavy, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, softWrap = false)
+            }
+            OutlinedButton(onClick = { showResize = true }, modifier = Modifier.weight(1f), shape = RoundedCornerShape(10.dp)) {
+                Text("Resize", color = DeepNavy, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, softWrap = false)
+            }
+            OutlinedButton(onClick = { }, enabled = false, modifier = Modifier.weight(1f), shape = RoundedCornerShape(10.dp)) {
+                Text("Save", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, softWrap = false)
+            }
+        }
+        Text(
+            "Resize processes every photo one after another and takes you to the results, where Save exports them all (new copies, or replacing the originals). You can also open any photo and export it on its own.",
+            color = Slate,
+            fontSize = 11.sp,
+            lineHeight = 15.sp,
+            modifier = Modifier.padding(top = 4.dp, bottom = 10.dp)
+        )
+    }
+    if (showResize) {
+        val first = queueUris.firstOrNull()?.toString()?.let { queueInfo[it] }
+        DimensionsSheet(
+            title = "Resize all photos",
+            baseWidth = first?.width ?: 0,
+            baseHeight = first?.height ?: 0,
+            baseBytes = first?.bytes ?: -1L,
+            baseBitmap = null,
+            format = baseFormat,
+            quality = quality,
+            lastUsed = lastUsed,
+            fromQueue = true,
+            onDismiss = { showResize = false },
+            onApply = { choice ->
+                showResize = false
+                if (choice is SheetChoice.Absolute) onApplyTargetAll(choice.w, choice.h)
+                onProcessAll(choice)
+            }
+        )
+    }
+    if (showConvert) {
+        AlertDialog(
+            onDismissRequest = { showConvert = false },
+            title = { Text("Convert format", color = DeepNavy, fontWeight = FontWeight.Bold) },
+            text = {
+                Column {
+                    Text("Used when you export each photo. You can still change it per photo on its Export screen.", color = Slate, fontSize = 12.sp, lineHeight = 16.sp)
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth().padding(top = 10.dp).horizontalScroll(rememberScrollState())) {
+                        listOf("original" to "Original", "JPEG" to "JPG", "PNG" to "PNG", "WEBP" to "WEBP", "PDF" to "PDF").forEach { (value, label) ->
+                            val selected = currentFormatKey == value
+                            Surface(modifier = Modifier.clickable { onFormatAll(value); showConvert = false }, shape = RoundedCornerShape(9.dp), color = if (selected) SkyBlue else PaleBlue) {
+                                Text(label, modifier = Modifier.padding(horizontal = 12.dp, vertical = 9.dp), fontSize = 11.sp, color = if (selected) Color.White else DeepNavy, maxLines = 1, softWrap = false)
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = { TextButton(onClick = { showConvert = false }) { Text("Done", color = DeepNavy) } }
+        )
+    }
+    if (showRename) {
+        var pattern by rememberSaveable { mutableStateOf(namePattern) }
+        AlertDialog(
+            onDismissRequest = { showRename = false },
+            title = { Text("Name pattern", color = DeepNavy, fontWeight = FontWeight.Bold) },
+            text = {
+                Column {
+                    OutlinedTextField(value = pattern, onValueChange = { pattern = it }, modifier = Modifier.fillMaxWidth(), label = { Text("Base name") }, singleLine = true)
+                    Text(
+                        if (pattern.isBlank()) "Leave empty to use automatic names."
+                        else "Files: ${pattern.trim()}-1, ${pattern.trim()}-2, \u2026 (extension added automatically)",
+                        color = Slate, fontSize = 11.sp, lineHeight = 15.sp, modifier = Modifier.padding(top = 6.dp)
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { onPatternAll(pattern.trim()); showRename = false }) { Text("Apply", color = DeepNavy, fontWeight = FontWeight.Bold) }
+            },
+            dismissButton = { TextButton(onClick = { showRename = false }) { Text("Cancel", color = Slate) } }
+        )
     }
 }
 
@@ -1167,34 +2060,6 @@ private fun EditorScreen(
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Checkbox(checked = lockRatio, onCheckedChange = onLockRatio)
                 Text("Lock aspect ratio", color = DeepNavy, fontSize = 14.sp)
-            }
-            Text("Quick percentage", color = DeepNavy, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
-            Row(horizontalArrangement = Arrangement.spacedBy(5.dp), modifier = Modifier.fillMaxWidth().padding(top = 6.dp).horizontalScroll(rememberScrollState())) {
-                listOf(25, 50, 75, 100, 125, 150, 200).forEach { percent ->
-                    Surface(modifier = Modifier.clickable { onPercent(percent.toDouble()) }, shape = RoundedCornerShape(9.dp), color = PaleBlue) {
-                        Text(
-                            "$percent%",
-                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 9.dp),
-                            fontSize = 11.sp,
-                            color = DeepNavy,
-                            textAlign = TextAlign.Center,
-                            maxLines = 1,
-                            softWrap = false
-                        )
-                    }
-                }
-            }
-            OutlinedTextField(
-                value = customPercent,
-                onValueChange = onCustomPercent,
-                modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
-                label = { Text("Custom percentage (10-200)") },
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                singleLine = true,
-                isError = percentError.isNotBlank()
-            )
-            if (percentError.isNotBlank()) {
-                Text(percentError, color = Color(0xFFB3261E), fontSize = 12.sp, modifier = Modifier.padding(top = 4.dp))
             }
         } else {
             Text("${tool.label} controls will be added in the next development stages. Resize and export are available now.", color = DeepNavy, fontSize = 13.sp)
@@ -1898,6 +2763,36 @@ private fun rotateRight(bitmap: Bitmap): Bitmap {
     return Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true)
 }
 
+private data class QueueItemInfo(val width: Int, val height: Int, val bytes: Long)
+
+private fun probeImageInfo(context: Context, uri: Uri): QueueItemInfo? {
+    return try {
+        val bounds = context.contentResolver.openInputStream(uri)?.use { stream ->
+            BitmapFactory.Options().apply { inJustDecodeBounds = true }.also { BitmapFactory.decodeStream(stream, null, it) }
+        } ?: return null
+        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
+        QueueItemInfo(bounds.outWidth, bounds.outHeight, querySourceSize(context, uri))
+    } catch (e: Exception) {
+        null
+    }
+}
+
+private fun decodeThumbnail(context: Context, uri: Uri, maxSide: Int = 192): Bitmap? {
+    return try {
+        val bounds = context.contentResolver.openInputStream(uri)?.use { stream ->
+            BitmapFactory.Options().apply { inJustDecodeBounds = true }.also { BitmapFactory.decodeStream(stream, null, it) }
+        } ?: return null
+        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
+        var sample = 1
+        while (maxOf(bounds.outWidth, bounds.outHeight) / (sample * 2) > maxSide) sample *= 2
+        context.contentResolver.openInputStream(uri)?.use { stream ->
+            BitmapFactory.decodeStream(stream, null, BitmapFactory.Options().apply { inSampleSize = sample })
+        }
+    } catch (e: Exception) {
+        null
+    }
+}
+
 private fun decodeOrientedBitmap(context: Context, uri: Uri): Bitmap {
     val bounds = context.contentResolver.openInputStream(uri)?.use { stream ->
         BitmapFactory.Options().apply { inJustDecodeBounds = true }.also { options -> BitmapFactory.decodeStream(stream, null, options) }
@@ -2090,6 +2985,18 @@ private fun buildFileName(requestedName: String, format: ExportFormat): String {
     return "$base.${format.extension}"
 }
 
+private fun saveLastUsedTarget(context: Context, w: Int, h: Int) {
+    context.getSharedPreferences("pixelcraft_state", Context.MODE_PRIVATE).edit()
+        .putInt("last_resize_w", w).putInt("last_resize_h", h).apply()
+}
+
+private fun loadLastUsedTarget(context: Context): Pair<Int, Int>? {
+    val prefs = context.getSharedPreferences("pixelcraft_state", Context.MODE_PRIVATE)
+    val w = prefs.getInt("last_resize_w", -1)
+    val h = prefs.getInt("last_resize_h", -1)
+    return if (w > 0 && h > 0) w to h else null
+}
+
 private fun fmtUnit(px: Double, unit: String, dpi: Double): String {
     val df = DecimalFormat("#.##", java.text.DecimalFormatSymbols(java.util.Locale.US))
     return when (unit) {
@@ -2117,4 +3024,64 @@ private fun formatBytes(bytes: Long): String {
     val kb = bytes / 1024.0
     if (kb < 1024) return "${DecimalFormat("#,##0.#").format(kb)} KB"
     return "${DecimalFormat("#,##0.##").format(kb / 1024.0)} MB"
+}
+
+private sealed class SheetChoice {
+    data class Absolute(val w: Int, val h: Int) : SheetChoice()
+    data class Longest(val side: Int, val label: String) : SheetChoice()
+    data class Percent(val p: Int) : SheetChoice()
+    data class FileTarget(val bytes: Long, val label: String) : SheetChoice()
+}
+
+private data class ProcessedResult(val bitmap: Bitmap, val bytes: Long, val oldBytes: Long, val oldWidth: Int, val oldHeight: Int)
+
+private data class BatchProgress(val action: String, val current: Int, val total: Int, val percent: Int)
+
+private fun choiceTargetFor(choice: SheetChoice, srcW: Int, srcH: Int): Pair<Int, Int>? {
+    if (srcW <= 0 || srcH <= 0) return null
+    return when (choice) {
+        is SheetChoice.Absolute -> choice.w to choice.h
+        is SheetChoice.Longest -> {
+            val longest = maxOf(srcW, srcH)
+            val target = minOf(choice.side, longest)
+            val s = target.toDouble() / longest
+            maxOf(1, (srcW * s).toInt()) to maxOf(1, (srcH * s).toInt())
+        }
+        is SheetChoice.Percent -> maxOf(1, (srcW * choice.p / 100.0).toInt()) to maxOf(1, (srcH * choice.p / 100.0).toInt())
+        is SheetChoice.FileTarget -> null
+    }
+}
+
+private fun fitToFileSize(src: Bitmap, format: ExportFormat, quality: Int, targetBytes: Long, onProgress: (Int) -> Unit): Pair<Bitmap, Long> {
+    val effective = if (format == ExportFormat.PDF) ExportFormat.JPEG else format
+    fun probe(bmp: Bitmap, q: Int): Long {
+        val baos = ByteArrayOutputStream()
+        return if (bmp.compress(effective.compressFormat(), q, baos)) baos.size().toLong() else -1L
+    }
+    val ladder = if (effective == ExportFormat.PNG) listOf(100) else listOf(95, 85, 75, 65, 55, 45, 35, 25, 15)
+    var bmp = src
+    var owned: Bitmap? = null
+    var scale = 1.0
+    var iteration = 0
+    while (iteration < 8) {
+        iteration++
+        for (q in ladder) {
+            val size = probe(bmp, q)
+            if (size in 1..targetBytes) {
+                if (owned != null && owned !== bmp) owned!!.recycle()
+                return bmp to size
+            }
+        }
+        onProgress((iteration * 100) / 9)
+        scale *= 0.85
+        val nw = maxOf(24, (src.width * scale).toInt())
+        val nh = maxOf(24, (src.height * scale).toInt())
+        if (nw >= bmp.width || nh >= bmp.height) break
+        val next = Bitmap.createScaledBitmap(src, nw, nh, true)
+        if (owned != null) owned!!.recycle()
+        owned = next
+        bmp = next
+    }
+    val finalSize = probe(bmp, ladder.last())
+    return bmp to finalSize
 }
