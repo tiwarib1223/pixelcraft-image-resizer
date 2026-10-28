@@ -1,7 +1,7 @@
 # PixelCraft Image Resizer — Progress
 
 ## Current stage
-Stage 2D v0.5.1 (built on Stage 2C v0.3.0): queue overview screen, the full "Select new dimensions" Process sheet, batch processing of the whole queue with live percent progress, a result screen with savings summary, and batch save (new copies or replace originals). Stage 2C delivered: "My Photos" library screen, export format picker (JPG/PNG/WEBP/PDF), size unit picker (pixels/inch/cm/mm), queue thumbnail strip, and a persistent debug signing key. Stage 2 delivered: process-then-export workflow, aspect-ratio adaptation, camera capture, multi-select (up to 50) with one-by-one queue, recently edited photos, quality control.
+Stage 2D v0.5.2 (built on Stage 2C v0.3.0): queue overview screen, the full "Select new dimensions" Process sheet, batch processing of the whole queue with live percent progress, a result screen with savings summary, and batch save (new copies or replace originals). Stage 2C delivered: "My Photos" library screen, export format picker (JPG/PNG/WEBP/PDF), size unit picker (pixels/inch/cm/mm), queue thumbnail strip, and a persistent debug signing key. Stage 2 delivered: process-then-export workflow, aspect-ratio adaptation, camera capture, multi-select (up to 50) with one-by-one queue, recently edited photos, quality control.
 
 ## Stage 2C: implemented in source
 - New bottom-nav tab "My Photos" with three internal tabs, all zero-permission and on-device:
@@ -72,6 +72,9 @@ Stage 2D v0.5.1 (built on Stage 2C v0.3.0): queue overview screen, the full "Sel
 - Single-photo flow now goes straight to the result page after processing: picking a size in the options sheet (or a file-size target, or an aspect-ratio choice) lands on the Export page with the processed preview, the result dimensions, original-vs-new size comparison and all save/share options - instead of silently closing the sheet back onto the editor. The editor is still one back-arrow away for adjustments.
 
 
+
+## v0.5.2 fix (user-reported on v0.5.1: remove Before/After from the editor page)
+- Editor (Resize Image) page: removed the Before/After tabs and the "After:" info line - the editor simply shows the photo being edited. The before/after comparison now lives only on the result page (where it was added in v0.5.1).
 ## v0.5.1 fix (user-reported on v0.5.0: no DPI field under Pixels in the multi-photo sheet)
 - The options sheet's Custom row now shows the DPI field under ALL units, Pixels included (it was hidden unless inch/cm/mm was picked). Matches the editor page, where DPI has been visible under every unit since v0.4.8. Pixel input still ignores DPI for the math - the field is there for consistency as he asked.
 - Queue result screen: removed the "All N photos processed." snackbar that lingered over the bottom buttons - the green success card already carries the summary (user-reported on v0.5.0).

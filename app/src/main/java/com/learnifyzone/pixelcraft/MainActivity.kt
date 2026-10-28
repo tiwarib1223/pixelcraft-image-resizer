@@ -2044,23 +2044,13 @@ private fun EditorScreen(
                 }
             }
         }
-        Row(Modifier.fillMaxWidth().padding(vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            listOf(false to "Before", true to "After").forEach { (after, label) ->
-                val selected = beforeAfter == after
-                val enabled = !after || processed != null
-                OutlinedButton(
-                    onClick = { onBeforeAfter(after) },
-                    modifier = Modifier.weight(1f),
-                    enabled = enabled,
-                    colors = ButtonDefaults.outlinedButtonColors(containerColor = if (selected) PaleBlue else Color.Transparent)
-                ) { Text(label, color = if (enabled) DeepNavy else Slate) }
-            }
-        }
+        // No Before/After tabs here (his request): the comparison lives on the result page.
+        // The editor always shows the photo being edited.
         Box(
-            Modifier.fillMaxWidth().height(260.dp).clip(RoundedCornerShape(18.dp)).background(SoftGrey).border(1.dp, BorderGrey, RoundedCornerShape(18.dp)),
+            Modifier.fillMaxWidth().padding(vertical = 8.dp).height(260.dp).clip(RoundedCornerShape(18.dp)).background(SoftGrey).border(1.dp, BorderGrey, RoundedCornerShape(18.dp)),
             contentAlignment = Alignment.Center
         ) {
-            val display = if (beforeAfter) processed else working
+            val display = working
             val displayImage = remember(display) { display?.asImageBitmap() }
             if (displayImage != null) {
                 Image(bitmap = displayImage, contentDescription = "Image preview", modifier = Modifier.fillMaxSize().padding(8.dp), contentScale = ContentScale.Fit)
@@ -2077,10 +2067,6 @@ private fun EditorScreen(
         }
         val infoText = when {
             busy -> busyLabel.ifBlank { "Working…" }
-            beforeAfter && processed != null -> {
-                val est = if (estimatedBytes >= 0) "  ·  estimated ${formatBytes(estimatedBytes)}" else ""
-                "After: ${processed.width} × ${processed.height} px$est"
-            }
             working != null -> {
                 val size = if (sourceBytes >= 0) "  ·  ${formatBytes(sourceBytes)}" else ""
                 "Before: ${working.width} × ${working.height} px$size"
