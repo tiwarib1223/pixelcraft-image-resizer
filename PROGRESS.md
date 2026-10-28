@@ -1,7 +1,7 @@
 # PixelCraft Image Resizer — Progress
 
 ## Current stage
-Stage 2E v0.6.0 (built on Stage 2C v0.3.0): queue overview screen, the full "Select new dimensions" Process sheet, batch processing of the whole queue with live percent progress, a result screen with savings summary, and batch save (new copies or replace originals). Stage 2C delivered: "My Photos" library screen, export format picker (JPG/PNG/WEBP/PDF), size unit picker (pixels/inch/cm/mm), queue thumbnail strip, and a persistent debug signing key. Stage 2 delivered: process-then-export workflow, aspect-ratio adaptation, camera capture, multi-select (up to 50) with one-by-one queue, recently edited photos, quality control.
+Stage 2E v0.6.1 (built on Stage 2C v0.3.0): queue overview screen, the full "Select new dimensions" Process sheet, batch processing of the whole queue with live percent progress, a result screen with savings summary, and batch save (new copies or replace originals). Stage 2C delivered: "My Photos" library screen, export format picker (JPG/PNG/WEBP/PDF), size unit picker (pixels/inch/cm/mm), queue thumbnail strip, and a persistent debug signing key. Stage 2 delivered: process-then-export workflow, aspect-ratio adaptation, camera capture, multi-select (up to 50) with one-by-one queue, recently edited photos, quality control.
 
 ## Stage 2C: implemented in source
 - New bottom-nav tab "My Photos" with three internal tabs, all zero-permission and on-device:
@@ -74,6 +74,8 @@ Stage 2E v0.6.0 (built on Stage 2C v0.3.0): queue overview screen, the full "Sel
 
 
 
+## v0.6.1 fix (his report: "same image coming after close and start - Reset should give new image upload option")
+- Editor Reset now does a FULL reset: clears the loaded photo(s), queue, processed results, sizes, Background cut-out state AND the auto-saved draft for that photo, then returns to the Home page where he picks a new image. Before, Reset silently reloaded the same photo, and the draft could bring it back after closing the app.
 ## v0.6.0 feature (his ask: "Now build remove background" - the real feature, with his structure screenshot)
 - REMOVE BACKGROUND is live: home toolkit tile and the editor's Background tab both open the new tool (tile picks a photo first when none is loaded). Flow follows his structure screenshot in the app's design language: photo preview > "Remove Background" main action > Output Background (Transparent / White / Custom Color with swatches) > Width x Height with the SAME unit chips as Resize (px / Inches / cm / mm, same conversion behavior, DPI field visible under all units) > Continue to Export, where the existing Save as format row (Original / JPG / PNG / WEBP / PDF) and Download/save options take over.
 - The cut-out runs ON-DEVICE with ML Kit subject segmentation (no upload, works offline). Honest caveat: Play Services downloads the small model once on first use, so the very first tap needs internet; the UI says this, and first-use failure shows a plain-English retry hint. Model quality varies by photo - he should test with his real product photos.

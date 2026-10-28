@@ -944,6 +944,46 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
         screen = Screen.Home
     }
 
+    // Full reset (his request): clear the loaded photo(s) and every editing trace -
+    // including the auto-saved draft, so close/reopen cannot bring the photo back -
+    // and land on Home where he can pick a new image.
+    fun resetEditor() {
+        val uri = sourceUri
+        clearProcessedResults()
+        workingBitmap = null
+        processedBitmap = null
+        photoQueue = emptyList()
+        queueIndex = 0
+        queueTargetW = ""
+        queueTargetH = ""
+        queueNamePattern = ""
+        sourceUri = null
+        sourceIsCamera = false
+        sourceFormat = ExportFormat.UNKNOWN
+        sourceBytes = -1L
+        estimatedBytes = -1L
+        inputWidth = ""
+        inputHeight = ""
+        customPercent = ""
+        percentError = ""
+        beforeAfter = false
+        bgCutout = null
+        bgPreview = null
+        bgError = ""
+        bgWidth = ""
+        bgHeight = ""
+        exportDpi = 0
+        pendingPreset = null
+        pendingDraft = null
+        pendingBgTool = false
+        if (uri != null) {
+            scope.launch(Dispatchers.IO) { DraftsStore.remove(context, uri.toString()) }
+        }
+        tool = Tool.Resize
+        screen = Screen.Home
+        tab = MainTab.Home
+    }
+
     fun pickPhotos() {
         pendingLaunch = "pick"
     }
@@ -1210,7 +1250,7 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                             Text(
                                 "Reset",
                                 modifier = Modifier
-                                    .clickable { sourceUri?.let { loadPhoto(it, sourceIsCamera, fromQueue = photoQueue.isNotEmpty()) } }
+                                    .clickable { resetEditor() }
                                     .padding(horizontal = 14.dp),
                                 color = DeepNavy
                             )
