@@ -1,5 +1,18 @@
 # Phone-only GitHub setup (no command line)
 
+## Updating to a new version (current route - no zip upload needed)
+
+GitHub's web upload rejects files over 25 MB, and the project zip is bigger than that now. So updates arrive by LINK instead:
+
+1. Open the repository and go to **Actions → Bootstrap project → Run workflow**.
+2. Paste the zip link from WhatsApp into the **zip_url** box. If you were also given a sha256 check code, paste it into the **sha256** box (recommended, optional).
+3. Tap **Run workflow**. Bootstrap downloads the zip, unpacks it, commits the files and starts the Android build automatically.
+4. When **Android build** finishes, open it, download the `app-debug-apk` artifact and install it.
+
+(One-time setup for this route: replace `.github/workflows/bootstrap.yml` with the link-aware version - edit the file on GitHub, paste the new content, commit. After that, every update is just steps 1-4.)
+
+## Original first-time setup
+
 This route lets you upload the project as one ZIP file, then have GitHub Actions unpack and build it in the cloud.
 
 ## A. Upload the archive

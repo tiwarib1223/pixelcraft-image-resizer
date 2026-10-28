@@ -16,11 +16,11 @@ import java.util.concurrent.ConcurrentHashMap
  * On-device background removal, no upload.
  *
  * Engine chain, strongest first:
- *  1. ISNet (isnet-general-use, dynamically quantized to ~46 MB, bundled) - the
- *     current best general-purpose open segmentation model (rembg's top default):
- *     dichotomous segmentation at 1024px, sharp product edges and fine detail.
- *  2. U-2-Netp (bundled) - lighter alpha-matte model.
- *  3. ML Kit subject segmentation - last resort if neither ONNX model can init.
+ *  1. U-2-Netp (bundled) - light alpha-matte model, the quality he approved.
+ *  2. ML Kit subject segmentation - last resort if the ONNX model cannot init.
+ *
+ * (v0.8.0 tried the heavier ISNet model first; on his real photos it left
+ * background patches, so v0.8.1 reverted to U-2-Netp and the model was removed.)
  *
  * All engines produce an alpha matte that is upscaled with filtering, feathering
  * the edge instead of leaving a hard staircase. Everything runs fully offline.
@@ -36,7 +36,6 @@ object BackgroundRemoval {
         val std: FloatArray
     )
 
-    private val ISNET = ModelSpec("models/isnet-quant.onnx", 1024, floatArrayOf(0.5f, 0.5f, 0.5f), floatArrayOf(1f, 1f, 1f))
     private val U2NETP = ModelSpec("models/u2netp.onnx", 320, floatArrayOf(0.485f, 0.456f, 0.406f), floatArrayOf(0.229f, 0.224f, 0.225f))
 
     private val sessions = ConcurrentHashMap<String, OrtSession>()
@@ -53,7 +52,7 @@ object BackgroundRemoval {
     }
 
     fun cutOut(context: Context, bitmap: Bitmap): Bitmap {
-        for (spec in listOf(ISNET, U2NETP)) {
+        for (spec in listOf(U2NETP)) {
             try {
                 return onnxCutOut(context, bitmap, spec)
             } catch (e: Exception) {
