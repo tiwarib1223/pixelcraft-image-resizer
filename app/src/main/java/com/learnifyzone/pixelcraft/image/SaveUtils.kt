@@ -5,11 +5,12 @@ import android.graphics.Bitmap
 import android.net.Uri
 import android.os.Build
 
-/** Image formats for export decisions. Format picker UI arrives in Stage 3. */
+/** Image formats for export decisions. PDF is export-only (never a source format). */
 enum class ExportFormat(val extension: String, val mimeType: String) {
     JPEG("jpg", "image/jpeg"),
     PNG("png", "image/png"),
     WEBP("webp", "image/webp"),
+    PDF("pdf", "application/pdf"),
     UNKNOWN("", "");
 
     fun compressFormat(): Bitmap.CompressFormat = when (this) {

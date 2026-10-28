@@ -7,9 +7,11 @@ import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Matrix
+import android.graphics.pdf.PdfDocument
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.Environment
 import android.provider.MediaStore
 import android.provider.OpenableColumns
 import androidx.activity.ComponentActivity
@@ -53,7 +55,10 @@ import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Collections
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Image
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.PhotoCamera
+import androidx.compose.material.icons.filled.PhotoLibrary
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.RotateRight
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Tune
@@ -109,6 +114,8 @@ import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 import androidx.exifinterface.media.ExifInterface
+import com.learnifyzone.pixelcraft.data.Draft
+import com.learnifyzone.pixelcraft.data.DraftsStore
 import com.learnifyzone.pixelcraft.data.Preset
 import com.learnifyzone.pixelcraft.data.PresetStore
 import com.learnifyzone.pixelcraft.data.RecentsStore
@@ -124,6 +131,10 @@ import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.FileOutputStream
 import java.text.DecimalFormat
+import kotlin.math.roundToInt
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 private val SkyBlue = Color(0xFF42BFEF)
 private val Orange = Color(0xFFFF8A32)
@@ -140,7 +151,7 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-private enum class MainTab { Home, Presets, Settings }
+private enum class MainTab { Home, MyPhotos, Presets, Settings }
 private enum class Screen { Home, Editor, Export, Print, Success }
 private enum class Tool(val label: String) { Resize("Resize"), Presets("Presets"), Crop("Crop"), Background("Background"), Format("Format") }
 private enum class AdaptMode(val label: String) { FIT("Fit"), CROP("Crop"), STRETCH("Stretch") }
@@ -192,13 +203,26 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
     var recents by remember { mutableStateOf<List<Uri>>(emptyList()) }
     val recentThumbs = remember { mutableStateMapOf<String, ImageBitmap?>() }
     var pendingPreset by remember { mutableStateOf<Preset?>(null) }
+    var pendingDraft by remember { mutableStateOf<Draft?>(null) }
     var pendingCameraUri by remember { mutableStateOf<Uri?>(null) }
     var legacySaveAfterGrant by rememberSaveable { mutableStateOf(false) }
     var photoQueue by remember { mutableStateOf<List<Uri>>(emptyList()) }
     var queueIndex by rememberSaveable { mutableIntStateOf(0) }
+    val queueThumbs = remember { mutableStateMapOf<String, ImageBitmap?>() }
     var pendingLaunch by remember { mutableStateOf<String?>(null) }
+    var chosenFormat by rememberSaveable { mutableStateOf("original") }
+    var sizeUnit by rememberSaveable { mutableStateOf("px") }
+    var resizeDpi by rememberSaveable { mutableStateOf("300") }
 
-    fun outFormat(): ExportFormat = if (sourceFormat == ExportFormat.UNKNOWN) ExportFormat.JPEG else sourceFormat
+    fun sourceOutFormat(): ExportFormat = if (sourceFormat == ExportFormat.UNKNOWN) ExportFormat.JPEG else sourceFormat
+
+    fun outFormat(): ExportFormat = when (chosenFormat) {
+        "original" -> sourceOutFormat()
+        else -> runCatching { ExportFormat.valueOf(chosenFormat) }.getOrDefault(ExportFormat.JPEG)
+    }
+
+    fun currentDpi(): Double = resizeDpi.trim().replace(',', '.').toDoubleOrNull()?.takeIf { it > 0 } ?: 300.0
+
 
     fun invalidateProcessed() {
         processedBitmap = null
@@ -206,9 +230,21 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
         beforeAfter = false
     }
 
+    fun convertInputsToUnit(from: String, to: String) {
+        if (from == to) return
+        val dpi = currentDpi()
+        val wPx = parseToPx(inputWidth, from, dpi)
+        val hPx = parseToPx(inputHeight, from, dpi)
+        sizeUnit = to
+        inputWidth = wPx?.let { fmtUnit(it.toDouble(), to, dpi) } ?: ""
+        inputHeight = hPx?.let { fmtUnit(it.toDouble(), to, dpi) } ?: ""
+        invalidateProcessed()
+    }
+
     fun applyTarget(width: Int, height: Int) {
-        inputWidth = width.toString()
-        inputHeight = height.toString()
+        val dpi = currentDpi()
+        inputWidth = fmtUnit(width.toDouble(), sizeUnit, dpi)
+        inputHeight = fmtUnit(height.toDouble(), sizeUnit, dpi)
         invalidateProcessed()
     }
 
@@ -243,8 +279,7 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                 sourceFormat = format
                 sourceBytes = bytes
                 if (!keepTarget) {
-                    inputWidth = loaded.width.toString()
-                    inputHeight = loaded.height.toString()
+                    applyTarget(loaded.width, loaded.height)
                     customPercent = ""
                     percentError = ""
                 }
@@ -254,6 +289,15 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                 pendingPreset?.let { preset ->
                     applyTarget(preset.width, preset.height)
                     pendingPreset = null
+                }
+                pendingDraft?.let { draft ->
+                    val dw = draft.width.toIntOrNull()
+                    val dh = draft.height.toIntOrNull()
+                    if (dw != null && dh != null) applyTarget(dw, dh)
+                    lockRatio = draft.lockRatio
+                    quality = draft.quality
+                    pendingDraft = null
+                    invalidateProcessed()
                 }
                 screen = Screen.Editor
                 tool = Tool.Resize
@@ -267,9 +311,9 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
         }
     }
 
-    fun encodeProcessed(): ByteArray {
+    fun encodeProcessed(format: ExportFormat = outFormat()): ByteArray {
         val processed = processedBitmap ?: throw IllegalStateException("Nothing processed yet")
-        return encodeImage(context, sourceUri, processed, outFormat(), quality)
+        return encodeImage(context, sourceUri, processed, format, quality)
     }
 
     fun runProcess(targetW: Int, targetH: Int, mode: AdaptMode, anchor: CropAnchor, pad: FitPad) {
@@ -302,14 +346,15 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
 
     fun onProcess() {
         val src = workingBitmap
-        val w = inputWidth.toIntOrNull()
-        val h = inputHeight.toIntOrNull()
+        val dpi = currentDpi()
+        val w = parseToPx(inputWidth, sizeUnit, dpi)
+        val h = parseToPx(inputHeight, sizeUnit, dpi)
         if (src == null) {
             scope.launch { snackbar.showSnackbar("Select a photo first.") }
             return
         }
         if (w == null || h == null) {
-            scope.launch { snackbar.showSnackbar("Enter width and height in pixels first.") }
+            scope.launch { snackbar.showSnackbar("Enter the width and height first.") }
             return
         }
         val valid = runCatching { ResizeMath.validate(w, h) }.getOrElse {
@@ -324,6 +369,9 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
     }
 
     fun finishSave(name: String, sizeBytes: Long) {
+        sourceUri?.let { uri ->
+            scope.launch(Dispatchers.IO) { DraftsStore.remove(context, uri.toString()) }
+        }
         savedName = name
         savedSize = formatBytes(sizeBytes)
         screen = Screen.Success
@@ -334,9 +382,13 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
         busyLabel = "Saving…"
         scope.launch {
             try {
-                val bytes = withContext(Dispatchers.IO) { encodeProcessed() }
-                val filename = buildFileName(exportName, outFormat())
-                withContext(Dispatchers.IO) { saveToGallery(context, filename, outFormat().mimeType, bytes) }
+                val fmt = outFormat()
+                val bytes = withContext(Dispatchers.IO) { encodeProcessed(fmt) }
+                val filename = buildFileName(exportName, fmt)
+                withContext(Dispatchers.IO) {
+                    if (fmt == ExportFormat.PDF) saveToDownloads(context, filename, fmt.mimeType, bytes)
+                    else saveToGallery(context, filename, fmt.mimeType, bytes)
+                }
                 finishSave(filename, bytes.size.toLong())
             } catch (e: Exception) {
                 snackbar.showSnackbar("Save failed. Please try again.")
@@ -366,7 +418,7 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
         busyLabel = "Replacing original…"
         scope.launch {
             try {
-                val bytes = withContext(Dispatchers.IO) { encodeProcessed() }
+                val bytes = withContext(Dispatchers.IO) { encodeProcessed(sourceOutFormat()) }
                 withContext(Dispatchers.IO) {
                     context.contentResolver.openOutputStream(uri, "wt")?.use { it.write(bytes) }
                         ?: throw IllegalStateException("Could not open the original photo for writing")
@@ -457,6 +509,25 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
         }
     }
 
+    fun saveDraftIfNeeded() {
+        val uri = sourceUri
+        if (workingBitmap != null && uri != null && !sourceIsCamera) {
+            val dpi = currentDpi()
+            val draft = Draft(
+                uri.toString(),
+                parseToPx(inputWidth, sizeUnit, dpi)?.toString() ?: "",
+                parseToPx(inputHeight, sizeUnit, dpi)?.toString() ?: "",
+                lockRatio, quality, System.currentTimeMillis()
+            )
+            scope.launch(Dispatchers.IO) { DraftsStore.upsert(context, draft) }
+        }
+    }
+
+    fun leaveEditorToHome() {
+        saveDraftIfNeeded()
+        screen = Screen.Home
+    }
+
     fun pickPhotos() {
         pendingLaunch = "pick"
     }
@@ -490,6 +561,9 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
         if (uri != null) saveToChosenFolder(uri)
     }
     val createWebp = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("image/webp")) { uri ->
+        if (uri != null) saveToChosenFolder(uri)
+    }
+    val createPdf = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/pdf")) { uri ->
         if (uri != null) saveToChosenFolder(uri)
     }
     val legacyWritePermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
@@ -532,6 +606,7 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                     ExportFormat.JPEG -> createJpeg.launch(suggested)
                     ExportFormat.PNG -> createPng.launch(suggested)
                     ExportFormat.WEBP -> createWebp.launch(suggested)
+                    ExportFormat.PDF -> createPdf.launch(suggested)
                     ExportFormat.UNKNOWN -> createJpeg.launch(suggested)
                 }
             }
@@ -540,9 +615,26 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
         pendingLaunch = null
     }
 
+    LaunchedEffect(chosenFormat) {
+        val processed = processedBitmap
+        if (processed != null) {
+            estimatedBytes = withContext(Dispatchers.IO) { estimateBytes(processed, outFormat(), quality) }
+        }
+    }
+
     LaunchedEffect(screen) {
         if (screen == Screen.Home) {
             recents = withContext(Dispatchers.IO) { RecentsStore.list(context) }
+        }
+    }
+    LaunchedEffect(photoQueue) {
+        photoQueue.forEach { uri ->
+            val key = uri.toString()
+            if (!queueThumbs.containsKey(key)) {
+                queueThumbs[key] = null
+                val thumb = withContext(Dispatchers.IO) { RecentsStore.loadThumbnail(context, uri) }
+                queueThumbs[key] = thumb?.asImageBitmap()
+            }
         }
     }
     LaunchedEffect(recents) {
@@ -557,10 +649,10 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
     }
 
     BackHandler(enabled = screen != Screen.Home) {
-        screen = when (screen) {
-            Screen.Export -> Screen.Editor
-            Screen.Print -> Screen.Home
-            else -> Screen.Home
+        when (screen) {
+            Screen.Export -> screen = Screen.Editor
+            Screen.Editor -> leaveEditorToHome()
+            else -> screen = Screen.Home
         }
     }
 
@@ -581,7 +673,13 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                         )
                     },
                     navigationIcon = {
-                        IconButton(onClick = { screen = if (screen == Screen.Export) Screen.Editor else Screen.Home }) {
+                        IconButton(onClick = {
+                            when (screen) {
+                                Screen.Export -> screen = Screen.Editor
+                                Screen.Editor -> leaveEditorToHome()
+                                else -> screen = Screen.Home
+                            }
+                        }) {
                             Icon(Icons.Default.ArrowBack, contentDescription = "Back")
                         }
                     },
@@ -603,6 +701,7 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
             if (screen == Screen.Home) {
                 NavigationBar(containerColor = MaterialTheme.colorScheme.surface) {
                     NavigationBarItem(selected = tab == MainTab.Home, onClick = { tab = MainTab.Home }, icon = { Icon(Icons.Default.Home, null) }, label = { Text("Home") })
+                    NavigationBarItem(selected = tab == MainTab.MyPhotos, onClick = { tab = MainTab.MyPhotos }, icon = { Icon(Icons.Default.PhotoLibrary, null) }, label = { Text("My Photos") })
                     NavigationBarItem(selected = tab == MainTab.Presets, onClick = { tab = MainTab.Presets }, icon = { Icon(Icons.Default.Collections, null) }, label = { Text("Presets") })
                     NavigationBarItem(selected = tab == MainTab.Settings, onClick = { tab = MainTab.Settings }, icon = { Icon(Icons.Default.Settings, null) }, label = { Text("Settings") })
                 }
@@ -628,6 +727,16 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                         }
                     }
                 )
+                MainTab.MyPhotos -> MyPhotosScreen(
+                    modifier = Modifier.padding(padding),
+                    recents = recents,
+                    recentThumbs = recentThumbs,
+                    onOpenPhoto = { uri -> loadPhoto(uri, isCamera = false) },
+                    onOpenDraft = { draft ->
+                        pendingDraft = draft
+                        loadPhoto(Uri.parse(draft.sourceUri), isCamera = false)
+                    }
+                )
                 MainTab.Presets -> PresetsScreen(
                     modifier = Modifier.padding(padding),
                     onPreset = { preset ->
@@ -647,6 +756,13 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
             Screen.Editor -> EditorScreen(
                 modifier = Modifier.padding(padding),
                 queueLabel = if (photoQueue.size > 1) "Photo ${queueIndex + 1} of ${photoQueue.size}" else null,
+                queueUris = photoQueue,
+                queueIndex = queueIndex,
+                queueThumbs = queueThumbs,
+                onQueueSelect = { index ->
+                    queueIndex = index
+                    loadPhoto(photoQueue[index], isCamera = false, fromQueue = true)
+                },
                 working = workingBitmap,
                 processed = processedBitmap,
                 widthText = inputWidth,
@@ -654,6 +770,8 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                 customPercent = customPercent,
                 percentError = percentError,
                 lockRatio = lockRatio,
+                sizeUnit = sizeUnit,
+                resizeDpi = resizeDpi,
                 busy = busy,
                 busyLabel = busyLabel,
                 beforeAfter = beforeAfter,
@@ -665,7 +783,7 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                     tool = selected
                     when (selected) {
                         Tool.Resize -> Unit
-                        Tool.Presets -> { screen = Screen.Home; tab = MainTab.Presets }
+                        Tool.Presets -> { saveDraftIfNeeded(); screen = Screen.Home; tab = MainTab.Presets }
                         else -> scope.launch { snackbar.showSnackbar("${selected.label} is planned for a later stage. Resize and export are available now.") }
                     }
                 },
@@ -674,10 +792,10 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                     invalidateProcessed()
                     if (lockRatio) {
                         val old = workingBitmap
-                        val newWidth = value.toIntOrNull()
+                        val newWidth = parseToPx(value, sizeUnit, currentDpi())
                         if (old != null && newWidth != null && newWidth > 0) {
                             val size = runCatching { ResizeMath.fromWidth(old.width, old.height, newWidth) }.getOrNull()
-                            if (size != null) inputHeight = size.height.toString()
+                            if (size != null) inputHeight = fmtUnit(size.height.toDouble(), sizeUnit, currentDpi())
                         }
                     }
                 },
@@ -685,13 +803,15 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                     inputHeight = value
                     invalidateProcessed()
                     val old = workingBitmap
-                    val newHeight = value.toIntOrNull()
+                    val newHeight = parseToPx(value, sizeUnit, currentDpi())
                     if (lockRatio && old != null && newHeight != null && newHeight > 0) {
                         val newWidth = (newHeight.toDouble() * old.width / old.height).toInt().coerceAtLeast(1)
-                        inputWidth = newWidth.toString()
+                        inputWidth = fmtUnit(newWidth.toDouble(), sizeUnit, currentDpi())
                     }
                 },
                 onLockRatio = { lockRatio = it },
+                onSizeUnit = { convertInputsToUnit(sizeUnit, it) },
+                onResizeDpi = { resizeDpi = it },
                 onPercent = { applyPercent(it) },
                 onCustomPercent = { value ->
                     customPercent = value
@@ -725,6 +845,9 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                 exportName = exportName,
                 onName = { exportName = it },
                 format = outFormat(),
+                chosenFormat = chosenFormat,
+                originalFormatLabel = if (sourceFormat == ExportFormat.UNKNOWN) "Original (JPG)" else "Original (${sourceFormat.name})",
+                onChosenFormat = { chosenFormat = it },
                 quality = quality,
                 onQuality = { quality = it },
                 onQualitySettled = {
@@ -740,7 +863,7 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                     sourceIsCamera -> "Camera captures are new photos, so there is no gallery original to replace."
                     Build.VERSION.SDK_INT < 30 -> "Replace original needs Android 11 or newer."
                     else -> "Replace the photo you picked with this edited version. Your gallery app will ask you to confirm."
-                },
+                } + " Replace original always keeps the original file format.",
                 busy = busy,
                 busyLabel = busyLabel,
                 onSaveNew = { saveAsNew() },
@@ -900,6 +1023,10 @@ private fun HomeScreen(
 private fun EditorScreen(
     modifier: Modifier,
     queueLabel: String?,
+    queueUris: List<Uri>,
+    queueIndex: Int,
+    queueThumbs: Map<String, ImageBitmap?>,
+    onQueueSelect: (Int) -> Unit,
     working: Bitmap?,
     processed: Bitmap?,
     widthText: String,
@@ -907,6 +1034,8 @@ private fun EditorScreen(
     customPercent: String,
     percentError: String,
     lockRatio: Boolean,
+    sizeUnit: String,
+    resizeDpi: String,
     busy: Boolean,
     busyLabel: String,
     beforeAfter: Boolean,
@@ -918,6 +1047,8 @@ private fun EditorScreen(
     onWidth: (String) -> Unit,
     onHeight: (String) -> Unit,
     onLockRatio: (Boolean) -> Unit,
+    onSizeUnit: (String) -> Unit,
+    onResizeDpi: (String) -> Unit,
     onPercent: (Double) -> Unit,
     onCustomPercent: (String) -> Unit,
     onRotate: () -> Unit,
@@ -927,6 +1058,26 @@ private fun EditorScreen(
     Column(modifier.fillMaxSize().padding(horizontal = 16.dp).verticalScroll(rememberScrollState())) {
         if (queueLabel != null) {
             Text(queueLabel, color = SkyBlue, fontWeight = FontWeight.SemiBold, fontSize = 13.sp, modifier = Modifier.padding(top = 8.dp))
+        }
+        if (queueUris.size > 1) {
+            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth().padding(top = 6.dp)) {
+                items(queueUris.size) { index ->
+                    val thumb = queueThumbs[queueUris[index].toString()]
+                    val selected = index == queueIndex
+                    Box(
+                        Modifier.size(56.dp).clip(RoundedCornerShape(10.dp)).background(SoftGrey)
+                            .border(if (selected) 2.dp else 1.dp, if (selected) SkyBlue else BorderGrey, RoundedCornerShape(10.dp))
+                            .clickable { onQueueSelect(index) },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        if (thumb != null) {
+                            Image(bitmap = thumb, contentDescription = "Photo ${index + 1}", modifier = Modifier.fillMaxSize().clip(RoundedCornerShape(10.dp)), contentScale = ContentScale.Crop)
+                        } else {
+                            Text("${index + 1}", color = Slate, fontSize = 12.sp)
+                        }
+                    }
+                }
+            }
         }
         Row(Modifier.fillMaxWidth().padding(vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             listOf(false to "Before", true to "After").forEach { (after, label) ->
@@ -991,9 +1142,27 @@ private fun EditorScreen(
         }
         Spacer(Modifier.height(12.dp))
         if (tool == Tool.Resize) {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedTextField(value = widthText, onValueChange = onWidth, modifier = Modifier.weight(1f), label = { Text("Width (px)") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), singleLine = true)
-                OutlinedTextField(value = heightText, onValueChange = onHeight, modifier = Modifier.weight(1f), label = { Text("Height (px)") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), singleLine = true)
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())) {
+                listOf("px" to "Pixels", "in" to "Inches", "cm" to "cm", "mm" to "mm").forEach { (value, label) ->
+                    val selected = sizeUnit == value
+                    Surface(modifier = Modifier.clickable { onSizeUnit(value) }, shape = RoundedCornerShape(9.dp), color = if (selected) SkyBlue else PaleBlue) {
+                        Text(label, modifier = Modifier.padding(horizontal = 12.dp, vertical = 9.dp), fontSize = 11.sp, color = if (selected) Color.White else DeepNavy, textAlign = TextAlign.Center, maxLines = 1, softWrap = false)
+                    }
+                }
+            }
+            if (sizeUnit != "px") {
+                OutlinedTextField(
+                    value = resizeDpi,
+                    onValueChange = onResizeDpi,
+                    modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                    label = { Text("DPI - 300 is standard for print") },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    singleLine = true
+                )
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 8.dp)) {
+                OutlinedTextField(value = widthText, onValueChange = onWidth, modifier = Modifier.weight(1f), label = { Text("Width ($sizeUnit)") }, keyboardOptions = KeyboardOptions(keyboardType = if (sizeUnit == "px") KeyboardType.Number else KeyboardType.Decimal), singleLine = true)
+                OutlinedTextField(value = heightText, onValueChange = onHeight, modifier = Modifier.weight(1f), label = { Text("Height ($sizeUnit)") }, keyboardOptions = KeyboardOptions(keyboardType = if (sizeUnit == "px") KeyboardType.Number else KeyboardType.Decimal), singleLine = true)
             }
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Checkbox(checked = lockRatio, onCheckedChange = onLockRatio)
@@ -1221,6 +1390,9 @@ private fun ExportScreen(
     exportName: String,
     onName: (String) -> Unit,
     format: ExportFormat,
+    chosenFormat: String,
+    originalFormatLabel: String,
+    onChosenFormat: (String) -> Unit,
     quality: Int,
     onQuality: (Int) -> Unit,
     onQualitySettled: () -> Unit,
@@ -1273,13 +1445,22 @@ private fun ExportScreen(
             label = { Text("File name") },
             singleLine = true
         )
-        Text(
-            "Format: ${format.name} (same as the original)" + if (format == ExportFormat.PNG) " · PNG ignores quality" else "",
-            color = Slate,
-            fontSize = 12.sp,
-            modifier = Modifier.padding(top = 6.dp)
-        )
-        if (format != ExportFormat.PNG && processed != null) {
+        Text("Save as format", color = DeepNavy, fontWeight = FontWeight.SemiBold, fontSize = 13.sp, modifier = Modifier.padding(top = 10.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth().padding(top = 6.dp).horizontalScroll(rememberScrollState())) {
+            listOf("original" to originalFormatLabel, "JPEG" to "JPG", "PNG" to "PNG", "WEBP" to "WEBP", "PDF" to "PDF").forEach { (value, label) ->
+                val selected = chosenFormat == value
+                Surface(modifier = Modifier.clickable { onChosenFormat(value) }, shape = RoundedCornerShape(9.dp), color = if (selected) SkyBlue else PaleBlue) {
+                    Text(label, modifier = Modifier.padding(horizontal = 12.dp, vertical = 9.dp), fontSize = 11.sp, color = if (selected) Color.White else DeepNavy, textAlign = TextAlign.Center, maxLines = 1, softWrap = false)
+                }
+            }
+        }
+        if (format == ExportFormat.PNG) {
+            Text("PNG keeps full quality and ignores the quality slider.", color = Slate, fontSize = 11.sp, lineHeight = 15.sp, modifier = Modifier.padding(top = 6.dp))
+        }
+        if (format == ExportFormat.PDF) {
+            Text("PDF files are saved to the Download/PixelCraft folder. The quality slider does not apply.", color = Slate, fontSize = 11.sp, lineHeight = 15.sp, modifier = Modifier.padding(top = 6.dp))
+        }
+        if (format != ExportFormat.PNG && format != ExportFormat.PDF && processed != null) {
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 4.dp)) {
                 Text("Quality: $quality%", color = DeepNavy, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
                 Slider(
@@ -1317,7 +1498,8 @@ private fun ExportScreen(
             Text("Share…", color = DeepNavy)
         }
         Text(
-            "The original photo is never changed unless you choose Replace original. New files go to Pictures/PixelCraft.",
+            if (format == ExportFormat.PDF) "The original photo is never changed unless you choose Replace original. PDF files go to Download/PixelCraft."
+            else "The original photo is never changed unless you choose Replace original. New files go to Pictures/PixelCraft.",
             color = Slate,
             fontSize = 11.sp,
             lineHeight = 15.sp,
@@ -1341,6 +1523,251 @@ private fun SuccessScreen(modifier: Modifier, name: String, size: String, nextLa
         Button(onClick = onAnother, modifier = Modifier.fillMaxWidth().height(52.dp), colors = ButtonDefaults.buttonColors(containerColor = Orange)) { Text("Edit another photo", color = Color.White) }
         OutlinedButton(onClick = onDone, modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) { Text("Done", color = DeepNavy) }
     }
+}
+
+private enum class PhotosTab(val label: String) { Recent("Recent"), Saved("Saved"), Drafts("Drafts") }
+
+private data class SavedPhoto(val uri: Uri, val name: String, val sizeBytes: Long)
+
+@Composable
+private fun MyPhotosScreen(
+    modifier: Modifier,
+    recents: List<Uri>,
+    recentThumbs: Map<String, ImageBitmap?>,
+    onOpenPhoto: (Uri) -> Unit,
+    onOpenDraft: (Draft) -> Unit
+) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val scope = rememberCoroutineScope()
+    var shareMsg by remember { mutableStateOf("") }
+    var photosTab by rememberSaveable { mutableStateOf(PhotosTab.Recent) }
+    var saved by remember { mutableStateOf<List<SavedPhoto>?>(null) }
+    var drafts by remember { mutableStateOf<List<Draft>>(emptyList()) }
+    val savedThumbs = remember { mutableStateMapOf<String, ImageBitmap?>() }
+    val draftThumbs = remember { mutableStateMapOf<String, ImageBitmap?>() }
+
+    LaunchedEffect(photosTab) {
+        if (photosTab == PhotosTab.Saved) {
+            saved = withContext(Dispatchers.IO) { querySavedExports(context) }
+        }
+        if (photosTab == PhotosTab.Drafts) {
+            drafts = withContext(Dispatchers.IO) { DraftsStore.list(context) }
+        }
+    }
+    LaunchedEffect(saved) {
+        saved?.forEach { sp ->
+            val key = sp.uri.toString()
+            if (!savedThumbs.containsKey(key)) {
+                savedThumbs[key] = null
+                savedThumbs[key] = withContext(Dispatchers.IO) { RecentsStore.loadThumbnail(context, sp.uri) }?.asImageBitmap()
+            }
+        }
+    }
+    LaunchedEffect(drafts) {
+        drafts.forEach { draft ->
+            val key = draft.sourceUri
+            if (!draftThumbs.containsKey(key)) {
+                draftThumbs[key] = null
+                draftThumbs[key] = withContext(Dispatchers.IO) { RecentsStore.loadThumbnail(context, Uri.parse(key)) }?.asImageBitmap()
+            }
+        }
+    }
+
+    Column(modifier.fillMaxSize().padding(horizontal = 16.dp)) {
+        Text("My Photos", color = DeepNavy, fontSize = 26.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 12.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth().padding(vertical = 10.dp)) {
+            PhotosTab.values().forEach { item ->
+                val selected = photosTab == item
+                Surface(
+                    modifier = Modifier.clickable { photosTab = item },
+                    shape = RoundedCornerShape(10.dp),
+                    color = if (selected) SkyBlue else SoftGrey
+                ) {
+                    Text(
+                        item.label,
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 9.dp),
+                        fontSize = 13.sp,
+                        color = if (selected) Color.White else DeepNavy,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        softWrap = false
+                    )
+                }
+            }
+        }
+        when (photosTab) {
+            PhotosTab.Recent -> {
+                if (recents.isEmpty()) {
+                    EmptyNote("Photos you edit will appear here. Nothing yet - pick a photo from Home and edit it.")
+                } else {
+                    Column(Modifier.verticalScroll(rememberScrollState())) {
+                        recents.chunked(3).forEach { rowItems ->
+                            Row(Modifier.fillMaxWidth().padding(bottom = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                rowItems.forEach { uri ->
+                                    PhotoCell(
+                                        thumb = recentThumbs[uri.toString()],
+                                        modifier = Modifier.weight(1f).height(100.dp),
+                                        onClick = { onOpenPhoto(uri) }
+                                    )
+                                }
+                                repeat(3 - rowItems.size) { Spacer(Modifier.weight(1f)) }
+                            }
+                        }
+                    }
+                }
+            }
+            PhotosTab.Saved -> {
+                val list = saved
+                when {
+                    list == null -> Text("Loading…", color = Slate, fontSize = 13.sp)
+                    Build.VERSION.SDK_INT < 29 -> EmptyNote("The saved-exports list needs Android 10 or newer. Your exports are still in the Pictures/PixelCraft folder.")
+                    list.isEmpty() -> EmptyNote("Nothing saved yet. Exported photos land here and in the Pictures/PixelCraft folder in your gallery.")
+                    else -> Column(Modifier.verticalScroll(rememberScrollState())) {
+                        list.forEach { sp ->
+                            Row(
+                                Modifier.fillMaxWidth().padding(vertical = 4.dp).clip(RoundedCornerShape(12.dp)).background(SoftGrey).clickable { onOpenPhoto(sp.uri) }.padding(10.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                PhotoCell(thumb = savedThumbs[sp.uri.toString()], modifier = Modifier.size(52.dp), onClick = { onOpenPhoto(sp.uri) })
+                                Column(Modifier.weight(1f).padding(start = 12.dp)) {
+                                    Text(sp.name, color = DeepNavy, fontWeight = FontWeight.SemiBold, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    Text(formatBytes(sp.sizeBytes), color = Slate, fontSize = 12.sp)
+                                }
+                                IconButton(onClick = {
+                                    scope.launch {
+                                        try {
+                                            shareExported(context, sp.uri, sp.name)
+                                        } catch (e: Exception) {
+                                            shareMsg = "Couldn't share this photo."
+                                        }
+                                    }
+                                }) {
+                                    Icon(Icons.Default.Share, contentDescription = "Share", tint = DeepNavy, modifier = Modifier.size(20.dp))
+                                }
+                            }
+                        }
+                        if (shareMsg.isNotBlank()) {
+                            Text(shareMsg, color = Color(0xFFB3261E), fontSize = 12.sp, modifier = Modifier.padding(top = 6.dp))
+                        }
+                        Text("Tapping a saved photo opens it as a new editing source.", color = Slate, fontSize = 11.sp, modifier = Modifier.padding(vertical = 8.dp))
+                    }
+                }
+            }
+            PhotosTab.Drafts -> {
+                if (drafts.isEmpty()) {
+                    EmptyNote("No drafts. If you leave the editor without exporting, your photo and settings are saved here automatically.")
+                } else {
+                    Column(Modifier.verticalScroll(rememberScrollState())) {
+                        drafts.forEach { draft ->
+                            Row(
+                                Modifier.fillMaxWidth().padding(vertical = 4.dp).clip(RoundedCornerShape(12.dp)).background(SoftGrey).clickable { onOpenDraft(draft) }.padding(10.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                PhotoCell(thumb = draftThumbs[draft.sourceUri], modifier = Modifier.size(52.dp), onClick = { onOpenDraft(draft) })
+                                Column(Modifier.weight(1f).padding(start = 12.dp)) {
+                                    Text("Target: ${draft.width} × ${draft.height} px", color = DeepNavy, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                                    Text(
+                                        "Quality ${draft.quality}% · " + formatDraftTime(draft.updatedAt),
+                                        color = Slate,
+                                        fontSize = 12.sp
+                                    )
+                                }
+                                IconButton(onClick = {
+                                    scope.launch {
+                                        withContext(Dispatchers.IO) { DraftsStore.remove(context, draft.sourceUri) }
+                                        drafts = withContext(Dispatchers.IO) { DraftsStore.list(context) }
+                                    }
+                                }) {
+                                    Icon(Icons.Default.Delete, contentDescription = "Delete draft", tint = Slate, modifier = Modifier.size(20.dp))
+                                }
+                            }
+                        }
+                        Text("Drafts keep your photo and settings, not the processed result - tap Process again after reopening.", color = Slate, fontSize = 11.sp, lineHeight = 15.sp, modifier = Modifier.padding(vertical = 8.dp))
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun PhotoCell(thumb: ImageBitmap?, modifier: Modifier, onClick: () -> Unit) {
+    Box(
+        modifier = modifier
+            .clip(RoundedCornerShape(12.dp))
+            .background(SoftGrey)
+            .border(1.dp, BorderGrey, RoundedCornerShape(12.dp))
+            .clickable { onClick() },
+        contentAlignment = Alignment.Center
+    ) {
+        if (thumb != null) {
+            Image(bitmap = thumb, contentDescription = "Photo", modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+        } else {
+            Icon(Icons.Default.Image, contentDescription = null, tint = Slate, modifier = Modifier.size(26.dp))
+        }
+    }
+}
+
+@Composable
+private fun EmptyNote(text: String) {
+    Card(colors = CardDefaults.cardColors(containerColor = PaleBlue), shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth().padding(top = 6.dp)) {
+        Text(text, color = Slate, fontSize = 13.sp, lineHeight = 18.sp, modifier = Modifier.padding(16.dp))
+    }
+}
+
+private fun formatDraftTime(updatedAt: Long): String {
+    return try {
+        SimpleDateFormat("d MMM, HH:mm", Locale.getDefault()).format(Date(updatedAt))
+    } catch (e: Exception) {
+        ""
+    }
+}
+
+private fun querySavedExports(context: Context): List<SavedPhoto> {
+    if (Build.VERSION.SDK_INT < 29) return emptyList()
+    val out = mutableListOf<SavedPhoto>()
+    val projection = arrayOf(
+        MediaStore.Images.Media._ID,
+        MediaStore.Images.Media.DISPLAY_NAME,
+        MediaStore.Images.Media.SIZE
+    )
+    val selection = "${MediaStore.Images.Media.RELATIVE_PATH} LIKE ?"
+    val args = arrayOf("Pictures/PixelCraft%")
+    val sort = "${MediaStore.Images.Media.DATE_ADDED} DESC"
+    try {
+        context.contentResolver.query(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, projection, selection, args, sort)?.use { cursor ->
+            val idCol = cursor.getColumnIndexOrThrow(MediaStore.Images.Media._ID)
+            val nameCol = cursor.getColumnIndexOrThrow(MediaStore.Images.Media.DISPLAY_NAME)
+            val sizeCol = cursor.getColumnIndexOrThrow(MediaStore.Images.Media.SIZE)
+            while (cursor.moveToNext()) {
+                val id = cursor.getLong(idCol)
+                val uri = android.content.ContentUris.withAppendedId(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, id)
+                out.add(SavedPhoto(uri, cursor.getString(nameCol) ?: "photo", cursor.getLong(sizeCol)))
+            }
+        }
+    } catch (e: Exception) {
+        // Return what we have; an empty list shows the honest empty state.
+    }
+    return out
+}
+
+private suspend fun shareExported(context: Context, uri: Uri, displayName: String) {
+    val pair = withContext(Dispatchers.IO) {
+        val dir = File(context.cacheDir, "images").apply { mkdirs() }
+        val ext = displayName.substringAfterLast('.', "jpg")
+        val file = File(dir, "share_${System.currentTimeMillis()}.$ext")
+        context.contentResolver.openInputStream(uri)?.use { input ->
+            FileOutputStream(file).use { output -> input.copyTo(output) }
+        } ?: throw IllegalStateException("Could not read the saved photo")
+        val shareUri = FileProvider.getUriForFile(context, context.packageName + ".fileprovider", file)
+        shareUri to (context.contentResolver.getType(uri) ?: "image/jpeg")
+    }
+    val intent = Intent(Intent.ACTION_SEND).apply {
+        type = pair.second
+        putExtra(Intent.EXTRA_STREAM, pair.first)
+        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+    }
+    context.startActivity(Intent.createChooser(intent, "Share photo"))
 }
 
 @Composable
@@ -1427,8 +1854,8 @@ private fun SettingsScreen(modifier: Modifier, darkMode: Boolean, onDarkMode: (B
         )
         Spacer(Modifier.height(14.dp))
         Text("PixelCraft Image Resizer", color = DeepNavy, fontWeight = FontWeight.SemiBold)
-        Text("Version 0.2.0 · Learnify Zone", color = Slate, fontSize = 13.sp)
-        Text("Stage 2 build: process-then-export, aspect-ratio choices, camera capture, recently edited, quality control. Ads are not enabled in this development version.", color = Slate, fontSize = 12.sp, lineHeight = 17.sp, modifier = Modifier.padding(top = 14.dp))
+        Text("Version 0.3.0 · Learnify Zone", color = Slate, fontSize = 13.sp)
+        Text("Stage 2C build: process-then-export, aspect-ratio choices, camera capture, multi-select, My Photos (recent, saved, drafts), quality control. Ads are not enabled in this development version.", color = Slate, fontSize = 12.sp, lineHeight = 17.sp, modifier = Modifier.padding(top = 14.dp))
     }
 }
 
@@ -1505,6 +1932,19 @@ private fun decodeOrientedBitmap(context: Context, uri: Uri): Bitmap {
  * orientation is normalised because the pixels are already rotated correctly.
  */
 private fun encodeImage(context: Context, exifSource: Uri?, bitmap: Bitmap, format: ExportFormat, quality: Int): ByteArray {
+    if (format == ExportFormat.PDF) {
+        val document = PdfDocument()
+        try {
+            val page = document.startPage(PdfDocument.PageInfo.Builder(bitmap.width, bitmap.height, 1).create())
+            page.canvas.drawBitmap(bitmap, 0f, 0f, null)
+            document.finishPage(page)
+            val baos = ByteArrayOutputStream()
+            document.writeTo(baos)
+            return baos.toByteArray()
+        } finally {
+            document.close()
+        }
+    }
     if (format == ExportFormat.JPEG) {
         val tmp = File(context.cacheDir, "encode_${System.currentTimeMillis()}.jpg")
         try {
@@ -1569,9 +2009,10 @@ private fun copyExifBestEffort(context: Context, source: Uri, outFile: File, wid
 
 private fun estimateBytes(bitmap: Bitmap, format: ExportFormat, quality: Int): Long {
     return try {
+        val effective = if (format == ExportFormat.PDF) ExportFormat.JPEG else format
         val baos = ByteArrayOutputStream()
-        val q = if (format == ExportFormat.PNG) 100 else quality
-        if (bitmap.compress(format.compressFormat(), q, baos)) baos.size().toLong() else -1L
+        val q = if (effective == ExportFormat.PNG) 100 else quality
+        if (bitmap.compress(effective.compressFormat(), q, baos)) baos.size().toLong() else -1L
     } catch (e: Exception) {
         -1L
     }
@@ -1601,6 +2042,32 @@ private fun saveToGallery(context: Context, filename: String, mimeType: String, 
     }
 }
 
+private fun saveToDownloads(context: Context, filename: String, mimeType: String, bytes: ByteArray) {
+    val resolver = context.contentResolver
+    if (Build.VERSION.SDK_INT >= 29) {
+        val values = ContentValues().apply {
+            put(MediaStore.Downloads.DISPLAY_NAME, filename)
+            put(MediaStore.Downloads.MIME_TYPE, mimeType)
+            put(MediaStore.Downloads.RELATIVE_PATH, "Download/PixelCraft")
+            put(MediaStore.Downloads.IS_PENDING, 1)
+        }
+        val uri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
+            ?: throw IllegalStateException("Could not create the output file")
+        try {
+            resolver.openOutputStream(uri, "w")?.use { it.write(bytes) }
+                ?: throw IllegalStateException("Could not open the output file")
+            resolver.update(uri, ContentValues().apply { put(MediaStore.Downloads.IS_PENDING, 0) }, null, null)
+        } catch (e: Exception) {
+            resolver.delete(uri, null, null)
+            throw e
+        }
+    } else {
+        val dir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+        val outDir = File(dir, "PixelCraft").apply { mkdirs() }
+        FileOutputStream(File(outDir, filename)).use { it.write(bytes) }
+    }
+}
+
 private fun querySourceSize(context: Context, uri: Uri): Long {
     try {
         context.contentResolver.query(uri, arrayOf(OpenableColumns.SIZE), null, null, null)?.use { cursor ->
@@ -1619,8 +2086,30 @@ private fun suggestBaseName(width: Int, height: Int): String = "pixelcraft-${wid
 private fun buildFileName(requestedName: String, format: ExportFormat): String {
     val cleaned = requestedName.trim().ifBlank { "pixelcraft-image" }
         .replace(Regex("[^A-Za-z0-9._ -]"), "_").take(80)
-    val base = cleaned.replace(Regex("\\.(png|jpe?g|webp)$", RegexOption.IGNORE_CASE), "").ifBlank { "pixelcraft-image" }
+    val base = cleaned.replace(Regex("\\.(png|jpe?g|webp|pdf)$", RegexOption.IGNORE_CASE), "").ifBlank { "pixelcraft-image" }
     return "$base.${format.extension}"
+}
+
+private fun fmtUnit(px: Double, unit: String, dpi: Double): String {
+    val df = DecimalFormat("#.##", java.text.DecimalFormatSymbols(java.util.Locale.US))
+    return when (unit) {
+        "in" -> df.format(px / dpi)
+        "cm" -> df.format(px * 2.54 / dpi)
+        "mm" -> df.format(px * 25.4 / dpi)
+        else -> px.roundToInt().toString()
+    }
+}
+
+private fun parseToPx(text: String, unit: String, dpi: Double): Int? {
+    val v = text.trim().replace(',', '.').toDoubleOrNull() ?: return null
+    if (v <= 0.0) return null
+    val px = when (unit) {
+        "in" -> v * dpi
+        "cm" -> v * dpi / 2.54
+        "mm" -> v * dpi / 25.4
+        else -> v
+    }
+    return px.roundToInt().coerceAtLeast(1)
 }
 
 private fun formatBytes(bytes: Long): String {

@@ -1,7 +1,20 @@
 # PixelCraft Image Resizer — Progress
 
 ## Current stage
-Stage 2: process-then-export workflow, aspect-ratio adaptation, camera capture, recently edited photos, quality control.
+Stage 2C v0.3.0 (built on Stage 2): "My Photos" library screen, export format picker (JPG/PNG/WEBP/PDF), size unit picker (pixels/inch/cm/mm), queue thumbnail strip, and a persistent debug signing key so updates install over the previous install. Stage 2 delivered: process-then-export workflow, aspect-ratio adaptation, camera capture, multi-select (up to 50) with one-by-one queue, recently edited photos, quality control.
+
+## Stage 2C: implemented in source
+- New bottom-nav tab "My Photos" with three internal tabs, all zero-permission and on-device:
+  - Recent: grid of photos opened in PixelCraft (persisted picker grants; same data as the Home row).
+  - Saved: the app's own exports from Pictures/PixelCraft (an app can always see files it created; needs Android 10+), with tap-to-open as a new editing source and a share button.
+  - Drafts: edit sessions AUTO-SAVED when leaving the editor without exporting (photo reference + target size + aspect lock + quality). Tapping a draft reopens the editor exactly where the user left off; processing is one tap on Process again. Drafts are removed automatically when that photo is exported. Camera captures are not drafted (their cache files are temporary).
+- Choosing NEW photos still goes through the system photo picker (the zero-permission "Original/Albums" equivalent). An in-app full-gallery tab would require the photo-library permission the user declined.
+
+## v0.3.0 additions (user-requested after testing Stage 2 on his phone)
+- Export format picker on the Export screen: "Original" (same as the source photo, the default), JPG, PNG, WEBP and PDF. The picker applies to new-file exports and sharing; "Replace original" always keeps the original file format. PDF export creates a single-page PDF (Android PdfDocument) saved to Download/PixelCraft because Android's gallery only accepts image types. GIF was deliberately NOT included: GIF supports only 256 colours, so photos visibly degrade, and a single-frame GIF is not animated - it offers nothing JPG does not do better. (Vetoable.)
+- Size unit picker in the Resize tool: Pixels / Inches / cm / mm chips above the width and height fields. For non-pixel units a DPI field appears (default 300, the print standard, editable) and the same DPI math as the print-size calculator converts to pixels; all processing stays in pixels and aspect-ratio lock keeps working in every unit. (Vetoable.)
+- Queue thumbnail strip: in multi-photo mode the editor now shows a horizontal strip of all selected photos under the "Photo X of N" label, with the current photo highlighted; tapping a thumbnail jumps straight to that photo. (Vetoable.)
+- Persistent debug signing key: the repo now carries app/debug.keystore (standard public debug credentials) wired into app/build.gradle.kts, so every CI build signs the debug APK with the SAME key and each new APK updates cleanly over the previous install. Note: APKs built before this change used a throwaway key, so installing v0.3.0 over the Stage 2 APK needs one final uninstall+reinstall; every version after that updates in place.
 
 ## Implemented in source
 - Sky-blue, orange, white and deep-navy theme (unchanged from Stage 1).
@@ -36,10 +49,10 @@ The user asked to "add everything what we need" after researching top resizer ap
 4. Share button on the export screen (standard in Image Size, Resize Me).
 5. EXIF metadata kept on JPEG export (standard in Image Size, Puma; automatic, a keep/strip choice is planned for Stage 3).
 6. Rotate 90 degrees button (standard in Image Size, Resize Me).
-Not added on purpose (later stages or out of scope): target file size in KB, cm/mm/inch units, ratio/longest-side resize modes, freehand crop, watermark, borders, batch processing, format picker UI, DPI metadata writing.
+Not added on purpose (later stages or out of scope): target file size in KB, ratio/longest-side resize modes, freehand crop, watermark, borders, batch processing, GIF export (photos degrade to 256 colours), DPI metadata writing.
 
 ## Not implemented yet
-- Freehand crop tool, format picker UI, background removal (ML Kit), compression by target KB, DPI metadata writing.
+- Freehand crop tool, background removal (ML Kit), compression by target KB, DPI metadata writing.
 - Batch processing (Stage 6), Print Size & DPI full screen (Stage 7).
 - Verified preset data (Stage 2B research), AdMob/UMP, signed release AAB, Play Store listing.
 
@@ -51,8 +64,8 @@ Not added on purpose (later stages or out of scope): target file size in KB, cm/
 - "Recently edited" only lists photos opened after installing this version.
 
 ## Test status
-- Static checks done in the build environment: XML/JSON validity, code structure review.
-- Automated Gradle unit tests and Android compilation run in GitHub Actions on upload; results are reported honestly from the actual run.
+- v0.3.0 source was verified on a local Android toolchain (JDK 17, Android SDK 36, Gradle 8.13) BEFORE delivery: "gradle :app:testDebugUnitTest" BUILD SUCCESSFUL (compile + unit tests) and "gradle :app:assembleDebug" BUILD SUCCESSFUL with the APK signed by the repo's persistent debug key.
+- GitHub Actions re-runs the same steps on upload; results are reported honestly from the actual run.
 - On-device behaviour must be confirmed on the user's phone after installing the debug APK.
 
 ## Next stage
