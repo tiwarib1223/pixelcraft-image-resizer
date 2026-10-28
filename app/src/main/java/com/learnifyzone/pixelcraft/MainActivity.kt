@@ -963,7 +963,7 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
     BackHandler(enabled = screen != Screen.Home) {
         when (screen) {
             Screen.Export -> screen = Screen.Editor
-            Screen.QueueResult -> screen = Screen.QueueOverview
+            Screen.QueueResult -> { screen = Screen.Home; tab = MainTab.Home }
             Screen.Editor -> leaveEditorToHome()
             else -> screen = Screen.Home
         }
@@ -1036,7 +1036,7 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                         IconButton(onClick = {
                             when (screen) {
                                 Screen.Export -> screen = Screen.Editor
-                                Screen.QueueResult -> screen = Screen.QueueOverview
+                                Screen.QueueResult -> { screen = Screen.Home; tab = MainTab.Home }
                                 Screen.Editor -> leaveEditorToHome()
                                 else -> screen = Screen.Home
                             }
@@ -1045,7 +1045,16 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                         }
                     },
                     actions = {
-                        if (screen == Screen.Editor) {
+                        if (screen == Screen.QueueResult) {
+                            Text(
+                                "Done",
+                                modifier = Modifier
+                                    .clickable { screen = Screen.Home; tab = MainTab.Home }
+                                    .padding(horizontal = 14.dp),
+                                color = DeepNavy,
+                                fontWeight = FontWeight.Bold
+                            )
+                        } else if (screen == Screen.Editor) {
                             Text(
                                 "Reset",
                                 modifier = Modifier
@@ -1756,9 +1765,11 @@ private fun QueueResultScreen(
                     OutlinedButton(onClick = { showSaveOptions = false; onReplaceAll() }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(10.dp)) {
                         Text("Replace originals", color = DeepNavy, fontWeight = FontWeight.Bold)
                     }
+                    TextButton(onClick = { showSaveOptions = false }, modifier = Modifier.fillMaxWidth().padding(top = 4.dp)) {
+                        Text("Cancel", color = Slate)
+                    }
                 }
-            },
-            dismissButton = { TextButton(onClick = { showSaveOptions = false }) { Text("Cancel", color = Slate) } }
+            }
         )
     }
     if (showConvert) {
