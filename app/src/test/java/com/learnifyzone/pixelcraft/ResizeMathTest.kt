@@ -55,4 +55,44 @@ class ResizeMathTest {
         assertEquals(1f, r[2], 0.001f)
         assertEquals(0.5f, r[3], 0.001f)
     }
+
+    @Test fun transformWithZeroAnglesIsIdentity() {
+        val q = CropMath.transformedCorners(1000, 800, 0f, 0f, 0f, 1500f)
+        assertEquals(0f, q[0], 0.01f); assertEquals(0f, q[1], 0.01f)
+        assertEquals(1000f, q[4], 0.01f); assertEquals(800f, q[5], 0.01f)
+        assertEquals(1f, CropMath.coverScale(q, 1000, 800), 0.001f)
+    }
+
+    @Test fun straighten90NeedsFullZoomCover() {
+        // rotating a 2000x1000 photo by 90 degrees makes it 1000x2000,
+        // so it must zoom by 2x to cover the original box again
+        val q = CropMath.transformedCorners(2000, 1000, 90f, 0f, 0f, 3000f)
+        assertEquals(2f, CropMath.coverScale(q, 2000, 1000), 0.05f)
+    }
+
+    @Test fun horizontalTiltCompressesOneSide() {
+        // tilting around the vertical axis pushes one side away: its projected
+        // height shrinks while the near side grows
+        val q = CropMath.transformedCorners(1000, 1000, 0f, 30f, 0f, 1500f)
+        // corners are TL(0,1) TR(2,3) BR(4,5) BL(6,7)
+        val leftH = q[7] - q[1]   // left edge TL->BL
+        val rightH = q[5] - q[3]  // right edge TR->BR
+        assert(Math.abs(leftH - rightH) > 1f) { "expected asymmetric sides, left=$leftH right=$rightH" }
+        assert(CropMath.coverScale(q, 1000, 1000) > 1f)
+    }
+
+    @Test fun coverScaleCoversBoxForCombinedAngles() {
+        val q = CropMath.transformedCorners(1600, 1200, 14f, 20f, -10f, 2400f)
+        val s = CropMath.coverScale(q, 1600, 1200)
+        val cx = 800f; val cy = 600f
+        val scaled = FloatArray(8)
+        for (i in 0..3) {
+            scaled[i * 2] = cx + (q[i * 2] - cx) * s
+            scaled[i * 2 + 1] = cy + (q[i * 2 + 1] - cy) * s
+        }
+        assert(CropMath.pointInQuad(0f, 0f, scaled))
+        assert(CropMath.pointInQuad(1600f, 0f, scaled))
+        assert(CropMath.pointInQuad(1600f, 1200f, scaled))
+        assert(CropMath.pointInQuad(0f, 1200f, scaled))
+    }
 }

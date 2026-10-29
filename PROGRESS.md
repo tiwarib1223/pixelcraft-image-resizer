@@ -1,7 +1,7 @@
 # PixelCraft Image Resizer — Progress
 
 ## Current stage
-Stage 3 v0.9.0 (built on Stage 2E v0.8.1): queue overview screen, the full "Select new dimensions" Process sheet, batch processing of the whole queue with live percent progress, a result screen with savings summary, and batch save (new copies or replace originals). Stage 2C delivered: "My Photos" library screen, export format picker (JPG/PNG/WEBP/PDF), size unit picker (pixels/inch/cm/mm), queue thumbnail strip, and a persistent debug signing key. Stage 2 delivered: process-then-export workflow, aspect-ratio adaptation, camera capture, multi-select (up to 50) with one-by-one queue, recently edited photos, quality control.
+Stage 3 v0.9.1 (built on Stage 2E v0.8.1): queue overview screen, the full "Select new dimensions" Process sheet, batch processing of the whole queue with live percent progress, a result screen with savings summary, and batch save (new copies or replace originals). Stage 2C delivered: "My Photos" library screen, export format picker (JPG/PNG/WEBP/PDF), size unit picker (pixels/inch/cm/mm), queue thumbnail strip, and a persistent debug signing key. Stage 2 delivered: process-then-export workflow, aspect-ratio adaptation, camera capture, multi-select (up to 50) with one-by-one queue, recently edited photos, quality control.
 
 ## Stage 2C: implemented in source
 - New bottom-nav tab "My Photos" with three internal tabs, all zero-permission and on-device:
@@ -73,6 +73,11 @@ Stage 3 v0.9.0 (built on Stage 2E v0.8.1): queue overview screen, the full "Sele
 
 
 
+
+## v0.9.1 feature (his ask: screenshots of a reference editor + "add these things... and please add mirror as well")
+- STRAIGHTEN, HORIZONTAL and VERTICAL adjust dials in Crop & Rotate, matching his reference app in our light style: a round value dial over a draggable tick ruler (-45 to +45 degrees, half-degree steps), mode chips to switch between the three, and a small Reset that zeroes all adjustments. Straighten rotates the photo freely; Horizontal and Vertical add real 3D perspective tilt.
+- MIRROR: the Flip H button is now called Mirror (his word for it), next to Flip V.
+- TRUE WYSIWYG: the preview draws the exact projective transform the export bakes (pure, unit-tested math: corner projection + cover-zoom so no empty wedges can appear at any angle). Preview and output always match. Everything still on-device, zero permissions, no new dependencies.
 
 ## v0.9.0 feature (his ask: "Now we build next tab" > "Crop and rotate" + his design reference "Make like this")
 - CROP & ROTATE TOOL, built to his design reference in the app's light style: an interactive crop frame right on the photo - drag the corners to resize, drag inside the frame to move it, dimmed outside area, rule-of-thirds grid, big corner handles sized for fingers. Left 90° / Right 90° / Flip H / Flip V buttons apply instantly. Aspect ratio chips: Free, Original, 1:1, 4:3, 16:9, 9:16 - locked ratios keep their shape while dragging.

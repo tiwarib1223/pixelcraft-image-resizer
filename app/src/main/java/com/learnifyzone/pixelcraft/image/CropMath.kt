@@ -108,4 +108,87 @@ object CropMath {
         val b = (rect[3] * bmpH).roundToInt().coerceIn(t + 1, bmpH)
         return intArrayOf(l, t, r, b)
     }
+
+    // ---- Straighten + perspective tilt (v0.9.1) ----
+
+    /**
+     * The photo's four corners (TL, TR, BR, BL) after straighten (2D rotation
+     * by straightDeg), horizontal tilt (3D rotation about the vertical axis by
+     * tiltHDeg) and vertical tilt (about the horizontal axis by tiltVDeg),
+     * projected by a pinhole camera at distance focal. Angles in degrees.
+     * Returned in photo pixel coordinates (origin top-left).
+     */
+    fun transformedCorners(w: Int, h: Int, straightDeg: Float, tiltHDeg: Float, tiltVDeg: Float, focal: Float): FloatArray {
+        val cx = w / 2f
+        val cy = h / 2f
+        val a = Math.toRadians(straightDeg.toDouble())
+        val b = Math.toRadians(tiltHDeg.toDouble())
+        val g = Math.toRadians(tiltVDeg.toDouble())
+        val ca = kotlin.math.cos(a); val sa = kotlin.math.sin(a)
+        val cb = kotlin.math.cos(b); val sb = kotlin.math.sin(b)
+        val cg = kotlin.math.cos(g); val sg = kotlin.math.sin(g)
+        val out = FloatArray(8)
+        val xs = floatArrayOf(-cx, cx, cx, -cx)
+        val ys = floatArrayOf(-cy, -cy, cy, cy)
+        for (i in 0..3) {
+            // rotate Z (straighten, in-plane)
+            val x1 = xs[i] * ca - ys[i] * sa
+            val y1 = xs[i] * sa + ys[i] * ca
+            // rotate Y (horizontal tilt)
+            val x2 = (x1 * cb).toFloat()
+            val z2 = (-x1 * sb).toFloat()
+            val y2 = y1
+            // rotate X (vertical tilt)
+            val y3 = (y2 * cg - z2 * sg).toFloat()
+            val z3 = (y2 * sg + z2 * cg).toFloat()
+            // pinhole projection from z = -focal
+            val s = focal / (focal + z3)
+            out[i * 2] = (x2 * s).toFloat() + cx
+            out[i * 2 + 1] = y3 * s + cy
+        }
+        return out
+    }
+
+    /** True when point p is inside the convex quad (TL, TR, BR, BL order). */
+    fun pointInQuad(px: Float, py: Float, quad: FloatArray): Boolean {
+        var sign = 0
+        for (i in 0..3) {
+            val ax = quad[i * 2]; val ay = quad[i * 2 + 1]
+            val bx = quad[((i + 1) % 4) * 2]; val by = quad[((i + 1) % 4) * 2 + 1]
+            val cross = (bx - ax) * (py - ay) - (by - ay) * (px - ax)
+            if (cross != 0f) {
+                val s = if (cross > 0) 1 else -1
+                if (sign == 0) sign = s else if (sign != s) return false
+            }
+        }
+        return true
+    }
+
+    /**
+     * The uniform zoom about the photo center that makes the transformed quad
+     * fully cover the original photo box, so no empty wedges can appear.
+     * 1f when nothing is transformed. Binary search, ~40 iterations.
+     */
+    fun coverScale(quad: FloatArray, w: Int, h: Int): Float {
+        val cx = w / 2f
+        val cy = h / 2f
+        fun covers(scale: Float): Boolean {
+            val q = FloatArray(8)
+            for (i in 0..3) {
+                q[i * 2] = cx + (quad[i * 2] - cx) * scale
+                q[i * 2 + 1] = cy + (quad[i * 2 + 1] - cy) * scale
+            }
+            return pointInQuad(0f, 0f, q) && pointInQuad(w.toFloat(), 0f, q) &&
+                pointInQuad(w.toFloat(), h.toFloat(), q) && pointInQuad(0f, h.toFloat(), q)
+        }
+        if (covers(1f)) return 1f
+        var lo = 1f
+        var hi = 2f
+        while (!covers(hi) && hi < 64f) { lo = hi; hi *= 2f }
+        repeat(40) {
+            val mid = (lo + hi) / 2f
+            if (covers(mid)) hi = mid else lo = mid
+        }
+        return hi
+    }
 }

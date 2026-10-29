@@ -134,4 +134,33 @@ object Transforms {
     /** Crop a pixel rectangle (left, top, right, bottom) out of the photo. */
     fun cropRegion(src: Bitmap, rectPx: IntArray): Bitmap =
         Bitmap.createBitmap(src, rectPx[0], rectPx[1], rectPx[2] - rectPx[0], rectPx[3] - rectPx[1])
+
+    /**
+     * Bake straighten + horizontal/vertical tilt into a new bitmap the size of
+     * the original. The transform is the same projective math the Crop & Rotate
+     * preview shows (CropMath.transformedCorners + coverScale), so what he sees
+     * is exactly what exports. Cover-zoom guarantees no empty corner wedges.
+     */
+    fun adjustPerspective(src: Bitmap, straightDeg: Float, tiltHDeg: Float, tiltVDeg: Float): Bitmap {
+        val w = src.width
+        val h = src.height
+        val focal = 1.5f * max(w, h)
+        val quad = CropMath.transformedCorners(w, h, straightDeg, tiltHDeg, tiltVDeg, focal)
+        val scale = CropMath.coverScale(quad, w, h)
+        val cx = w / 2f
+        val cy = h / 2f
+        val dst = FloatArray(8)
+        for (i in 0..3) {
+            dst[i * 2] = cx + (quad[i * 2] - cx) * scale
+            dst[i * 2 + 1] = cy + (quad[i * 2 + 1] - cy) * scale
+        }
+        val srcPts = floatArrayOf(0f, 0f, w.toFloat(), 0f, w.toFloat(), h.toFloat(), 0f, h.toFloat())
+        val m = android.graphics.Matrix()
+        m.setPolyToPoly(srcPts, 0, dst, 0, 4)
+        val out = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(out)
+        val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG or android.graphics.Paint.FILTER_BITMAP_FLAG)
+        canvas.drawBitmap(src, m, paint)
+        return out
+    }
 }

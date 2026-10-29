@@ -25,6 +25,7 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -125,6 +126,7 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
@@ -237,6 +239,10 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
     var pendingCropTool by remember { mutableStateOf(false) }
     var cropRect by remember { mutableStateOf(CropMath.defaultRect()) }
     var cropAspect by rememberSaveable { mutableStateOf("Free") }
+    var straightenAngle by rememberSaveable { mutableStateOf(0f) }
+    var tiltHAngle by rememberSaveable { mutableStateOf(0f) }
+    var tiltVAngle by rememberSaveable { mutableStateOf(0f) }
+    var adjustMode by rememberSaveable { mutableStateOf("Straighten") }
     var bgCutout by remember { mutableStateOf<Bitmap?>(null) }
     var bgPreview by remember { mutableStateOf<Bitmap?>(null) }
     var bgChoice by remember { mutableStateOf(BgChoice.TRANSPARENT) }
@@ -388,6 +394,9 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                 screen = Screen.Editor
                 cropRect = CropMath.defaultRect()
                 cropAspect = "Free"
+                straightenAngle = 0f
+                tiltHAngle = 0f
+                tiltVAngle = 0f
                 tool = when {
                     pendingBgTool -> { pendingBgTool = false; Tool.Background }
                     pendingCropTool -> { pendingCropTool = false; Tool.Crop }
@@ -1008,6 +1017,9 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
         pendingBgTool = stayInBackground
         pendingCropTool = stayInCrop
         cropRect = CropMath.defaultRect()
+        straightenAngle = 0f
+        tiltHAngle = 0f
+        tiltVAngle = 0f
         if (uri != null) {
             scope.launch(Dispatchers.IO) { DraftsStore.remove(context, uri.toString()) }
         }
@@ -1426,7 +1438,7 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                         Tool.Resize -> Unit
                         Tool.Presets -> { saveDraftIfNeeded(); screen = Screen.Home; tab = MainTab.Presets }
                         Tool.Background -> Unit
-                        Tool.Crop -> { cropAspect = "Free"; cropRect = CropMath.defaultRect() }
+                        Tool.Crop -> { cropAspect = "Free"; cropRect = CropMath.defaultRect(); straightenAngle = 0f; tiltHAngle = 0f; tiltVAngle = 0f }
                         else -> scope.launch { snackbar.showSnackbar("${selected.label} is planned for a later stage. Resize and export are available now.") }
                     }
                 },
@@ -1446,6 +1458,19 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                 },
                 cropRect = cropRect,
                 cropAspect = cropAspect,
+                straightenAngle = straightenAngle,
+                tiltHAngle = tiltHAngle,
+                tiltVAngle = tiltVAngle,
+                adjustMode = adjustMode,
+                onAdjustMode = { adjustMode = it },
+                onAdjustValue = { value ->
+                    when (adjustMode) {
+                        "Horizontal" -> tiltHAngle = value
+                        "Vertical" -> tiltVAngle = value
+                        else -> straightenAngle = value
+                    }
+                },
+                onAdjustReset = { straightenAngle = 0f; tiltHAngle = 0f; tiltVAngle = 0f },
                 onCropRect = { cropRect = it },
                 onCropAspect = { asp ->
                     cropAspect = asp
@@ -1470,17 +1495,23 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                 onApplyCrop = {
                     val src = workingBitmap
                     if (src != null) {
-                        val px = CropMath.toPixels(cropRect, src.width, src.height)
                         busy = true
                         busyLabel = "Cropping…"
                         scope.launch {
                             try {
-                                val result = withContext(Dispatchers.Default) { Transforms.cropRegion(src, px) }
+                                val result = withContext(Dispatchers.Default) {
+                                    val adjusted = if (straightenAngle != 0f || tiltHAngle != 0f || tiltVAngle != 0f)
+                                        Transforms.adjustPerspective(src, straightenAngle, tiltHAngle, tiltVAngle) else src
+                                    Transforms.cropRegion(adjusted, CropMath.toPixels(cropRect, adjusted.width, adjusted.height))
+                                }
                                 processedBitmap = result
                                 exportName = suggestBaseName(result.width, result.height)
                                 beforeAfter = true
                                 estimatedBytes = withContext(Dispatchers.IO) { estimateBytes(result, outFormat(), quality) }
                                 cropRect = CropMath.defaultRect()
+                                straightenAngle = 0f
+                                tiltHAngle = 0f
+                                tiltVAngle = 0f
                                 screen = Screen.Export
                                 snackbar.showSnackbar("Cropped: ${result.width} × ${result.height} px.")
                             } catch (e: Exception) {
@@ -2258,6 +2289,13 @@ private fun EditorScreen(
     onRotate: () -> Unit,
     cropRect: FloatArray,
     cropAspect: String,
+    straightenAngle: Float,
+    tiltHAngle: Float,
+    tiltVAngle: Float,
+    adjustMode: String,
+    onAdjustMode: (String) -> Unit,
+    onAdjustValue: (Float) -> Unit,
+    onAdjustReset: () -> Unit,
     onCropRect: (FloatArray) -> Unit,
     onCropAspect: (String) -> Unit,
     onCropTransform: (CropTransform) -> Unit,
@@ -2320,6 +2358,9 @@ private fun EditorScreen(
                     bitmap = working,
                     rect = cropRect,
                     aspect = CropMath.aspectValue(cropAspect, working.width, working.height),
+                    straighten = straightenAngle,
+                    tiltH = tiltHAngle,
+                    tiltV = tiltVAngle,
                     onRect = onCropRect,
                     modifier = Modifier.fillMaxSize().padding(8.dp)
                 )
@@ -2472,7 +2513,7 @@ private fun EditorScreen(
                 listOf(
                     Triple(CropTransform.LEFT, "Left 90°", Icons.Default.RotateLeft),
                     Triple(CropTransform.RIGHT, "Right 90°", Icons.Default.RotateRight),
-                    Triple(CropTransform.FLIP_H, "Flip H", Icons.Default.SwapHoriz),
+                    Triple(CropTransform.FLIP_H, "Mirror", Icons.Default.SwapHoriz),
                     Triple(CropTransform.FLIP_V, "Flip V", Icons.Default.SwapVert)
                 ).forEach { (kind, label, icon) ->
                     OutlinedButton(onClick = { onCropTransform(kind) }, shape = RoundedCornerShape(10.dp), enabled = !busy && working != null) {
@@ -2482,6 +2523,35 @@ private fun EditorScreen(
                     }
                 }
             }
+            Text("Adjust", color = DeepNavy, fontWeight = FontWeight.SemiBold, fontSize = 14.sp, modifier = Modifier.padding(top = 12.dp, bottom = 8.dp))
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.weight(1f).horizontalScroll(rememberScrollState())) {
+                    listOf("Straighten", "Horizontal", "Vertical").forEach { label ->
+                        val selected = adjustMode == label
+                        Surface(modifier = Modifier.clickable { onAdjustMode(label) }, shape = RoundedCornerShape(9.dp), color = if (selected) SkyBlue else PaleBlue) {
+                            Text(label, modifier = Modifier.padding(horizontal = 12.dp, vertical = 9.dp), fontSize = 11.sp, color = if (selected) Color.White else DeepNavy, fontWeight = FontWeight.SemiBold, maxLines = 1, softWrap = false)
+                        }
+                    }
+                }
+                if (straightenAngle != 0f || tiltHAngle != 0f || tiltVAngle != 0f) {
+                    Text(
+                        "Reset",
+                        color = SkyBlue,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.padding(start = 8.dp).clip(RoundedCornerShape(8.dp)).clickable { onAdjustReset() }.padding(horizontal = 8.dp, vertical = 6.dp)
+                    )
+                }
+            }
+            AdjustDialAndSlider(
+                value = when (adjustMode) {
+                    "Horizontal" -> tiltHAngle
+                    "Vertical" -> tiltVAngle
+                    else -> straightenAngle
+                },
+                onValue = onAdjustValue,
+                modifier = Modifier.fillMaxWidth().padding(top = 8.dp)
+            )
             Text("Aspect ratio", color = DeepNavy, fontWeight = FontWeight.SemiBold, fontSize = 14.sp, modifier = Modifier.padding(top = 12.dp, bottom = 8.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())) {
                 listOf("Free", "Original", "1:1", "4:3", "16:9", "9:16").forEach { label ->
@@ -3266,6 +3336,9 @@ private fun CropPreview(
     bitmap: Bitmap,
     rect: FloatArray,
     aspect: Float?,
+    straighten: Float,
+    tiltH: Float,
+    tiltV: Float,
     onRect: (FloatArray) -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -3278,14 +3351,38 @@ private fun CropPreview(
         val offX = (boxW - dispW) / 2f
         val offY = (boxH - dispH) / 2f
         val density = LocalDensity.current
+        val hasAdjust = straighten != 0f || tiltH != 0f || tiltV != 0f
+        val adjustMatrix = remember(bitmap, straighten, tiltH, tiltV, dispW, dispH, offX, offY) {
+            if (!hasAdjust) null else {
+                val focal = 1.5f * maxOf(bitmap.width, bitmap.height)
+                val quad = CropMath.transformedCorners(bitmap.width, bitmap.height, straighten, tiltH, tiltV, focal)
+                val cover = CropMath.coverScale(quad, bitmap.width, bitmap.height)
+                val cx = bitmap.width / 2f
+                val cy = bitmap.height / 2f
+                val dst = FloatArray(8)
+                for (i in 0..3) {
+                    dst[i * 2] = cx + (quad[i * 2] - cx) * cover
+                    dst[i * 2 + 1] = cy + (quad[i * 2 + 1] - cy) * cover
+                }
+                val srcPts = floatArrayOf(0f, 0f, bitmap.width.toFloat(), 0f, bitmap.width.toFloat(), bitmap.height.toFloat(), 0f, bitmap.height.toFloat())
+                android.graphics.Matrix().apply {
+                    setPolyToPoly(srcPts, 0, dst, 0, 4)
+                    postScale(dispW / bitmap.width, dispH / bitmap.height)
+                    postTranslate(offX, offY)
+                }
+            }
+        }
+        val adjustPaint = remember { android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG or android.graphics.Paint.FILTER_BITMAP_FLAG) }
         val imageBitmap = remember(bitmap) { bitmap.asImageBitmap() }
-        Image(
-            bitmap = imageBitmap,
-            contentDescription = "Crop preview - drag the corners to frame the photo",
-            modifier = Modifier.size(with(density) { dispW.toDp() }, with(density) { dispH.toDp() })
-                .offset { IntOffset(offX.roundToInt(), offY.roundToInt()) },
-            contentScale = ContentScale.FillBounds
-        )
+        if (adjustMatrix == null) {
+            Image(
+                bitmap = imageBitmap,
+                contentDescription = "Crop preview - drag the corners to frame the photo",
+                modifier = Modifier.size(with(density) { dispW.toDp() }, with(density) { dispH.toDp() })
+                    .offset { IntOffset(offX.roundToInt(), offY.roundToInt()) },
+                contentScale = ContentScale.FillBounds
+            )
+        }
         val hitRadius = with(density) { 28.dp.toPx() }
         val currentRect by rememberUpdatedState(rect)
         val currentOnRect by rememberUpdatedState(onRect)
@@ -3326,6 +3423,7 @@ private fun CropPreview(
                 )
             }
         ) {
+            adjustMatrix?.let { drawContext.canvas.nativeCanvas.drawBitmap(bitmap, it, adjustPaint) }
             val l = offX + rect[0] * dispW
             val t = offY + rect[1] * dispH
             val r = offX + rect[2] * dispW
@@ -3349,6 +3447,79 @@ private fun CropPreview(
                 drawCircle(Color.White, handleR, Offset(c.first, c.second))
                 drawCircle(SkyBlue, handleR, Offset(c.first, c.second), style = Stroke(3.dp.toPx()))
             }
+        }
+    }
+}
+
+/**
+ * The straighten/tilt control from his design reference: a round value dial
+ * over a draggable tick ruler, in the app's light style. Range -45..+45
+ * degrees in half-degree steps.
+ */
+@Composable
+private fun AdjustDialAndSlider(
+    value: Float,
+    onValue: (Float) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Column(modifier, horizontalAlignment = Alignment.CenterHorizontally) {
+        Box(Modifier.size(76.dp), contentAlignment = Alignment.Center) {
+            Canvas(Modifier.fillMaxSize()) {
+                val stroke = 6.dp.toPx()
+                val inset = stroke / 2f + 2.dp.toPx()
+                drawCircle(SoftGrey, radius = size.minDimension / 2f - inset, style = Stroke(stroke))
+                val sweep = (kotlin.math.abs(value) / 45f).coerceIn(0f, 1f) * 360f
+                if (sweep > 0.5f) {
+                    drawArc(
+                        SkyBlue,
+                        startAngle = -90f,
+                        sweepAngle = sweep,
+                        useCenter = false,
+                        topLeft = Offset(inset, inset),
+                        size = Size(size.width - inset * 2, size.height - inset * 2),
+                        style = Stroke(stroke, cap = androidx.compose.ui.graphics.StrokeCap.Round)
+                    )
+                }
+            }
+            Text("%.1f".format(value), color = DeepNavy, fontWeight = FontWeight.Bold, fontSize = 18.sp)
+        }
+        val currentValue by rememberUpdatedState(value)
+        val currentOnValue by rememberUpdatedState(onValue)
+        Canvas(
+            Modifier.fillMaxWidth().padding(top = 8.dp).height(44.dp)
+                .pointerInput(Unit) {
+                    detectTapGestures { pnt ->
+                        val half = size.width / 2f
+                        val v = ((pnt.x - half) / half * 45f).coerceIn(-45f, 45f)
+                        // Snap to an exact zero nearby: getting back to "no tilt" should be easy.
+                        currentOnValue(if (kotlin.math.abs(v) < 1f) 0f else (v * 2).roundToInt() / 2f)
+                    }
+                }
+                .pointerInput(Unit) {
+                    var acc = 0f
+                    var base = 0f
+                    detectDragGestures(
+                        onDragStart = { acc = 0f; base = currentValue },
+                        onDrag = { change, drag ->
+                            change.consume()
+                            acc += drag.x
+                            val half = size.width / 2f
+                            val v = (base + acc / half * 45f).coerceIn(-45f, 45f)
+                            currentOnValue(if (kotlin.math.abs(v) < 1f) 0f else (v * 2).roundToInt() / 2f)
+                        }
+                    )
+                }
+        ) {
+            val half = size.width / 2f
+            val midY = size.height / 2f
+            for (i in -45..45) {
+                val x = half + (i - value) / 45f * half
+                if (x < 0f || x > size.width) continue
+                val big = i % 5 == 0
+                val len = (if (big) 14.dp else 8.dp).toPx()
+                drawLine(Slate.copy(alpha = if (big) 0.7f else 0.4f), Offset(x, midY - len / 2), Offset(x, midY + len / 2), 1.5.dp.toPx())
+            }
+            drawLine(SkyBlue, Offset(half, midY - 12.dp.toPx()), Offset(half, midY + 12.dp.toPx()), 3.dp.toPx())
         }
     }
 }

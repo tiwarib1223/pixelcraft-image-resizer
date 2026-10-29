@@ -81,9 +81,12 @@ class MainFlowUiTest {
         ActivityScenario.launch<MainActivity>(intent).use {
             waitForText("Aspect ratio")
             waitForText("Apply Crop")
-            waitForText("Flip H")
+            waitForText("Mirror")
             waitForText("Left 90°")
             waitForText("16:9")
+            waitForText("Straighten")
+            waitForText("Horizontal")
+            waitForText("Vertical")
         }
     }
 }
