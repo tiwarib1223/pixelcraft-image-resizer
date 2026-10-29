@@ -74,6 +74,14 @@ Stage 3 v0.10.1 (built on Stage 2E v0.8.1): queue overview screen, the full "Sel
 
 
 
+## v0.16.4 - Text on Photo bottom-sheet redesign (his design direction: "we dont need to scroll up and down many times")
+
+- Bottom sheet editor (his core ask): the long scrolling editing screen is gone when a photo is loaded. The photo stays on screen ALWAYS (his "easy to look live edit") and all controls live in a fixed bottom sheet with two-level navigation, exactly like his reference app but in our light style: root menu (Add Text, Add Image, Image Size, Layers, Save) -> tap one to open its options -> Back arrow returns to the menu. Undo/Redo sit in the sheet header.
+- + Text opens styling instantly (his flow): adding or tapping a text layer jumps straight to its options with the 3 essentials together at the top - font size, font colour (now an always-visible 18-swatch grid, no "More colours" hunting for text colour), and background colour. Fonts still show in their real typeface (v0.16.3).
+- Tapping an image layer opens its options (size/rotation/opacity/delete) the same way.
+- Image Size, Layers (reorder/delete) and Save each live behind their menu entry; nothing was removed, everything is one tap from the menu instead of a long scroll.
+- NOT in this version (next candidates, his screenshots): corner bubbles on the selected layer (X delete, resize/rotate handle), eyedropper colour pick from the photo, flip/clone layer actions, Decorators/Sticker/Emoji entries.
+
 ## v0.16.3 - Text on Photo: Position always available, Reset button, add-image hardening (his feedback)
 
 - Position for everyone (his "I cant zoom main image. I want to zoom and crop."): the Position button only appeared AFTER picking a size, so on an untouched photo there was no way to zoom/crop. Now a sky-blue Position button sits directly under the preview and works immediately - it starts from the full photo frame, drag pans freely, pinch zooms, Done keeps the region (label "Custom"; tapping Done without moving anything clears back to Original). Picking a ratio first still works as before. Free-form (non-uniform) crop shapes are NOT in this version - the frame keeps the current canvas aspect (vetoable).

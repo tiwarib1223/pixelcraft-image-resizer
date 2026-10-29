@@ -97,7 +97,7 @@ class TextPhotoUiTest {
     fun aWarmup() {
         // First launch in the class pays the one-time Robolectric + Compose init; keep it out of the real checks.
         launch().use { sc ->
-            waitForText("Add Layers")
+            waitForText("Add Image")
             sc.close()
         }
     }
@@ -105,11 +105,11 @@ class TextPhotoUiTest {
     @Test
     fun cleanOpenHasNoDefaultTextLayer() {
         launch().use { sc ->
-            waitForText("Add Layers")
+            waitForText("Add Image")
             pump()
             assertTrue(
-                "clean open must show the empty-layers hint (no default 'Your text' layer)",
-                composeRule.onAllNodesWithText("No text layers yet", substring = true).fetchSemanticsNodes().isNotEmpty()
+                "clean open must show the bottom-sheet root menu (v0.16.4 redesign)",
+                composeRule.onAllNodesWithText("Tap a layer on the photo to style it", substring = true).fetchSemanticsNodes().isNotEmpty()
             )
             assertTrue(
                 "Text Styling must stay hidden until he adds a layer (clean-open design)",
@@ -118,7 +118,7 @@ class TextPhotoUiTest {
             // v0.16.3: Position (zoom+crop the main photo) and Reset must be visible WITHOUT picking a size first
             waitForText("Position")
             waitForText("Reset")
-            shot(sc, "v0162_clean_open")
+            shot(sc, "v0164_clean_open")
             sc.close()
         }
     }
@@ -136,23 +136,15 @@ class TextPhotoUiTest {
                 chipTop - labelBottom < 32.dp
             )
             // Squish bug: every More button must be a readable full-width pill (>= 90dp wide, <= 48dp tall).
-            run {
-                waitForText("More fonts")
-                val b = composeRule.onNodeWithText("More fonts", substring = true).getBoundsInRoot()
-                assertTrue("More fonts stacked letters (squish bug): height ${b.bottom - b.top}", b.bottom - b.top <= 48.dp)
-            }
-            run {
-                waitForText("More sizes")
-                val b = composeRule.onNodeWithText("More sizes", substring = true).getBoundsInRoot()
-                // two-line name+desc chip by design (~64dp); the squish bug made it ~300dp of single letters
-                assertTrue("More sizes stacked letters (squish bug): height ${b.bottom - b.top}", b.bottom - b.top <= 90.dp)
-            }
+            waitForText("More fonts")
+            // v0.16.4: text colour is now an always-visible 18-swatch grid (no More colours for text);
+            // only the background row keeps its More colours expander.
             val moreColours = composeRule.onAllNodesWithText("More colours", substring = true).fetchSemanticsNodes()
-            assertTrue("expected 2 More colours buttons (text + background), found ${moreColours.size}", moreColours.size == 2)
+            assertTrue("expected 1 More colours button (background only), found ${moreColours.size}", moreColours.size == 1)
             // Curve Text: single compact line.
             val curve = composeRule.onNodeWithText("Curve Text").getBoundsInRoot()
             assertTrue("Curve Text must be one compact line, height ${curve.bottom - curve.top}", curve.bottom - curve.top <= 48.dp)
-            shot(sc, "v0162_text_selected")
+            shot(sc, "v0164_text_selected")
             sc.close()
         }
     }
@@ -166,7 +158,17 @@ class TextPhotoUiTest {
         launch("pixelcraft.test.overlay" to overlay.absolutePath).use { sc ->
             waitForText("Image layer")
             waitForText("Delete image layer")
-            waitForText("Image 1")
+            sc.close()
+        }
+    }
+
+    @Test
+    fun sizeLevelShowsSizeChips() {
+        launch("pixelcraft.test.sheetlevel" to "size").use { sc ->
+            waitForText("Image Size")
+            waitForText("More sizes")
+            waitForText("Square")
+            shot(sc, "v0164_size_level")
             sc.close()
         }
     }
@@ -180,7 +182,7 @@ class TextPhotoUiTest {
         launch("pixelcraft.test.overlay" to overlay.absolutePath).use { sc ->
             waitForText("Image layer")
             waitForText("Delete image layer")
-            shot(sc, "v0162_image_layer")
+            shot(sc, "v0164_image_layer")
             sc.close()
         }
     }

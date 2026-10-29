@@ -9213,9 +9213,8 @@ private fun TextOnPhotoScreen(
     val selected = layers.firstOrNull { it.id == selectedId }
     val selectedImage = imageLayers.firstOrNull { it.id == selectedImageId }
     var previewTouch by remember { mutableStateOf(false) }
-    val scrollState = rememberScrollState()
 
-    Column(modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).verticalScroll(scrollState, enabled = !previewTouch).padding(horizontal = 16.dp)) {
+    Column(modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).padding(horizontal = 16.dp)) {
         Spacer(Modifier.height(4.dp))
         Text("Add words. Create something beautiful.", color = Slate, fontSize = 13.sp)
         Spacer(Modifier.height(10.dp))
@@ -9252,9 +9251,7 @@ private fun TextOnPhotoScreen(
         Spacer(Modifier.height(12.dp))
 
         // ---- Image Preview (live - every change repaints instantly; identical to export) ----
-        Text("Image Preview", color = DeepNavy, fontWeight = FontWeight.Bold, fontSize = 16.sp)
-        Spacer(Modifier.height(6.dp))
-        BoxWithConstraints(Modifier.fillMaxWidth().height(330.dp).clip(RoundedCornerShape(12.dp)).background(SoftGrey).border(1.dp, BorderGrey, RoundedCornerShape(12.dp))) {
+        BoxWithConstraints(Modifier.fillMaxWidth().weight(1f).heightIn(min = 200.dp).clip(RoundedCornerShape(12.dp)).background(SoftGrey).border(1.dp, BorderGrey, RoundedCornerShape(12.dp))) {
             val bmp = bitmap
             // Adjust mode shows the WHOLE photo with the crop frame; normal mode shows the effective canvas.
             val effW = if (cropRect != null && !cropAdjust) ((cropRect[2] - cropRect[0]) * bmp.width).toInt().coerceAtLeast(1) else bmp.width
@@ -9357,560 +9354,597 @@ private fun TextOnPhotoScreen(
         }
         Spacer(Modifier.height(14.dp))
 
-        // ---- Image layer quick edits (his "Add image" spec: stays editable until export) ----
-        if (selectedImage != null) {
-            Card(colors = CardDefaults.cardColors(containerColor = SoftGrey), shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth()) {
-                Column(Modifier.padding(12.dp)) {
-                    Text("Image layer", color = DeepNavy, fontWeight = FontWeight.Bold, fontSize = 14.sp)
-                    Text("Drag on the photo to move · pinch to resize · twist to rotate.", color = Slate, fontSize = 11.sp)
-                    Spacer(Modifier.height(6.dp))
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text("Size", color = Slate, fontSize = 12.sp)
-                        Slider(
-                            value = selectedImage.widthFrac,
-                            onValueChange = { v -> onMutateImageLayer { im -> im.widthFrac = v } },
-                            valueRange = 0.05f..1f,
-                            modifier = Modifier.weight(1f).padding(horizontal = 8.dp)
-                        )
-                        Text("${(selectedImage.widthFrac * 100).toInt()}%", color = DeepNavy, fontSize = 12.sp)
-                    }
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text("Rotation", color = Slate, fontSize = 12.sp)
-                        Slider(
-                            value = ((selectedImage.rotation % 360f) + 540f) % 360f - 180f,
-                            onValueChange = { v -> onMutateImageLayer { im -> im.rotation = v } },
-                            valueRange = -180f..180f,
-                            modifier = Modifier.weight(1f).padding(horizontal = 8.dp)
-                        )
-                        Text("${(((selectedImage.rotation % 360f) + 540f) % 360f - 180f).toInt()}°", color = DeepNavy, fontSize = 12.sp)
-                    }
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text("Opacity", color = Slate, fontSize = 12.sp)
-                        Slider(
-                            value = selectedImage.opacity,
-                            onValueChange = { v -> onMutateImageLayer { im -> im.opacity = v } },
-                            valueRange = 0.2f..1f,
-                            modifier = Modifier.weight(1f).padding(horizontal = 8.dp)
-                        )
-                        Text("${(selectedImage.opacity * 100).toInt()}%", color = DeepNavy, fontSize = 12.sp)
-                    }
-                    OutlinedButton(onClick = { onDeleteImageLayer(selectedImage.id) }, modifier = Modifier.fillMaxWidth()) {
-                        Icon(Icons.Default.Delete, contentDescription = null, tint = DeepNavy, modifier = Modifier.size(16.dp))
-                        Spacer(Modifier.width(4.dp))
-                        Text("Delete image layer", color = DeepNavy)
+        Spacer(Modifier.height(10.dp))
+
+        // ---- Bottom sheet editor (v0.16.4 redesign: his "we dont need to scroll up and down many times") ----
+        // Two-level menu: root entries -> tap one for its options -> Back arrow returns. The photo
+        // stays visible above the sheet, so every edit is seen live (his "easy to look live edit").
+        val testSheetLevel = (androidx.compose.ui.platform.LocalContext.current as? Activity)?.intent?.getStringExtra("pixelcraft.test.sheetlevel")
+        var sheetLevel by remember { mutableStateOf(testSheetLevel ?: "menu") }
+        // Selecting a layer jumps straight to its options (his flow); Back returns to the menu manually.
+        LaunchedEffect(selectedId, selectedImageId) {
+            if (selectedImageId != null) sheetLevel = "image"
+            else if (selectedId != null) sheetLevel = "text"
+        }
+        Card(
+            colors = CardDefaults.cardColors(containerColor = Color.White),
+            shape = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp),
+            modifier = Modifier.fillMaxWidth().height(340.dp).border(1.dp, BorderGrey, RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp))
+        ) {
+            Column(Modifier.fillMaxSize().padding(horizontal = 14.dp, vertical = 10.dp).verticalScroll(rememberScrollState())) {
+                if (sheetLevel != "menu") {
+                    Row(Modifier.fillMaxWidth().padding(bottom = 8.dp).clickable { sheetLevel = "menu" }, verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Default.ArrowBack, contentDescription = "Back to menu", tint = SkyBlue, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text("Menu", color = SkyBlue, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
                     }
                 }
-            }
-            Spacer(Modifier.height(14.dp))
-        }
+                when (sheetLevel) {
+                    "image" -> {
 
-        // ---- Quick edits (his layout request: font size, background, shadow, curve and spacing live
-        //      right under the image, so every change is seen live without scrolling) ----
-        if (selected != null) {
-            Card(colors = CardDefaults.cardColors(containerColor = SoftGrey), shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth()) {
-                Column(Modifier.padding(12.dp)) {
-                    Text("Quick edits", color = DeepNavy, fontWeight = FontWeight.Bold, fontSize = 15.sp)
-                    Text("Every change shows live on your photo above.", color = Slate, fontSize = 11.sp)
-                    Spacer(Modifier.height(8.dp))
-
-                    Text("Font size", color = Slate, fontSize = 12.sp)
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text("A-", color = Slate, fontSize = 12.sp)
-                        Slider(
-                            value = selected.sizeFrac,
-                            onValueChange = { v -> onMutate(1200L) { l -> l.sizeFrac = v } },
-                            valueRange = 0.02f..0.20f,
-                            modifier = Modifier.weight(1f).padding(horizontal = 8.dp)
-                        )
-                        Text("A+", color = DeepNavy, fontSize = 15.sp, fontWeight = FontWeight.Bold)
-                    }
-
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text("Curve Text", color = Slate, fontSize = 13.sp, modifier = Modifier.weight(1f))
-                        Switch(checked = selected.curved, onCheckedChange = { onMutate(0L) { l -> l.curved = it } })
-                    }
-                    if (selected.curved) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text("Arc", color = Slate, fontSize = 12.sp)
-                            Slider(
-                                value = selected.arcSweep,
-                                onValueChange = { v -> onMutate(1200L) { l -> l.arcSweep = v } },
-                                valueRange = 60f..320f,
-                                modifier = Modifier.weight(1f).padding(horizontal = 8.dp)
-                            )
-                            Text("${selected.arcSweep.toInt()}°", color = DeepNavy, fontSize = 12.sp)
-                        }
-                    }
-                    Spacer(Modifier.height(8.dp))
-
-                    Text("Text background", color = Slate, fontSize = 12.sp)
-                    run {
-                        var bgColoursOpen by remember { mutableStateOf(false) }
-                        Row(Modifier.padding(top = 4.dp, bottom = 8.dp).horizontalScroll(rememberScrollState()), verticalAlignment = Alignment.CenterVertically) {
-                            listOf(0 to "None", 0xFFFFFFFF.toInt() to "White", 0xFF000000.toInt() to "Black", 0xFF42BFEF.toInt() to "Blue", 0xFFF5B942.toInt() to "Gold").forEach { (c, lbl) ->
-                                val sel = selected.bgColorArgb == c
-                                Card(
-                                    colors = CardDefaults.cardColors(containerColor = if (sel) PaleBlue else Color.White),
-                                    shape = RoundedCornerShape(10.dp),
-                                    modifier = Modifier.padding(end = 8.dp, bottom = 8.dp).border(if (sel) 2.dp else 0.dp, if (sel) SkyBlue else Color.Transparent, RoundedCornerShape(10.dp)).clickable { onMutate(0L) { l -> l.bgColorArgb = c } }
-                                ) { Text(lbl, modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp), fontSize = 12.sp, color = DeepNavy) }
+                    // ---- Image layer quick edits (his "Add image" spec: stays editable until export) ----
+                    if (selectedImage != null) {
+                        Card(colors = CardDefaults.cardColors(containerColor = SoftGrey), shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth()) {
+                            Column(Modifier.padding(12.dp)) {
+                                Text("Image layer", color = DeepNavy, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                                Text("Drag on the photo to move · pinch to resize · twist to rotate.", color = Slate, fontSize = 11.sp)
+                                Spacer(Modifier.height(6.dp))
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text("Size", color = Slate, fontSize = 12.sp)
+                                    Slider(
+                                        value = selectedImage.widthFrac,
+                                        onValueChange = { v -> onMutateImageLayer { im -> im.widthFrac = v } },
+                                        valueRange = 0.05f..1f,
+                                        modifier = Modifier.weight(1f).padding(horizontal = 8.dp)
+                                    )
+                                    Text("${(selectedImage.widthFrac * 100).toInt()}%", color = DeepNavy, fontSize = 12.sp)
+                                }
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text("Rotation", color = Slate, fontSize = 12.sp)
+                                    Slider(
+                                        value = ((selectedImage.rotation % 360f) + 540f) % 360f - 180f,
+                                        onValueChange = { v -> onMutateImageLayer { im -> im.rotation = v } },
+                                        valueRange = -180f..180f,
+                                        modifier = Modifier.weight(1f).padding(horizontal = 8.dp)
+                                    )
+                                    Text("${(((selectedImage.rotation % 360f) + 540f) % 360f - 180f).toInt()}°", color = DeepNavy, fontSize = 12.sp)
+                                }
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text("Opacity", color = Slate, fontSize = 12.sp)
+                                    Slider(
+                                        value = selectedImage.opacity,
+                                        onValueChange = { v -> onMutateImageLayer { im -> im.opacity = v } },
+                                        valueRange = 0.2f..1f,
+                                        modifier = Modifier.weight(1f).padding(horizontal = 8.dp)
+                                    )
+                                    Text("${(selectedImage.opacity * 100).toInt()}%", color = DeepNavy, fontSize = 12.sp)
+                                }
+                                OutlinedButton(onClick = { onDeleteImageLayer(selectedImage.id) }, modifier = Modifier.fillMaxWidth()) {
+                                    Icon(Icons.Default.Delete, contentDescription = null, tint = DeepNavy, modifier = Modifier.size(16.dp))
+                                    Spacer(Modifier.width(4.dp))
+                                    Text("Delete image layer", color = DeepNavy)
+                                }
                             }
-                            Card(
-                                colors = CardDefaults.cardColors(containerColor = if (bgColoursOpen) PaleBlue else SoftGrey),
-                                shape = RoundedCornerShape(10.dp),
-                                modifier = Modifier.border(if (bgColoursOpen) 2.dp else 0.dp, if (bgColoursOpen) SkyBlue else Color.Transparent, RoundedCornerShape(10.dp)).clickable { bgColoursOpen = !bgColoursOpen }
-                            ) { Text("More colours", modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp), fontSize = 12.sp, color = DeepNavy, fontWeight = FontWeight.SemiBold) }
                         }
-                        if (bgColoursOpen) {
-                            TextOverlayUtils.EXTRA_COLORS.chunked(8).forEach { rowItems ->
-                                Row(Modifier.padding(bottom = 8.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                                    rowItems.forEach { c ->
-                                        val sel = selected.bgColorArgb == c
-                                        Box(
-                                            Modifier
-                                                .size(30.dp)
-                                                .clip(CircleShape)
-                                                .background(Color(c))
-                                                .border(if (sel) 3.dp else 1.dp, if (sel) SkyBlue else BorderGrey, CircleShape)
-                                                .clickable { onMutate(0L) { l -> l.bgColorArgb = c } }
+                        Spacer(Modifier.height(14.dp))
+                    }
+
+                    }
+                    "text" -> {
+                    // ---- Quick edits (his layout request: font size, background, shadow, curve and spacing live
+                    //      right under the image, so every change is seen live without scrolling) ----
+                    if (selected != null) {
+                        Card(colors = CardDefaults.cardColors(containerColor = SoftGrey), shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth()) {
+                            Column(Modifier.padding(12.dp)) {
+                                Text("Quick edits", color = DeepNavy, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                                Text("Every change shows live on your photo above.", color = Slate, fontSize = 11.sp)
+                                Spacer(Modifier.height(8.dp))
+
+                                Text("Font size", color = Slate, fontSize = 12.sp)
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text("A-", color = Slate, fontSize = 12.sp)
+                                    Slider(
+                                        value = selected.sizeFrac,
+                                        onValueChange = { v -> onMutate(1200L) { l -> l.sizeFrac = v } },
+                                        valueRange = 0.02f..0.20f,
+                                        modifier = Modifier.weight(1f).padding(horizontal = 8.dp)
+                                    )
+                                    Text("A+", color = DeepNavy, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                                }
+
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text("Curve Text", color = Slate, fontSize = 13.sp, modifier = Modifier.weight(1f))
+                                    Switch(checked = selected.curved, onCheckedChange = { onMutate(0L) { l -> l.curved = it } })
+                                }
+                                if (selected.curved) {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Text("Arc", color = Slate, fontSize = 12.sp)
+                                        Slider(
+                                            value = selected.arcSweep,
+                                            onValueChange = { v -> onMutate(1200L) { l -> l.arcSweep = v } },
+                                            valueRange = 60f..320f,
+                                            modifier = Modifier.weight(1f).padding(horizontal = 8.dp)
                                         )
+                                        Text("${selected.arcSweep.toInt()}°", color = DeepNavy, fontSize = 12.sp)
+                                    }
+                                }
+                                Spacer(Modifier.height(8.dp))
+
+                                Text("Text background", color = Slate, fontSize = 12.sp)
+                                run {
+                                    var bgColoursOpen by remember { mutableStateOf(false) }
+                                    Row(Modifier.padding(top = 4.dp, bottom = 8.dp).horizontalScroll(rememberScrollState()), verticalAlignment = Alignment.CenterVertically) {
+                                        listOf(0 to "None", 0xFFFFFFFF.toInt() to "White", 0xFF000000.toInt() to "Black", 0xFF42BFEF.toInt() to "Blue", 0xFFF5B942.toInt() to "Gold").forEach { (c, lbl) ->
+                                            val sel = selected.bgColorArgb == c
+                                            Card(
+                                                colors = CardDefaults.cardColors(containerColor = if (sel) PaleBlue else Color.White),
+                                                shape = RoundedCornerShape(10.dp),
+                                                modifier = Modifier.padding(end = 8.dp, bottom = 8.dp).border(if (sel) 2.dp else 0.dp, if (sel) SkyBlue else Color.Transparent, RoundedCornerShape(10.dp)).clickable { onMutate(0L) { l -> l.bgColorArgb = c } }
+                                            ) { Text(lbl, modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp), fontSize = 12.sp, color = DeepNavy) }
+                                        }
+                                        Card(
+                                            colors = CardDefaults.cardColors(containerColor = if (bgColoursOpen) PaleBlue else SoftGrey),
+                                            shape = RoundedCornerShape(10.dp),
+                                            modifier = Modifier.border(if (bgColoursOpen) 2.dp else 0.dp, if (bgColoursOpen) SkyBlue else Color.Transparent, RoundedCornerShape(10.dp)).clickable { bgColoursOpen = !bgColoursOpen }
+                                        ) { Text("More colours", modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp), fontSize = 12.sp, color = DeepNavy, fontWeight = FontWeight.SemiBold) }
+                                    }
+                                    if (bgColoursOpen) {
+                                        TextOverlayUtils.EXTRA_COLORS.chunked(8).forEach { rowItems ->
+                                            Row(Modifier.padding(bottom = 8.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                                rowItems.forEach { c ->
+                                                    val sel = selected.bgColorArgb == c
+                                                    Box(
+                                                        Modifier
+                                                            .size(30.dp)
+                                                            .clip(CircleShape)
+                                                            .background(Color(c))
+                                                            .border(if (sel) 3.dp else 1.dp, if (sel) SkyBlue else BorderGrey, CircleShape)
+                                                            .clickable { onMutate(0L) { l -> l.bgColorArgb = c } }
+                                                    )
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text("Shadow", color = Slate, fontSize = 13.sp, modifier = Modifier.weight(1f))
+                                    Switch(checked = selected.shadow, onCheckedChange = { onMutate(0L) { l -> l.shadow = it } })
+                                }
+
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text("Opacity", color = Slate, fontSize = 12.sp)
+                                    Slider(
+                                        value = selected.opacity,
+                                        onValueChange = { v -> onMutate(1200L) { l -> l.opacity = v } },
+                                        valueRange = 0.2f..1f,
+                                        modifier = Modifier.weight(1f).padding(horizontal = 8.dp)
+                                    )
+                                    Text("${(selected.opacity * 100).toInt()}%", color = DeepNavy, fontSize = 12.sp)
+                                }
+
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text("Letter spacing", color = Slate, fontSize = 12.sp)
+                                    Slider(
+                                        value = selected.letterSpacing,
+                                        onValueChange = { v -> onMutate(1200L) { l -> l.letterSpacing = v } },
+                                        valueRange = 0f..0.3f,
+                                        modifier = Modifier.weight(1f).padding(horizontal = 8.dp)
+                                    )
+                                    Text("${(selected.letterSpacing * 100).toInt()}%", color = DeepNavy, fontSize = 12.sp)
+                                }
+
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text("Line spacing", color = Slate, fontSize = 12.sp)
+                                    Slider(
+                                        value = selected.lineSpacing,
+                                        onValueChange = { v -> onMutate(1200L) { l -> l.lineSpacing = v } },
+                                        valueRange = 0f..1f,
+                                        modifier = Modifier.weight(1f).padding(horizontal = 8.dp)
+                                    )
+                                    Text("${(selected.lineSpacing * 100).toInt()}%", color = DeepNavy, fontSize = 12.sp)
+                                }
+                            }
+                        }
+                        Spacer(Modifier.height(14.dp))
+                    }
+
+                        if (selected != null) {
+                        Text("Text colour", color = Slate, fontSize = 12.sp)
+                        // v0.16.4: all 18 swatches visible as a grid (his palette reference) - no "More colours" hunting.
+                        (TextOverlayUtils.QUICK_COLORS + TextOverlayUtils.EXTRA_COLORS).chunked(6).forEach { rowItems ->
+                            Row(Modifier.padding(top = 6.dp, bottom = 2.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                                rowItems.forEach { c ->
+                                    val sel = selected.colorArgb == c
+                                    Box(
+                                        Modifier
+                                            .size(30.dp)
+                                            .clip(CircleShape)
+                                            .background(Color(c))
+                                            .border(if (sel) 3.dp else 1.dp, if (sel) SkyBlue else BorderGrey, CircleShape)
+                                            .clickable { onMutate(0L) { l -> l.colorArgb = c } }
+                                    )
+                                }
+                            }
+                        }
+                        }
+
+                    OutlinedTextField(
+                        value = selected?.text ?: "",
+                        onValueChange = { v -> onMutate(1500L) { l -> l.text = v } },
+                        enabled = selected != null,
+                        minLines = 2,
+                        label = { Text(if (selected != null) "Text for the selected layer (multiple lines OK)" else "Add a text layer first") },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    // ---- Text Styling ----
+                    if (selected != null) {
+                        Text("Text Styling", color = DeepNavy, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                        Spacer(Modifier.height(8.dp))
+
+                        run {
+                            var saveStyleOpen by remember { mutableStateOf(false) }
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text("My styles", color = Slate, fontSize = 12.sp, modifier = Modifier.weight(1f))
+                                OutlinedButton(onClick = { saveStyleOpen = true }) { Text("Save current style", color = DeepNavy) }
+                            }
+                            if (stylePresets.isNotEmpty()) {
+                                stylePresets.chunked(3).forEach { rowItems ->
+                                    Row {
+                                        rowItems.forEach { p ->
+                                            Card(
+                                                colors = CardDefaults.cardColors(containerColor = SoftGrey),
+                                                shape = RoundedCornerShape(10.dp),
+                                                modifier = Modifier.padding(end = 8.dp, bottom = 8.dp).clickable { onApplyStyle(p) }
+                                            ) { Text(p.name, modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp), fontSize = 12.sp, color = DeepNavy, fontWeight = FontWeight.SemiBold, maxLines = 1) }
+                                        }
+                                    }
+                                }
+                            } else {
+                                Text("Style a text layer, then save it here to reuse on any photo - it also appears in the Presets tab.", color = Slate, fontSize = 11.sp, modifier = Modifier.padding(bottom = 6.dp))
+                            }
+                            if (saveStyleOpen) {
+                                var styleName by remember { mutableStateOf("") }
+                                AlertDialog(
+                                    onDismissRequest = { saveStyleOpen = false },
+                                    title = { Text("Save current style") },
+                                    text = {
+                                        OutlinedTextField(value = styleName, onValueChange = { styleName = it }, singleLine = true, label = { Text("Style name") }, modifier = Modifier.fillMaxWidth())
+                                    },
+                                    confirmButton = {
+                                        Button(onClick = { if (styleName.isNotBlank()) { onSaveStyle(styleName.trim()); saveStyleOpen = false } }) { Text("Save") }
+                                    },
+                                    dismissButton = {
+                                        OutlinedButton(onClick = { saveStyleOpen = false }) { Text("Cancel", color = DeepNavy) }
+                                    }
+                                )
+                            }
+                        }
+
+                        Text("Quick Text Styles", color = Slate, fontSize = 12.sp)
+                        Spacer(Modifier.height(4.dp))
+                        TextOverlayUtils.QUICK_STYLE_NAMES.chunked(2).forEach { rowItems ->
+                            Row(Modifier.fillMaxWidth()) {
+                                rowItems.forEach { style ->
+                                    Card(
+                                        colors = CardDefaults.cardColors(containerColor = SoftGrey),
+                                        shape = RoundedCornerShape(10.dp),
+                                        modifier = Modifier.weight(1f).padding(end = 8.dp, bottom = 8.dp).clickable { onMutate(0L) { l -> TextOverlayUtils.applyPreset(l, style) } }
+                                    ) {
+                                        Column(Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
+                                            Text(style, fontWeight = FontWeight.Bold, color = DeepNavy, fontSize = 14.sp)
+                                            Text(
+                                                when (style) {
+                                                    "Classic" -> "Clean, simple text"
+                                                    "Bold" -> "Strong headlines"
+                                                    "Elegant" -> "Stylish typography"
+                                                    else -> "Text with depth"
+                                                },
+                                                fontSize = 11.sp, color = Slate
+                                            )
+                                        }
+                                    }
+                                }
+                                if (rowItems.size == 1) Spacer(Modifier.weight(1f))
+                            }
+                        }
+
+                        Text("Font", color = Slate, fontSize = 12.sp)
+                        run {
+                            var fontsOpen by remember { mutableStateOf(false) }
+                            Row(Modifier.padding(top = 4.dp).horizontalScroll(rememberScrollState())) {
+                                TextOverlayUtils.FontChoice.values().filter { it.common }.forEach { f ->
+                                    val sel = selected.font == f
+                                    Card(
+                                        colors = CardDefaults.cardColors(containerColor = if (sel) PaleBlue else SoftGrey),
+                                        shape = RoundedCornerShape(10.dp),
+                                        modifier = Modifier.padding(end = 8.dp, bottom = 8.dp).border(if (sel) 2.dp else 0.dp, if (sel) SkyBlue else Color.Transparent, RoundedCornerShape(10.dp)).clickable { onMutate(0L) { l -> l.font = f } }
+                                    ) { Text(f.label, modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp), fontSize = 13.sp, color = DeepNavy, fontFamily = FontFamily(android.graphics.Typeface.create(f.family, android.graphics.Typeface.NORMAL)), fontWeight = if (sel) FontWeight.Bold else FontWeight.Normal) }
+                                }
+                                Card(
+                                    colors = CardDefaults.cardColors(containerColor = if (fontsOpen) PaleBlue else SoftGrey),
+                                    shape = RoundedCornerShape(10.dp),
+                                    modifier = Modifier.padding(end = 8.dp, bottom = 8.dp).border(if (fontsOpen) 2.dp else 0.dp, if (fontsOpen) SkyBlue else Color.Transparent, RoundedCornerShape(10.dp)).clickable { fontsOpen = !fontsOpen }
+                                ) { Text("More fonts", modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp), fontSize = 13.sp, color = DeepNavy, fontWeight = FontWeight.SemiBold) }
+                            }
+                            if (fontsOpen) {
+                                TextOverlayUtils.FontChoice.values().filter { !it.common }.chunked(3).forEach { rowItems ->
+                                    Row {
+                                        rowItems.forEach { f ->
+                                            val sel = selected.font == f
+                                            Card(
+                                                colors = CardDefaults.cardColors(containerColor = if (sel) PaleBlue else SoftGrey),
+                                                shape = RoundedCornerShape(10.dp),
+                                                modifier = Modifier.padding(end = 8.dp, bottom = 8.dp).border(if (sel) 2.dp else 0.dp, if (sel) SkyBlue else Color.Transparent, RoundedCornerShape(10.dp)).clickable { onMutate(0L) { l -> l.font = f } }
+                                            ) { Text(f.label, modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp), fontSize = 13.sp, color = DeepNavy, fontFamily = FontFamily(android.graphics.Typeface.create(f.family, android.graphics.Typeface.NORMAL)), fontWeight = if (sel) FontWeight.Bold else FontWeight.Normal) }
+                                        }
                                     }
                                 }
                             }
                         }
-                    }
-
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text("Shadow", color = Slate, fontSize = 13.sp, modifier = Modifier.weight(1f))
-                        Switch(checked = selected.shadow, onCheckedChange = { onMutate(0L) { l -> l.shadow = it } })
-                    }
-
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text("Opacity", color = Slate, fontSize = 12.sp)
-                        Slider(
-                            value = selected.opacity,
-                            onValueChange = { v -> onMutate(1200L) { l -> l.opacity = v } },
-                            valueRange = 0.2f..1f,
-                            modifier = Modifier.weight(1f).padding(horizontal = 8.dp)
-                        )
-                        Text("${(selected.opacity * 100).toInt()}%", color = DeepNavy, fontSize = 12.sp)
-                    }
-
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text("Letter spacing", color = Slate, fontSize = 12.sp)
-                        Slider(
-                            value = selected.letterSpacing,
-                            onValueChange = { v -> onMutate(1200L) { l -> l.letterSpacing = v } },
-                            valueRange = 0f..0.3f,
-                            modifier = Modifier.weight(1f).padding(horizontal = 8.dp)
-                        )
-                        Text("${(selected.letterSpacing * 100).toInt()}%", color = DeepNavy, fontSize = 12.sp)
-                    }
-
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text("Line spacing", color = Slate, fontSize = 12.sp)
-                        Slider(
-                            value = selected.lineSpacing,
-                            onValueChange = { v -> onMutate(1200L) { l -> l.lineSpacing = v } },
-                            valueRange = 0f..1f,
-                            modifier = Modifier.weight(1f).padding(horizontal = 8.dp)
-                        )
-                        Text("${(selected.lineSpacing * 100).toInt()}%", color = DeepNavy, fontSize = 12.sp)
-                    }
-                }
-            }
-            Spacer(Modifier.height(14.dp))
-        }
-
-        // ---- Image Size (his v0.16.1 spec: 4 common sizes up front + "More sizes" -> all sizes + custom) ----
-        run {
-            var moreOpen by remember { mutableStateOf(false) }
-            var customW by remember { mutableStateOf("") }
-            var customH by remember { mutableStateOf("") }
-            var customNote by remember { mutableStateOf("") }
-            Text("Image Size", color = DeepNavy, fontWeight = FontWeight.Bold, fontSize = 16.sp)
-            Text("Pick the canvas shape first, then add your words.", color = Slate, fontSize = 11.sp)
-            Spacer(Modifier.height(6.dp))
-            Row(Modifier.horizontalScroll(rememberScrollState())) {
-                TextOverlayUtils.ASPECT_OPTIONS.filter { it.common }.forEach { opt ->
-                    PrintPresetChip(opt.label, "${opt.rw}:${opt.rh}", cropLabel == "${opt.label} ${opt.rw}:${opt.rh}") { onSetCrop(opt.label, opt.rw, opt.rh) }
-                }
-                PrintPresetChip("More sizes", "all + custom", moreOpen) { moreOpen = !moreOpen }
-            }
-            if (moreOpen) {
-                Row(Modifier.horizontalScroll(rememberScrollState())) {
-                    PrintPresetChip("Original", "no crop", cropRect == null && cropLabel.isEmpty()) { onClearCrop() }
-                    TextOverlayUtils.ASPECT_OPTIONS.filter { !it.common }.take(3).forEach { opt ->
-                        PrintPresetChip(opt.label, "${opt.rw}:${opt.rh}", cropLabel == "${opt.label} ${opt.rw}:${opt.rh}") { onSetCrop(opt.label, opt.rw, opt.rh) }
-                    }
-                }
-                Row {
-                    TextOverlayUtils.ASPECT_OPTIONS.filter { !it.common }.drop(3).forEach { opt ->
-                        PrintPresetChip(opt.label, "${opt.rw}:${opt.rh}", cropLabel == "${opt.label} ${opt.rw}:${opt.rh}") { onSetCrop(opt.label, opt.rw, opt.rh) }
-                    }
-                }
-                Text("Custom size", color = Slate, fontSize = 12.sp)
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    OutlinedTextField(
-                        value = customW,
-                        onValueChange = { customW = it; customNote = "" },
-                        singleLine = true,
-                        label = { Text("Width") },
-                        modifier = Modifier.weight(1f).padding(end = 6.dp)
-                    )
-                    Text(":", color = Slate, fontSize = 16.sp)
-                    OutlinedTextField(
-                        value = customH,
-                        onValueChange = { customH = it; customNote = "" },
-                        singleLine = true,
-                        label = { Text("Height") },
-                        modifier = Modifier.weight(1f).padding(horizontal = 6.dp)
-                    )
-                    OutlinedButton(onClick = {
-                        val ratio = TextOverlayUtils.parseCustomRatio(customW, customH)
-                        if (ratio == null) customNote = "Enter whole numbers from 1 to 99, like 5 and 7."
-                        else onSetCrop("Custom", ratio[0], ratio[1])
-                    }) { Text("Apply", color = DeepNavy) }
-                }
-                if (customNote.isNotBlank()) Text(customNote, color = MaterialTheme.colorScheme.error, fontSize = 11.sp)
-            }
-            if (cropRect != null) {
-                Spacer(Modifier.height(4.dp))
-                Text("Canvas: $cropLabel · $canvasDims", color = SkyBlue, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
-            }
-        }
-        Spacer(Modifier.height(14.dp))
-
-        // ---- Add Layers (his v0.16.1 spec: text layers AND image-over-image layers) ----
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("Add Layers", color = DeepNavy, fontWeight = FontWeight.Bold, fontSize = 16.sp, modifier = Modifier.weight(1f))
-            OutlinedButton(onClick = onAddLayer) {
-                Icon(Icons.Default.Add, contentDescription = null, tint = DeepNavy, modifier = Modifier.size(16.dp))
-                Spacer(Modifier.width(4.dp))
-                Text("Text", color = DeepNavy)
-            }
-            Spacer(Modifier.width(8.dp))
-            OutlinedButton(onClick = onAddImageLayer, enabled = bitmap != null) {
-                Icon(Icons.Default.Add, contentDescription = null, tint = DeepNavy, modifier = Modifier.size(16.dp))
-                Spacer(Modifier.width(4.dp))
-                Text("Image", color = DeepNavy)
-            }
-        }
-        Spacer(Modifier.height(6.dp))
-        OutlinedTextField(
-            value = selected?.text ?: "",
-            onValueChange = { v -> onMutate(1500L) { l -> l.text = v } },
-            enabled = selected != null,
-            minLines = 2,
-            label = { Text(if (selected != null) "Text for the selected layer (multiple lines OK)" else "Add a text layer first") },
-            modifier = Modifier.fillMaxWidth()
-        )
-        Spacer(Modifier.height(14.dp))
-
-        // ---- Text Styling ----
-        if (selected != null) {
-            Text("Text Styling", color = DeepNavy, fontWeight = FontWeight.Bold, fontSize = 16.sp)
-            Spacer(Modifier.height(8.dp))
-
-            run {
-                var saveStyleOpen by remember { mutableStateOf(false) }
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("My styles", color = Slate, fontSize = 12.sp, modifier = Modifier.weight(1f))
-                    OutlinedButton(onClick = { saveStyleOpen = true }) { Text("Save current style", color = DeepNavy) }
-                }
-                if (stylePresets.isNotEmpty()) {
-                    stylePresets.chunked(3).forEach { rowItems ->
-                        Row {
-                            rowItems.forEach { p ->
-                                Card(
-                                    colors = CardDefaults.cardColors(containerColor = SoftGrey),
-                                    shape = RoundedCornerShape(10.dp),
-                                    modifier = Modifier.padding(end = 8.dp, bottom = 8.dp).clickable { onApplyStyle(p) }
-                                ) { Text(p.name, modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp), fontSize = 12.sp, color = DeepNavy, fontWeight = FontWeight.SemiBold, maxLines = 1) }
-                            }
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Card(
+                                colors = CardDefaults.cardColors(containerColor = if (selected.bold) PaleBlue else SoftGrey),
+                                shape = RoundedCornerShape(10.dp),
+                                modifier = Modifier.padding(end = 8.dp, bottom = 8.dp).border(if (selected.bold) 2.dp else 0.dp, if (selected.bold) SkyBlue else Color.Transparent, RoundedCornerShape(10.dp)).clickable { onMutate(0L) { l -> l.bold = !l.bold } }
+                            ) { Text("Bold", modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp), fontSize = 13.sp, color = DeepNavy, fontWeight = FontWeight.Bold) }
+                            Card(
+                                colors = CardDefaults.cardColors(containerColor = if (selected.italic) PaleBlue else SoftGrey),
+                                shape = RoundedCornerShape(10.dp),
+                                modifier = Modifier.padding(end = 8.dp, bottom = 8.dp).border(if (selected.italic) 2.dp else 0.dp, if (selected.italic) SkyBlue else Color.Transparent, RoundedCornerShape(10.dp)).clickable { onMutate(0L) { l -> l.italic = !l.italic } }
+                            ) { Text("Italic", modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp), fontSize = 13.sp, color = DeepNavy, fontStyle = androidx.compose.ui.text.font.FontStyle.Italic) }
                         }
-                    }
-                } else {
-                    Text("Style a text layer, then save it here to reuse on any photo - it also appears in the Presets tab.", color = Slate, fontSize = 11.sp, modifier = Modifier.padding(bottom = 6.dp))
-                }
-                if (saveStyleOpen) {
-                    var styleName by remember { mutableStateOf("") }
-                    AlertDialog(
-                        onDismissRequest = { saveStyleOpen = false },
-                        title = { Text("Save current style") },
-                        text = {
-                            OutlinedTextField(value = styleName, onValueChange = { styleName = it }, singleLine = true, label = { Text("Style name") }, modifier = Modifier.fillMaxWidth())
-                        },
-                        confirmButton = {
-                            Button(onClick = { if (styleName.isNotBlank()) { onSaveStyle(styleName.trim()); saveStyleOpen = false } }) { Text("Save") }
-                        },
-                        dismissButton = {
-                            OutlinedButton(onClick = { saveStyleOpen = false }) { Text("Cancel", color = DeepNavy) }
-                        }
-                    )
-                }
-            }
 
-            Text("Quick Text Styles", color = Slate, fontSize = 12.sp)
-            Spacer(Modifier.height(4.dp))
-            TextOverlayUtils.QUICK_STYLE_NAMES.chunked(2).forEach { rowItems ->
-                Row(Modifier.fillMaxWidth()) {
-                    rowItems.forEach { style ->
-                        Card(
-                            colors = CardDefaults.cardColors(containerColor = SoftGrey),
-                            shape = RoundedCornerShape(10.dp),
-                            modifier = Modifier.weight(1f).padding(end = 8.dp, bottom = 8.dp).clickable { onMutate(0L) { l -> TextOverlayUtils.applyPreset(l, style) } }
-                        ) {
-                            Column(Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
-                                Text(style, fontWeight = FontWeight.Bold, color = DeepNavy, fontSize = 14.sp)
-                                Text(
-                                    when (style) {
-                                        "Classic" -> "Clean, simple text"
-                                        "Bold" -> "Strong headlines"
-                                        "Elegant" -> "Stylish typography"
-                                        else -> "Text with depth"
-                                    },
-                                    fontSize = 11.sp, color = Slate
-                                )
-                            }
-                        }
-                    }
-                    if (rowItems.size == 1) Spacer(Modifier.weight(1f))
-                }
-            }
-
-            Text("Font", color = Slate, fontSize = 12.sp)
-            run {
-                var fontsOpen by remember { mutableStateOf(false) }
-                Row(Modifier.padding(top = 4.dp).horizontalScroll(rememberScrollState())) {
-                    TextOverlayUtils.FontChoice.values().filter { it.common }.forEach { f ->
-                        val sel = selected.font == f
-                        Card(
-                            colors = CardDefaults.cardColors(containerColor = if (sel) PaleBlue else SoftGrey),
-                            shape = RoundedCornerShape(10.dp),
-                            modifier = Modifier.padding(end = 8.dp, bottom = 8.dp).border(if (sel) 2.dp else 0.dp, if (sel) SkyBlue else Color.Transparent, RoundedCornerShape(10.dp)).clickable { onMutate(0L) { l -> l.font = f } }
-                        ) { Text(f.label, modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp), fontSize = 13.sp, color = DeepNavy, fontFamily = FontFamily(android.graphics.Typeface.create(f.family, android.graphics.Typeface.NORMAL)), fontWeight = if (sel) FontWeight.Bold else FontWeight.Normal) }
-                    }
-                    Card(
-                        colors = CardDefaults.cardColors(containerColor = if (fontsOpen) PaleBlue else SoftGrey),
-                        shape = RoundedCornerShape(10.dp),
-                        modifier = Modifier.padding(end = 8.dp, bottom = 8.dp).border(if (fontsOpen) 2.dp else 0.dp, if (fontsOpen) SkyBlue else Color.Transparent, RoundedCornerShape(10.dp)).clickable { fontsOpen = !fontsOpen }
-                    ) { Text("More fonts", modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp), fontSize = 13.sp, color = DeepNavy, fontWeight = FontWeight.SemiBold) }
-                }
-                if (fontsOpen) {
-                    TextOverlayUtils.FontChoice.values().filter { !it.common }.chunked(3).forEach { rowItems ->
-                        Row {
-                            rowItems.forEach { f ->
-                                val sel = selected.font == f
+                        Text("Text alignment", color = Slate, fontSize = 12.sp)
+                        Row(Modifier.padding(top = 4.dp)) {
+                            TextOverlayUtils.Align.values().forEach { a ->
+                                val sel = selected.align == a
                                 Card(
                                     colors = CardDefaults.cardColors(containerColor = if (sel) PaleBlue else SoftGrey),
                                     shape = RoundedCornerShape(10.dp),
-                                    modifier = Modifier.padding(end = 8.dp, bottom = 8.dp).border(if (sel) 2.dp else 0.dp, if (sel) SkyBlue else Color.Transparent, RoundedCornerShape(10.dp)).clickable { onMutate(0L) { l -> l.font = f } }
-                                ) { Text(f.label, modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp), fontSize = 13.sp, color = DeepNavy, fontFamily = FontFamily(android.graphics.Typeface.create(f.family, android.graphics.Typeface.NORMAL)), fontWeight = if (sel) FontWeight.Bold else FontWeight.Normal) }
+                                    modifier = Modifier.padding(end = 8.dp, bottom = 8.dp).border(if (sel) 2.dp else 0.dp, if (sel) SkyBlue else Color.Transparent, RoundedCornerShape(10.dp)).clickable { onMutate(0L) { l -> l.align = a } }
+                                ) { Text(a.label, modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp), fontSize = 13.sp, color = DeepNavy) }
                             }
                         }
-                    }
-                }
-            }
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Card(
-                    colors = CardDefaults.cardColors(containerColor = if (selected.bold) PaleBlue else SoftGrey),
-                    shape = RoundedCornerShape(10.dp),
-                    modifier = Modifier.padding(end = 8.dp, bottom = 8.dp).border(if (selected.bold) 2.dp else 0.dp, if (selected.bold) SkyBlue else Color.Transparent, RoundedCornerShape(10.dp)).clickable { onMutate(0L) { l -> l.bold = !l.bold } }
-                ) { Text("Bold", modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp), fontSize = 13.sp, color = DeepNavy, fontWeight = FontWeight.Bold) }
-                Card(
-                    colors = CardDefaults.cardColors(containerColor = if (selected.italic) PaleBlue else SoftGrey),
-                    shape = RoundedCornerShape(10.dp),
-                    modifier = Modifier.padding(end = 8.dp, bottom = 8.dp).border(if (selected.italic) 2.dp else 0.dp, if (selected.italic) SkyBlue else Color.Transparent, RoundedCornerShape(10.dp)).clickable { onMutate(0L) { l -> l.italic = !l.italic } }
-                ) { Text("Italic", modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp), fontSize = 13.sp, color = DeepNavy, fontStyle = androidx.compose.ui.text.font.FontStyle.Italic) }
-            }
 
-            Text("Text alignment", color = Slate, fontSize = 12.sp)
-            Row(Modifier.padding(top = 4.dp)) {
-                TextOverlayUtils.Align.values().forEach { a ->
-                    val sel = selected.align == a
-                    Card(
-                        colors = CardDefaults.cardColors(containerColor = if (sel) PaleBlue else SoftGrey),
-                        shape = RoundedCornerShape(10.dp),
-                        modifier = Modifier.padding(end = 8.dp, bottom = 8.dp).border(if (sel) 2.dp else 0.dp, if (sel) SkyBlue else Color.Transparent, RoundedCornerShape(10.dp)).clickable { onMutate(0L) { l -> l.align = a } }
-                    ) { Text(a.label, modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp), fontSize = 13.sp, color = DeepNavy) }
-                }
-            }
 
-            Text("Text colour", color = Slate, fontSize = 12.sp)
-            run {
-                var coloursOpen by remember { mutableStateOf(false) }
-                Row(Modifier.padding(top = 6.dp, bottom = 8.dp).horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
-                    TextOverlayUtils.QUICK_COLORS.forEach { c ->
-                        val sel = selected.colorArgb == c
-                        Box(
-                            Modifier
-                                .size(30.dp)
-                                .clip(CircleShape)
-                                .background(Color(c))
-                                .border(if (sel) 3.dp else 1.dp, if (sel) SkyBlue else BorderGrey, CircleShape)
-                                .clickable { onMutate(0L) { l -> l.colorArgb = c } }
-                        )
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text("Outline", color = Slate, fontSize = 12.sp)
+                            Slider(
+                                value = selected.outlineFrac,
+                                onValueChange = { v -> onMutate(1200L) { l -> l.outlineFrac = v } },
+                                valueRange = 0f..0.25f,
+                                modifier = Modifier.weight(1f).padding(horizontal = 8.dp)
+                            )
+                            Text(if (selected.outlineFrac <= 0.005f) "Off" else "${(selected.outlineFrac * 100).toInt()}%", color = DeepNavy, fontSize = 12.sp)
+                        }
+                        if (selected.outlineFrac > 0.005f) {
+                            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                listOf(0xFF000000.toInt() to "Black", 0xFFFFFFFF.toInt() to "White", 0xFF172B4D.toInt() to "Navy").forEach { (c, lbl) ->
+                                    val sel = selected.outlineColorArgb == c
+                                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.clickable { onMutate(0L) { l -> l.outlineColorArgb = c } }) {
+                                        Box(Modifier.size(18.dp).clip(CircleShape).background(Color(c)).border(if (sel) 3.dp else 1.dp, if (sel) SkyBlue else BorderGrey, CircleShape))
+                                        Spacer(Modifier.width(4.dp))
+                                        Text(lbl, color = Slate, fontSize = 12.sp)
+                                    }
+                                }
+                            }
+                            Spacer(Modifier.height(8.dp))
+                        }
+
                     }
-                    Card(
-                        colors = CardDefaults.cardColors(containerColor = if (coloursOpen) PaleBlue else SoftGrey),
-                        shape = RoundedCornerShape(10.dp),
-                        modifier = Modifier.border(if (coloursOpen) 2.dp else 0.dp, if (coloursOpen) SkyBlue else Color.Transparent, RoundedCornerShape(10.dp)).clickable { coloursOpen = !coloursOpen }
-                    ) { Text("More colours", modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp), fontSize = 12.sp, color = DeepNavy, fontWeight = FontWeight.SemiBold) }
-                }
-                if (coloursOpen) {
-                    TextOverlayUtils.EXTRA_COLORS.chunked(8).forEach { rowItems ->
-                        Row(Modifier.padding(bottom = 8.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                            rowItems.forEach { c ->
-                                val sel = selected.colorArgb == c
-                                Box(
-                                    Modifier
-                                        .size(30.dp)
-                                        .clip(CircleShape)
-                                        .background(Color(c))
-                                        .border(if (sel) 3.dp else 1.dp, if (sel) SkyBlue else BorderGrey, CircleShape)
-                                        .clickable { onMutate(0L) { l -> l.colorArgb = c } }
+
+                    }
+                    "size" -> {
+                    // ---- Image Size (his v0.16.1 spec: 4 common sizes up front + "More sizes" -> all sizes + custom) ----
+                    run {
+                        var moreOpen by remember { mutableStateOf(false) }
+                        var customW by remember { mutableStateOf("") }
+                        var customH by remember { mutableStateOf("") }
+                        var customNote by remember { mutableStateOf("") }
+                        Text("Image Size", color = DeepNavy, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                        Text("Pick the canvas shape first, then add your words.", color = Slate, fontSize = 11.sp)
+                        Spacer(Modifier.height(6.dp))
+                        Row(Modifier.horizontalScroll(rememberScrollState())) {
+                            TextOverlayUtils.ASPECT_OPTIONS.filter { it.common }.forEach { opt ->
+                                PrintPresetChip(opt.label, "${opt.rw}:${opt.rh}", cropLabel == "${opt.label} ${opt.rw}:${opt.rh}") { onSetCrop(opt.label, opt.rw, opt.rh) }
+                            }
+                            PrintPresetChip("More sizes", "all + custom", moreOpen) { moreOpen = !moreOpen }
+                        }
+                        if (moreOpen) {
+                            Row(Modifier.horizontalScroll(rememberScrollState())) {
+                                PrintPresetChip("Original", "no crop", cropRect == null && cropLabel.isEmpty()) { onClearCrop() }
+                                TextOverlayUtils.ASPECT_OPTIONS.filter { !it.common }.take(3).forEach { opt ->
+                                    PrintPresetChip(opt.label, "${opt.rw}:${opt.rh}", cropLabel == "${opt.label} ${opt.rw}:${opt.rh}") { onSetCrop(opt.label, opt.rw, opt.rh) }
+                                }
+                            }
+                            Row {
+                                TextOverlayUtils.ASPECT_OPTIONS.filter { !it.common }.drop(3).forEach { opt ->
+                                    PrintPresetChip(opt.label, "${opt.rw}:${opt.rh}", cropLabel == "${opt.label} ${opt.rw}:${opt.rh}") { onSetCrop(opt.label, opt.rw, opt.rh) }
+                                }
+                            }
+                            Text("Custom size", color = Slate, fontSize = 12.sp)
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                OutlinedTextField(
+                                    value = customW,
+                                    onValueChange = { customW = it; customNote = "" },
+                                    singleLine = true,
+                                    label = { Text("Width") },
+                                    modifier = Modifier.weight(1f).padding(end = 6.dp)
                                 )
+                                Text(":", color = Slate, fontSize = 16.sp)
+                                OutlinedTextField(
+                                    value = customH,
+                                    onValueChange = { customH = it; customNote = "" },
+                                    singleLine = true,
+                                    label = { Text("Height") },
+                                    modifier = Modifier.weight(1f).padding(horizontal = 6.dp)
+                                )
+                                OutlinedButton(onClick = {
+                                    val ratio = TextOverlayUtils.parseCustomRatio(customW, customH)
+                                    if (ratio == null) customNote = "Enter whole numbers from 1 to 99, like 5 and 7."
+                                    else onSetCrop("Custom", ratio[0], ratio[1])
+                                }) { Text("Apply", color = DeepNavy) }
+                            }
+                            if (customNote.isNotBlank()) Text(customNote, color = MaterialTheme.colorScheme.error, fontSize = 11.sp)
+                        }
+                        if (cropRect != null) {
+                            Spacer(Modifier.height(4.dp))
+                            Text("Canvas: $cropLabel · $canvasDims", color = SkyBlue, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                        }
+                    }
+                    Spacer(Modifier.height(14.dp))
+
+                    }
+                    "layers" -> {
+                    // ---- Position and Layers ----
+                    Text("Position and Layers", color = DeepNavy, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                    Spacer(Modifier.height(6.dp))
+                    Row {
+                        OutlinedButton(onClick = onUndo, enabled = canUndo, modifier = Modifier.padding(end = 8.dp)) {
+                            Icon(Icons.Default.Undo, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(4.dp))
+                            Text("Undo")
+                        }
+                        OutlinedButton(onClick = onRedo, enabled = canRedo) {
+                            Icon(Icons.Default.Redo, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(4.dp))
+                            Text("Redo")
+                        }
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    if (layers.isEmpty()) {
+                        Text("No text layers yet - tap \"Add text layer\" above.", color = Slate, fontSize = 12.sp)
+                    }
+                    layers.forEachIndexed { i, layer ->
+                        val sel = layer.id == selectedId
+                        Card(
+                            colors = CardDefaults.cardColors(containerColor = if (sel) PaleBlue else SoftGrey),
+                            shape = RoundedCornerShape(10.dp),
+                            modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp).border(if (sel) 2.dp else 0.dp, if (sel) SkyBlue else Color.Transparent, RoundedCornerShape(10.dp)).clickable { onSelectLayer(layer.id) }
+                        ) {
+                            Row(Modifier.padding(horizontal = 10.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Column(Modifier.weight(1f)) {
+                                    Text(layer.text.lines().firstOrNull()?.take(24)?.ifBlank { "(empty)" } ?: "(empty)", color = DeepNavy, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
+                                    Text(
+                                        "Layer ${i + 1}" + (if (layer.curved) " · curved" else "") + (if (i == layers.lastIndex && layers.size > 1) " · on top" else ""),
+                                        color = Slate, fontSize = 11.sp
+                                    )
+                                }
+                                IconButton(onClick = { onMoveLayer(layer.id, -1) }, enabled = i > 0) {
+                                    Icon(Icons.Default.KeyboardArrowDown, contentDescription = "Send backward", tint = if (i > 0) DeepNavy else BorderGrey)
+                                }
+                                IconButton(onClick = { onMoveLayer(layer.id, 1) }, enabled = i < layers.lastIndex) {
+                                    Icon(Icons.Default.KeyboardArrowUp, contentDescription = "Bring forward", tint = if (i < layers.lastIndex) DeepNavy else BorderGrey)
+                                }
+                                IconButton(onClick = { onDeleteLayer(layer.id) }) {
+                                    Icon(Icons.Default.Delete, contentDescription = "Delete layer", tint = Slate)
+                                }
+                            }
+                        }
+                    }
+                    imageLayers.forEachIndexed { i, layer ->
+                        val sel = layer.id == selectedImageId
+                        Card(
+                            colors = CardDefaults.cardColors(containerColor = if (sel) PaleBlue else SoftGrey),
+                            shape = RoundedCornerShape(10.dp),
+                            modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp).border(if (sel) 2.dp else 0.dp, if (sel) SkyBlue else Color.Transparent, RoundedCornerShape(10.dp)).clickable { onSelectImageLayer(layer.id) }
+                        ) {
+                            Row(Modifier.padding(horizontal = 10.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Column(Modifier.weight(1f)) {
+                                    Text("Image ${i + 1}", color = DeepNavy, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
+                                    Text("Overlay · sits under the text", color = Slate, fontSize = 11.sp)
+                                }
+                                IconButton(onClick = { onMoveImageLayer(layer.id, -1) }, enabled = i > 0) {
+                                    Icon(Icons.Default.KeyboardArrowDown, contentDescription = "Send backward", tint = if (i > 0) DeepNavy else BorderGrey)
+                                }
+                                IconButton(onClick = { onMoveImageLayer(layer.id, 1) }, enabled = i < imageLayers.lastIndex) {
+                                    Icon(Icons.Default.KeyboardArrowUp, contentDescription = "Bring forward", tint = if (i < imageLayers.lastIndex) DeepNavy else BorderGrey)
+                                }
+                                IconButton(onClick = { onDeleteImageLayer(layer.id) }) {
+                                    Icon(Icons.Default.Delete, contentDescription = "Delete image", tint = Slate)
+                                }
+                            }
+                        }
+                    }
+                    Text("Later layers sit on top of earlier ones. Use the arrows to reorder.", color = Slate, fontSize = 11.sp)
+                    Spacer(Modifier.height(14.dp))
+
+                    }
+                    "save" -> {
+                    // ---- Save Photo ----
+                    Text("Save Photo", color = DeepNavy, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                    Spacer(Modifier.height(6.dp))
+                    Row {
+                        PrintPresetChip("PNG", "best quality", format == "PNG") { onFormat("PNG") }
+                        PrintPresetChip("JPG", "smaller file", format == "JPG") { onFormat("JPG") }
+                    }
+                    Text("Nothing is saved until you tap Save. Your original photo is never replaced.", color = Slate, fontSize = 11.sp)
+                    Spacer(Modifier.height(8.dp))
+                    Button(
+                        onClick = onProcess,
+                        enabled = !busy && layers.isNotEmpty(),
+                        modifier = Modifier.fillMaxWidth().height(50.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = SkyBlue, contentColor = Color.White),
+                        shape = RoundedCornerShape(14.dp)
+                    ) { Text(if (resultBytes == null) "Process" else "Process again", fontWeight = FontWeight.Bold) }
+                    if (resultBytes != null) {
+                        Spacer(Modifier.height(8.dp))
+                        Card(colors = CardDefaults.cardColors(containerColor = SoftGrey), shape = RoundedCornerShape(12.dp), modifier = Modifier.fillMaxWidth()) {
+                            Column(Modifier.padding(12.dp)) {
+                                Text("Ready to save", color = DeepNavy, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                                Text("text-on-photo.${if (format == "PNG") "png" else "jpg"} · $resultDims" + (if (cropRect != null) " · $cropLabel" else "") + " · ${formatBytes(resultBytes.size.toLong())}", color = Slate, fontSize = 12.sp)
+                                Text("${layers.size} text ${if (layers.size == 1) "layer" else "layers"}", color = Slate, fontSize = 12.sp)
+                            }
+                        }
+                        Spacer(Modifier.height(8.dp))
+                        Button(
+                            onClick = onSave,
+                            enabled = !busy && !saved,
+                            modifier = Modifier.fillMaxWidth().height(50.dp),
+                            colors = ButtonDefaults.buttonColors(containerColor = Orange, contentColor = Color.White),
+                            shape = RoundedCornerShape(14.dp)
+                        ) { Text(if (saved) "Saved ✓ - see your gallery" else "Save to Gallery", fontWeight = FontWeight.Bold) }
+                    }
+                    }
+                    else -> {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text("Create", color = DeepNavy, fontWeight = FontWeight.Bold, fontSize = 16.sp, modifier = Modifier.weight(1f))
+                            IconButton(onClick = onUndo, enabled = canUndo) { Icon(Icons.Default.Undo, contentDescription = "Undo", tint = if (canUndo) DeepNavy else BorderGrey) }
+                            IconButton(onClick = onRedo, enabled = canRedo) { Icon(Icons.Default.Redo, contentDescription = "Redo", tint = if (canRedo) DeepNavy else BorderGrey) }
+                        }
+                        Text("Tap a layer on the photo to style it - its options open here.", color = Slate, fontSize = 11.sp)
+                        Spacer(Modifier.height(8.dp))
+                        listOf(
+                            Triple("Add Text", Icons.Default.Create, { onAddLayer() }),
+                            Triple("Add Image", Icons.Default.Image, { onAddImageLayer() }),
+                            Triple("Image Size", Icons.Default.PhotoSizeSelectLarge, { sheetLevel = "size" }),
+                            Triple("Layers", Icons.Default.Collections, { sheetLevel = "layers" }),
+                            Triple("Save", Icons.Default.CheckCircle, { sheetLevel = "save" })
+                        ).chunked(3).forEach { rowItems ->
+                            Row(Modifier.fillMaxWidth().padding(bottom = 8.dp)) {
+                                rowItems.forEach { (label, icon, action) ->
+                                    Card(
+                                        colors = CardDefaults.cardColors(containerColor = SoftGrey),
+                                        shape = RoundedCornerShape(12.dp),
+                                        modifier = Modifier.weight(1f).padding(end = 8.dp).clickable { action() }
+                                    ) {
+                                        Column(Modifier.fillMaxWidth().padding(vertical = 12.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                                            Icon(icon, contentDescription = null, tint = SkyBlue, modifier = Modifier.size(26.dp))
+                                            Spacer(Modifier.height(4.dp))
+                                            Text(label, color = DeepNavy, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                                        }
+                                    }
+                                }
+                                repeat(3 - rowItems.size) { Spacer(Modifier.weight(1f).padding(end = 8.dp)) }
                             }
                         }
                     }
                 }
             }
-
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("Outline", color = Slate, fontSize = 12.sp)
-                Slider(
-                    value = selected.outlineFrac,
-                    onValueChange = { v -> onMutate(1200L) { l -> l.outlineFrac = v } },
-                    valueRange = 0f..0.25f,
-                    modifier = Modifier.weight(1f).padding(horizontal = 8.dp)
-                )
-                Text(if (selected.outlineFrac <= 0.005f) "Off" else "${(selected.outlineFrac * 100).toInt()}%", color = DeepNavy, fontSize = 12.sp)
-            }
-            if (selected.outlineFrac > 0.005f) {
-                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    listOf(0xFF000000.toInt() to "Black", 0xFFFFFFFF.toInt() to "White", 0xFF172B4D.toInt() to "Navy").forEach { (c, lbl) ->
-                        val sel = selected.outlineColorArgb == c
-                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.clickable { onMutate(0L) { l -> l.outlineColorArgb = c } }) {
-                            Box(Modifier.size(18.dp).clip(CircleShape).background(Color(c)).border(if (sel) 3.dp else 1.dp, if (sel) SkyBlue else BorderGrey, CircleShape))
-                            Spacer(Modifier.width(4.dp))
-                            Text(lbl, color = Slate, fontSize = 12.sp)
-                        }
-                    }
-                }
-                Spacer(Modifier.height(8.dp))
-            }
-
         }
-
-        // ---- Position and Layers ----
-        Text("Position and Layers", color = DeepNavy, fontWeight = FontWeight.Bold, fontSize = 16.sp)
-        Spacer(Modifier.height(6.dp))
-        Row {
-            OutlinedButton(onClick = onUndo, enabled = canUndo, modifier = Modifier.padding(end = 8.dp)) {
-                Icon(Icons.Default.Undo, contentDescription = null, modifier = Modifier.size(16.dp))
-                Spacer(Modifier.width(4.dp))
-                Text("Undo")
-            }
-            OutlinedButton(onClick = onRedo, enabled = canRedo) {
-                Icon(Icons.Default.Redo, contentDescription = null, modifier = Modifier.size(16.dp))
-                Spacer(Modifier.width(4.dp))
-                Text("Redo")
-            }
-        }
-        Spacer(Modifier.height(8.dp))
-        if (layers.isEmpty()) {
-            Text("No text layers yet - tap \"Add text layer\" above.", color = Slate, fontSize = 12.sp)
-        }
-        layers.forEachIndexed { i, layer ->
-            val sel = layer.id == selectedId
-            Card(
-                colors = CardDefaults.cardColors(containerColor = if (sel) PaleBlue else SoftGrey),
-                shape = RoundedCornerShape(10.dp),
-                modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp).border(if (sel) 2.dp else 0.dp, if (sel) SkyBlue else Color.Transparent, RoundedCornerShape(10.dp)).clickable { onSelectLayer(layer.id) }
-            ) {
-                Row(Modifier.padding(horizontal = 10.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Column(Modifier.weight(1f)) {
-                        Text(layer.text.lines().firstOrNull()?.take(24)?.ifBlank { "(empty)" } ?: "(empty)", color = DeepNavy, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
-                        Text(
-                            "Layer ${i + 1}" + (if (layer.curved) " · curved" else "") + (if (i == layers.lastIndex && layers.size > 1) " · on top" else ""),
-                            color = Slate, fontSize = 11.sp
-                        )
-                    }
-                    IconButton(onClick = { onMoveLayer(layer.id, -1) }, enabled = i > 0) {
-                        Icon(Icons.Default.KeyboardArrowDown, contentDescription = "Send backward", tint = if (i > 0) DeepNavy else BorderGrey)
-                    }
-                    IconButton(onClick = { onMoveLayer(layer.id, 1) }, enabled = i < layers.lastIndex) {
-                        Icon(Icons.Default.KeyboardArrowUp, contentDescription = "Bring forward", tint = if (i < layers.lastIndex) DeepNavy else BorderGrey)
-                    }
-                    IconButton(onClick = { onDeleteLayer(layer.id) }) {
-                        Icon(Icons.Default.Delete, contentDescription = "Delete layer", tint = Slate)
-                    }
-                }
-            }
-        }
-        imageLayers.forEachIndexed { i, layer ->
-            val sel = layer.id == selectedImageId
-            Card(
-                colors = CardDefaults.cardColors(containerColor = if (sel) PaleBlue else SoftGrey),
-                shape = RoundedCornerShape(10.dp),
-                modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp).border(if (sel) 2.dp else 0.dp, if (sel) SkyBlue else Color.Transparent, RoundedCornerShape(10.dp)).clickable { onSelectImageLayer(layer.id) }
-            ) {
-                Row(Modifier.padding(horizontal = 10.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Column(Modifier.weight(1f)) {
-                        Text("Image ${i + 1}", color = DeepNavy, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
-                        Text("Overlay · sits under the text", color = Slate, fontSize = 11.sp)
-                    }
-                    IconButton(onClick = { onMoveImageLayer(layer.id, -1) }, enabled = i > 0) {
-                        Icon(Icons.Default.KeyboardArrowDown, contentDescription = "Send backward", tint = if (i > 0) DeepNavy else BorderGrey)
-                    }
-                    IconButton(onClick = { onMoveImageLayer(layer.id, 1) }, enabled = i < imageLayers.lastIndex) {
-                        Icon(Icons.Default.KeyboardArrowUp, contentDescription = "Bring forward", tint = if (i < imageLayers.lastIndex) DeepNavy else BorderGrey)
-                    }
-                    IconButton(onClick = { onDeleteImageLayer(layer.id) }) {
-                        Icon(Icons.Default.Delete, contentDescription = "Delete image", tint = Slate)
-                    }
-                }
-            }
-        }
-        Text("Later layers sit on top of earlier ones. Use the arrows to reorder.", color = Slate, fontSize = 11.sp)
-        Spacer(Modifier.height(14.dp))
-
-        // ---- Save Photo ----
-        Text("Save Photo", color = DeepNavy, fontWeight = FontWeight.Bold, fontSize = 16.sp)
-        Spacer(Modifier.height(6.dp))
-        Row {
-            PrintPresetChip("PNG", "best quality", format == "PNG") { onFormat("PNG") }
-            PrintPresetChip("JPG", "smaller file", format == "JPG") { onFormat("JPG") }
-        }
-        Text("Nothing is saved until you tap Save. Your original photo is never replaced.", color = Slate, fontSize = 11.sp)
-        Spacer(Modifier.height(8.dp))
-        Button(
-            onClick = onProcess,
-            enabled = !busy && layers.isNotEmpty(),
-            modifier = Modifier.fillMaxWidth().height(50.dp),
-            colors = ButtonDefaults.buttonColors(containerColor = SkyBlue, contentColor = Color.White),
-            shape = RoundedCornerShape(14.dp)
-        ) { Text(if (resultBytes == null) "Process" else "Process again", fontWeight = FontWeight.Bold) }
-        if (resultBytes != null) {
-            Spacer(Modifier.height(8.dp))
-            Card(colors = CardDefaults.cardColors(containerColor = SoftGrey), shape = RoundedCornerShape(12.dp), modifier = Modifier.fillMaxWidth()) {
-                Column(Modifier.padding(12.dp)) {
-                    Text("Ready to save", color = DeepNavy, fontWeight = FontWeight.Bold, fontSize = 14.sp)
-                    Text("text-on-photo.${if (format == "PNG") "png" else "jpg"} · $resultDims" + (if (cropRect != null) " · $cropLabel" else "") + " · ${formatBytes(resultBytes.size.toLong())}", color = Slate, fontSize = 12.sp)
-                    Text("${layers.size} text ${if (layers.size == 1) "layer" else "layers"}", color = Slate, fontSize = 12.sp)
-                }
-            }
-            Spacer(Modifier.height(8.dp))
-            Button(
-                onClick = onSave,
-                enabled = !busy && !saved,
-                modifier = Modifier.fillMaxWidth().height(50.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = Orange, contentColor = Color.White),
-                shape = RoundedCornerShape(14.dp)
-            ) { Text(if (saved) "Saved ✓ - see your gallery" else "Save to Gallery", fontWeight = FontWeight.Bold) }
-        }
-        Spacer(Modifier.height(24.dp))
+        Spacer(Modifier.height(16.dp))
     }
 
     if (editOpen && selected != null) {
