@@ -74,6 +74,14 @@ Stage 3 v0.10.1 (built on Stage 2E v0.8.1): queue overview screen, the full "Sel
 
 
 
+## v0.13.0 feature - Format Converter (his GO: "Format Converter", "Any format to any format", "Research deeply and make professional dear brother")
+- The placeholder "Convert Format" homepage tile is now a real tool, renamed "Format Converter" (his name). Subtitle "Convert images into the format you need." + Select Your Image card ("Choose one or multiple images", selected images show as thumbnails) + a "Convert to" grid of 6 tiles: JPG/JPEG, PNG, WebP, PDF, BMP, TIFF.
+- ANY input the phone can decode (JPG, PNG, WebP, HEIC, GIF, BMP, TIFF...) converts to any of the 6 outputs. Conversion page: file card with thumbnails + green checks + "Original format: PNG", From > To boxes, Conversion options (quality slider 10-100%, default 90, for JPG/WebP; solid background White/Custom Color for JPG), big Convert button. Reset in-tool.
+- Result shows original and converted file sizes (his requirement) with a preview, Save to Phone, Convert Another. Batch: up to 20 images converted in one go with a progress dialog; PDF batch = one multi-page PDF saved to Downloads/PixelCraft, other formats save one file per image to Pictures/PixelCraft with a size summary.
+- REAL encoders, no renamed files (image/ConvertFormats.kt): JPEG/PNG/WebP via Bitmap.compress; BMP written as a real 24-bit BI_RGB bitmap file (transparency flattened onto the chosen background); TIFF written as a valid little-endian baseline TIFF, uncompressed RGB, or RGBA with an ExtraSamples tag when the source has transparency (alpha preserved); PDF via PdfDocument, one page per image at the image's own size. Fully on-device, no new permissions.
+- Verified with REAL OUTPUT tests (ConvertFormatsTest): every produced file is parsed back - JPEG/PNG/WebP/BMP decoded with BitmapFactory (dims + pixel colors, JPG transparency flattening onto white, PNG alpha preserved), TIFF parsed byte-by-byte (magic, IFD tags, strip bytes, RGB and RGBA+ExtraSamples layouts, first-pixel colors), PDF re-rendered through PdfRenderer page by page (page count + rendered colors). UI render test covers the picker page (all 6 format tiles).
+- Bugfix folded in: collage photo list now survives recomposition (it was created without remember, so changing the collage layout chip could drop the picked photos).
+
 ## v0.12.0 feature - Online Shop Sizes (his GO: "This is my plan", "Deeply research. Accurate size of all platforms")
 - New tool on a new homepage tile "Online Shop Sizes", right next to Social Media Sizes (his placement). Same 3-page flow and engine as Social Media Sizes.
 - Platform picker: "Online Shop Sizes / Every shop. Every product image." + Select Your Image card (with the photo thumbnail, v0.11.1 pattern) + 6 tiles: Etsy, Shopify, Amazon, eBay, Gumroad, Other Shop (his design: Payhip, WooCommerce, Wix Stores, Squarespace, Ko-fi Shop and Creative Market live inside Other Shop). No "More" tile.

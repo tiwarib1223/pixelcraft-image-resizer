@@ -157,6 +157,7 @@ import com.learnifyzone.pixelcraft.image.Transforms
 import com.learnifyzone.pixelcraft.image.CropMath
 import com.learnifyzone.pixelcraft.image.SocialPlatform
 import com.learnifyzone.pixelcraft.image.SocialSize
+import com.learnifyzone.pixelcraft.image.ConvertFormats
 import com.learnifyzone.pixelcraft.image.ShopSizes
 import com.learnifyzone.pixelcraft.image.SocialSizes
 import com.learnifyzone.pixelcraft.image.Transforms.CropAnchor
@@ -191,7 +192,7 @@ class MainActivity : ComponentActivity() {
 }
 
 private enum class MainTab { Home, MyPhotos, Presets, Settings }
-private enum class Screen { Home, Editor, Export, Print, Success, QueueOverview, QueueResult, SocialHome, SocialPlatform, SocialEdit, ShopHome, ShopOther, ShopPlatform, ShopEdit, ShopCollage }
+private enum class Screen { Home, Editor, Export, Print, Success, QueueOverview, QueueResult, SocialHome, SocialPlatform, SocialEdit, ShopHome, ShopOther, ShopPlatform, ShopEdit, ShopCollage, ConvertHome, ConvertEdit, ConvertResult }
 private enum class Tool(val label: String) { Resize("Resize"), Presets("Presets"), Crop("Crop & Rotate"), Background("Background"), Circle("Circle Cutter"), Format("Format") }
 
 private enum class CropTransform { LEFT, RIGHT, FLIP_H, FLIP_V }
@@ -293,7 +294,23 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
     var shopCustomColor by remember { mutableLongStateOf(0xFF42A5F5) }
     var collageTarget by remember { mutableStateOf<SocialSize?>(null) }
     var collageLayout by rememberSaveable { mutableStateOf(2) }
-    var collagePhotos = mutableStateListOf<Bitmap>()
+    val collagePhotos = remember { mutableStateListOf<Bitmap>() }
+    var pendingConvertTool by remember { mutableStateOf(false) }
+    var convertGoEdit by remember { mutableStateOf(false) }
+    val convertUris = remember { mutableStateListOf<Uri>() }
+    val convertThumbs = remember { mutableStateListOf<Bitmap>() }
+    val convertLabels = remember { mutableStateListOf<String>() }
+    val convertOrigSizes = remember { mutableStateListOf<Long>() }
+    var convertTarget by remember { mutableStateOf(ConvertFormats.targets.first()) }
+    var convertQuality by rememberSaveable { mutableIntStateOf(90) }
+    var convertBg by rememberSaveable { mutableStateOf("White") }
+    var convertCustomColor by remember { mutableLongStateOf(0xFF42A5F5) }
+    var convertResultBytes by remember { mutableStateOf<ByteArray?>(null) }
+    var convertResultName by remember { mutableStateOf("") }
+    var convertResultPreview by remember { mutableStateOf<Bitmap?>(null) }
+    var convertResultOrigSize by remember { mutableLongStateOf(-1L) }
+    var convertResultFrom by remember { mutableStateOf("") }
+    var convertSaved by remember { mutableStateOf(false) }
     var circleShape by rememberSaveable { mutableStateOf("Circle") }
     var circleRect by remember { mutableStateOf(CropMath.defaultRect()) }
     var circleChoice by remember { mutableStateOf(BgChoice.TRANSPARENT) }
@@ -465,6 +482,14 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                     shopTarget?.let { t -> shopRect = CropMath.maxRectForRatio(t.w.toFloat() / t.h.toFloat(), loaded.width, loaded.height) }
                     screen = if (shopTarget != null) Screen.ShopEdit else Screen.ShopHome
                 }
+                if (pendingConvertTool) {
+                    pendingConvertTool = false
+                    convertUris.add(uri)
+                    convertThumbs.add(thumbOf(loaded))
+                    convertLabels.add(ConvertFormats.friendlyFormat(context.contentResolver.getType(uri)))
+                    convertOrigSizes.add(querySourceSize(context, uri))
+                    screen = if (convertGoEdit) { convertGoEdit = false; Screen.ConvertEdit } else Screen.ConvertHome
+                }
                 // Clear busy BEFORE the snackbar: showSnackbar suspends until dismissal,
                 // so gating busy on it left the Process button spinning for ~4s after every load.
                 busy = false
@@ -489,6 +514,7 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
             if (testTool == "circle") pendingCircleTool = true
             if (testTool == "social") pendingSocialTool = true
             if (testTool == "shop") pendingShopTool = true
+            if (testTool == "convert") pendingConvertTool = true
             loadPhoto(Uri.fromFile(File(testPath)), isCamera = false)
         }
     }
@@ -761,6 +787,132 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                 busyLabel = ""
             }
         }
+    }
+
+    fun loadConvertPhotos(uris: List<Uri>) {
+        busy = true
+        busyLabel = "Loading photos…"
+        scope.launch {
+            try {
+                val newUris = mutableListOf<Uri>()
+                val newThumbs = mutableListOf<Bitmap>()
+                val newLabels = mutableListOf<String>()
+                val newSizes = mutableListOf<Long>()
+                uris.take(20).forEach { u ->
+                    withContext(Dispatchers.IO) { decodeOrientedBitmap(context, u) }?.let { bmp ->
+                        newUris.add(u)
+                        newThumbs.add(thumbOf(bmp))
+                        newLabels.add(ConvertFormats.friendlyFormat(context.contentResolver.getType(u)))
+                        newSizes.add(querySourceSize(context, u))
+                    }
+                }
+                convertUris.clear(); convertUris.addAll(newUris)
+                convertThumbs.clear(); convertThumbs.addAll(newThumbs)
+                convertLabels.clear(); convertLabels.addAll(newLabels)
+                convertOrigSizes.clear(); convertOrigSizes.addAll(newSizes)
+                screen = if (convertGoEdit && convertUris.isNotEmpty()) { convertGoEdit = false; Screen.ConvertEdit } else Screen.ConvertHome
+            } finally {
+                busy = false
+                busyLabel = ""
+            }
+        }
+    }
+
+    fun applyConvert() {
+        if (convertUris.isEmpty()) {
+            scope.launch { snackbar.showSnackbar("Select at least one image to convert.") }
+            return
+        }
+        val fmt = convertTarget
+        val bgColor = if (convertBg == "Custom Color") convertCustomColor.toInt() else android.graphics.Color.WHITE
+        if (convertUris.size == 1) {
+            busy = true
+            busyLabel = "Converting…"
+            scope.launch {
+                try {
+                    val src = withContext(Dispatchers.IO) { decodeOrientedBitmap(context, convertUris.first()) }
+                        ?: throw IllegalStateException("decode failed")
+                    val bytes = withContext(Dispatchers.Default) { ConvertFormats.encode(src, fmt, convertQuality, bgColor) }
+                    convertResultBytes = bytes
+                    convertResultName = "pixelcraft_${src.width}x${src.height}.${fmt.extension}"
+                    convertResultPreview = src
+                    convertResultOrigSize = convertOrigSizes.firstOrNull() ?: -1L
+                    convertResultFrom = convertLabels.firstOrNull() ?: ""
+                    convertSaved = false
+                    busy = false
+                    busyLabel = ""
+                    screen = Screen.ConvertResult
+                } catch (e: Exception) {
+                    busy = false
+                    busyLabel = ""
+                    snackbar.showSnackbar("Couldn't convert this image. Try another photo.")
+                }
+            }
+        } else {
+            busy = true
+            busyLabel = "Converting…"
+            scope.launch {
+                var saved = 0
+                var origTotal = 0L
+                var outTotal = 0L
+                try {
+                    if (fmt.id == "pdf") {
+                        val bitmaps = mutableListOf<Bitmap>()
+                        convertUris.forEachIndexed { i, u ->
+                            busyLabel = "Reading ${i + 1} of ${convertUris.size}…"
+                            withContext(Dispatchers.IO) { decodeOrientedBitmap(context, u) }?.let { bitmaps.add(it) }
+                        }
+                        busyLabel = "Building PDF…"
+                        val bytes = withContext(Dispatchers.Default) { ConvertFormats.encodePdf(bitmaps, bgColor) }
+                        saved = bitmaps.size
+                        saveToDownloads(context, "pixelcraft_document.pdf", fmt.mimeType, bytes)
+                        outTotal = bytes.size.toLong()
+                        origTotal = convertOrigSizes.filter { it > 0 }.sum()
+                    } else {
+                        convertUris.forEachIndexed { i, u ->
+                            busyLabel = "Converting ${i + 1} of ${convertUris.size}…"
+                            val src = withContext(Dispatchers.IO) { decodeOrientedBitmap(context, u) } ?: return@forEachIndexed
+                            val bytes = withContext(Dispatchers.Default) { ConvertFormats.encode(src, fmt, convertQuality, bgColor) }
+                            saveToGallery(context, "pixelcraft_${src.width}x${src.height}_${i + 1}.${fmt.extension}", fmt.mimeType, bytes)
+                            outTotal += bytes.size
+                            val os = convertOrigSizes.getOrNull(i) ?: -1L
+                            if (os > 0) origTotal += os
+                            saved++
+                        }
+                    }
+                    busy = false
+                    busyLabel = ""
+                    val where = if (fmt.id == "pdf") "Downloads/PixelCraft" else "Pictures/PixelCraft"
+                    val sizes = if (origTotal > 0) " (${formatBytes(origTotal)} → ${formatBytes(outTotal)})" else ""
+                    snackbar.showSnackbar("Saved $saved image${if (saved == 1) "" else "s"} as ${fmt.label} to $where$sizes.")
+                } catch (e: Exception) {
+                    busy = false
+                    busyLabel = ""
+                    snackbar.showSnackbar("Couldn't finish the conversion. Try fewer or smaller photos.")
+                }
+            }
+        }
+    }
+
+    fun saveConvertResult() {
+        val bytes = convertResultBytes ?: return
+        val fmt = convertTarget
+        scope.launch {
+            try {
+                if (fmt.id == "pdf") saveToDownloads(context, convertResultName, fmt.mimeType, bytes)
+                else saveToGallery(context, convertResultName, fmt.mimeType, bytes)
+                convertSaved = true
+                snackbar.showSnackbar(if (fmt.id == "pdf") "Saved to Downloads/PixelCraft." else "Saved to your gallery (Pictures/PixelCraft).")
+            } catch (e: Exception) {
+                snackbar.showSnackbar("Couldn't save. Try again.")
+            }
+        }
+    }
+
+    fun resetConvert() {
+        convertUris.clear(); convertThumbs.clear(); convertLabels.clear(); convertOrigSizes.clear()
+        convertResultBytes = null; convertResultPreview = null; convertSaved = false
+        convertGoEdit = false
     }
 
     fun applyShopCollage() {
@@ -1349,6 +1501,10 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
     val collagePicker = rememberLauncherForActivityResult(ActivityResultContracts.PickMultipleVisualMedia(4)) { uris ->
         if (uris.isNotEmpty()) loadCollagePhotos(uris)
     }
+    val convertPicker = rememberLauncherForActivityResult(ActivityResultContracts.PickMultipleVisualMedia(20)) { uris ->
+        if (uris.isNotEmpty()) loadConvertPhotos(uris)
+    }
+
     val multiPicker = rememberLauncherForActivityResult(ActivityResultContracts.PickMultipleVisualMedia(50)) { uris ->
         if (uris.size == 1) {
             loadPhoto(uris[0], isCamera = false)
@@ -1525,6 +1681,9 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
             Screen.ShopCollage -> screen = Screen.ShopPlatform
             Screen.ShopPlatform -> screen = if (shopFromOther) Screen.ShopOther else Screen.ShopHome
             Screen.ShopOther -> screen = Screen.ShopHome
+            Screen.ConvertResult -> screen = Screen.ConvertEdit
+            Screen.ConvertEdit -> screen = Screen.ConvertHome
+            Screen.ConvertHome -> { resetConvert(); screen = Screen.Home }
             else -> screen = Screen.Home
         }
     }
@@ -1580,7 +1739,7 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
         containerColor = MaterialTheme.colorScheme.background,
         snackbarHost = { SnackbarHost(snackbar) },
         topBar = {
-            if (screen == Screen.Editor || screen == Screen.Export || screen == Screen.Print || screen == Screen.QueueOverview || screen == Screen.QueueResult || screen == Screen.Success || screen == Screen.SocialHome || screen == Screen.SocialPlatform || screen == Screen.SocialEdit || screen == Screen.ShopHome || screen == Screen.ShopOther || screen == Screen.ShopPlatform || screen == Screen.ShopEdit || screen == Screen.ShopCollage) {
+            if (screen == Screen.Editor || screen == Screen.Export || screen == Screen.Print || screen == Screen.QueueOverview || screen == Screen.QueueResult || screen == Screen.Success || screen == Screen.SocialHome || screen == Screen.SocialPlatform || screen == Screen.SocialEdit || screen == Screen.ShopHome || screen == Screen.ShopOther || screen == Screen.ShopPlatform || screen == Screen.ShopEdit || screen == Screen.ShopCollage || screen == Screen.ConvertHome || screen == Screen.ConvertEdit || screen == Screen.ConvertResult) {
                 TopAppBar(
                     title = {
                         Text(
@@ -1598,6 +1757,9 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                                 Screen.ShopPlatform -> shopPlatform
                                 Screen.ShopEdit -> "$shopPlatform · ${shopTarget?.label ?: "Custom"}"
                                 Screen.ShopCollage -> "$shopPlatform · Collage"
+                                Screen.ConvertHome -> "Format Converter"
+                                Screen.ConvertEdit -> "Format Converter · ${convertTarget.label}"
+                                Screen.ConvertResult -> "Conversion Result"
                                 else -> "Print Size & DPI"
                             },
                             fontWeight = FontWeight.SemiBold
@@ -1620,6 +1782,9 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                                 Screen.ShopCollage -> screen = Screen.ShopPlatform
                                 Screen.ShopPlatform -> screen = if (shopFromOther) Screen.ShopOther else Screen.ShopHome
                                 Screen.ShopOther -> screen = Screen.ShopHome
+                                Screen.ConvertResult -> screen = Screen.ConvertEdit
+                                Screen.ConvertEdit -> screen = Screen.ConvertHome
+                                Screen.ConvertHome -> { resetConvert(); screen = Screen.Home }
                                 else -> screen = Screen.Home
                             }
                         }) {
@@ -1649,6 +1814,14 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                                 "Reset",
                                 modifier = Modifier
                                     .clickable { resetEditor(); pendingShopTool = true; screen = Screen.ShopEdit }
+                                    .padding(horizontal = 14.dp),
+                                color = DeepNavy
+                            )
+                        } else if (screen == Screen.ConvertEdit) {
+                            Text(
+                                "Reset",
+                                modifier = Modifier
+                                    .clickable { resetConvert(); screen = Screen.ConvertHome }
                                     .padding(horizontal = 14.dp),
                                 color = DeepNavy
                             )
@@ -1700,6 +1873,7 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                             "Print Size & DPI" -> screen = Screen.Print
                             "Social Media Sizes" -> screen = Screen.SocialHome
                             "Online Shop Sizes" -> screen = Screen.ShopHome
+                            "Format Converter" -> screen = Screen.ConvertHome
                             "Remove Background" -> {
                                 if (workingBitmap != null) { screen = Screen.Editor; tool = Tool.Background }
                                 else { pendingBgTool = true; pickPhotos() }
@@ -2100,6 +2274,46 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                 onSelectPhotos = { collagePicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
                 onExport = { applyShopCollage() }
             )
+            Screen.ConvertHome -> ConvertHomeScreen(
+                modifier = Modifier.padding(padding),
+                thumbs = convertThumbs,
+                labels = convertLabels,
+                onSelectImages = { convertPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
+                onTarget = { fmt ->
+                    convertTarget = fmt
+                    if (convertUris.isEmpty()) {
+                        convertGoEdit = true
+                        convertPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+                    } else {
+                        screen = Screen.ConvertEdit
+                    }
+                }
+            )
+            Screen.ConvertEdit -> ConvertEditScreen(
+                modifier = Modifier.padding(padding),
+                thumbs = convertThumbs,
+                labels = convertLabels,
+                target = convertTarget,
+                quality = convertQuality,
+                onQuality = { convertQuality = it },
+                bg = convertBg,
+                onBg = { convertBg = it },
+                customColor = convertCustomColor,
+                onCustomColor = { convertCustomColor = it },
+                busy = busy,
+                onConvert = { applyConvert() }
+            )
+            Screen.ConvertResult -> ConvertResultScreen(
+                modifier = Modifier.padding(padding),
+                preview = convertResultPreview,
+                fromLabel = convertResultFrom,
+                target = convertTarget,
+                origSize = convertResultOrigSize,
+                newSize = convertResultBytes?.size?.toLong() ?: -1L,
+                saved = convertSaved,
+                onSave = { saveConvertResult() },
+                onConvertAnother = { resetConvert(); screen = Screen.ConvertHome }
+            )
             Screen.Print -> PrintCalculator(
                 modifier = Modifier.padding(padding),
                 hasPhoto = workingBitmap != null,
@@ -2179,7 +2393,7 @@ private fun HomeScreen(
         Feature("Circle Cutter", "Cut photos into shapes", "◯"),
         Feature("Social Media Sizes", "Creator-ready dimensions", "▦"),
         Feature("Online Shop Sizes", "Marketplace-ready images", "▣"),
-        Feature("Convert Format", "JPEG, PNG and WebP", "⇄"),
+        Feature("Format Converter", "Any format to any format", "⇄"),
         Feature("Compress", "Reduce file size", "↓"),
         Feature("Batch Resize", "Process many photos", "▤"),
         Feature("Print Size & DPI", "Calculate print dimensions", "◉")
@@ -4498,6 +4712,18 @@ private fun estimateBytes(bitmap: Bitmap, format: ExportFormat, quality: Int): L
     }
 }
 
+private fun thumbOf(bmp: Bitmap): Bitmap {
+    val maxDim = maxOf(bmp.width, bmp.height)
+    if (maxDim <= 192) return bmp
+    val scale = 192f / maxDim
+    return Bitmap.createScaledBitmap(
+        bmp,
+        (bmp.width * scale).toInt().coerceAtLeast(1),
+        (bmp.height * scale).toInt().coerceAtLeast(1),
+        true
+    )
+}
+
 private fun saveToGallery(context: Context, filename: String, mimeType: String, bytes: ByteArray): Uri {
     val resolver = context.contentResolver
     val values = ContentValues().apply {
@@ -5370,6 +5596,271 @@ private fun ShopCollageScreen(
         Spacer(Modifier.height(8.dp))
         Button(onClick = onExport, enabled = !busy && photos.size >= 2, modifier = Modifier.fillMaxWidth().height(52.dp), colors = ButtonDefaults.buttonColors(containerColor = Orange, contentColor = Color.White), shape = RoundedCornerShape(14.dp)) {
             Text("Export Image", fontWeight = FontWeight.SemiBold)
+        }
+        Spacer(Modifier.height(24.dp))
+    }
+}
+
+@Composable
+private fun ConvertHomeScreen(
+    modifier: Modifier = Modifier,
+    thumbs: List<Bitmap>,
+    labels: List<String>,
+    onSelectImages: () -> Unit,
+    onTarget: (ConvertFormats.Fmt) -> Unit
+) {
+    Column(modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).padding(horizontal = 16.dp).verticalScroll(rememberScrollState())) {
+        Spacer(Modifier.height(10.dp))
+        Text("Convert images into the format you need.", fontSize = 22.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onBackground)
+        Spacer(Modifier.height(4.dp))
+        Text("Pick one photo or many, choose a format, and save the result to your phone.", fontSize = 14.sp, color = Slate)
+        Spacer(Modifier.height(14.dp))
+        Card(colors = CardDefaults.cardColors(containerColor = PaleBlue), shape = RoundedCornerShape(16.dp)) {
+            Column(Modifier.fillMaxWidth().padding(16.dp)) {
+                if (thumbs.isNotEmpty()) {
+                    Row(Modifier.fillMaxWidth().padding(bottom = 10.dp).horizontalScroll(rememberScrollState())) {
+                        thumbs.forEach { t ->
+                            Image(
+                                bitmap = t.asImageBitmap(),
+                                contentDescription = "Selected image",
+                                contentScale = ContentScale.Crop,
+                                modifier = Modifier.padding(end = 6.dp).size(56.dp)
+                            )
+                        }
+                    }
+                }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Select Your Image", fontWeight = FontWeight.SemiBold, color = DeepNavy)
+                        Spacer(Modifier.height(2.dp))
+                        Text(
+                            if (thumbs.isNotEmpty()) "${thumbs.size} image${if (thumbs.size == 1) "" else "s"} selected" else "Choose one or multiple images",
+                            fontSize = 13.sp, color = Slate
+                        )
+                    }
+                    Button(onClick = onSelectImages, colors = ButtonDefaults.buttonColors(containerColor = Orange, contentColor = Color.White), shape = RoundedCornerShape(12.dp)) {
+                        Text(if (thumbs.isNotEmpty()) "Change" else "Select Image")
+                    }
+                }
+            }
+        }
+        Spacer(Modifier.height(16.dp))
+        Text("Convert to", fontWeight = FontWeight.Bold, color = DeepNavy, fontSize = 16.sp)
+        Spacer(Modifier.height(6.dp))
+        ConvertFormats.targets.chunked(2).forEach { rowFmts ->
+            Row(Modifier.fillMaxWidth()) {
+                rowFmts.forEach { fmt ->
+                    Card(
+                        modifier = Modifier.weight(1f).padding(4.dp).clickable { onTarget(fmt) },
+                        colors = CardDefaults.cardColors(containerColor = SoftGrey),
+                        shape = RoundedCornerShape(14.dp)
+                    ) {
+                        Column(Modifier.fillMaxWidth().padding(14.dp)) {
+                            Text(fmt.label, fontWeight = FontWeight.Bold, color = DeepNavy, fontSize = 16.sp)
+                            Spacer(Modifier.height(2.dp))
+                            Text(fmt.desc, fontSize = 12.sp, color = Slate)
+                        }
+                    }
+                }
+                if (rowFmts.size == 1) Spacer(Modifier.weight(1f))
+            }
+        }
+        Spacer(Modifier.height(16.dp))
+        Card(colors = CardDefaults.cardColors(containerColor = SoftGrey), shape = RoundedCornerShape(14.dp)) {
+            Text(
+                "Everything happens on your phone - no upload, no internet. JPG, BMP and PDF have no transparency, so transparent areas are filled with the background you pick.",
+                modifier = Modifier.padding(14.dp), fontSize = 13.sp, color = Slate
+            )
+        }
+        Spacer(Modifier.height(24.dp))
+    }
+}
+
+@Composable
+private fun ConvertEditScreen(
+    modifier: Modifier = Modifier,
+    thumbs: List<Bitmap>,
+    labels: List<String>,
+    target: ConvertFormats.Fmt,
+    quality: Int,
+    onQuality: (Int) -> Unit,
+    bg: String,
+    onBg: (String) -> Unit,
+    customColor: Long,
+    onCustomColor: (Long) -> Unit,
+    busy: Boolean,
+    onConvert: () -> Unit
+) {
+    val fromLabel = labels.distinct().let { if (it.size == 1) it.first() else "Mixed" }
+    Column(modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).padding(horizontal = 16.dp).verticalScroll(rememberScrollState())) {
+        Spacer(Modifier.height(10.dp))
+        Card(colors = CardDefaults.cardColors(containerColor = PaleBlue), shape = RoundedCornerShape(16.dp)) {
+            Column(Modifier.fillMaxWidth().padding(16.dp)) {
+                Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())) {
+                    thumbs.forEachIndexed { i, t ->
+                        Box(Modifier.padding(end = 8.dp)) {
+                            Image(
+                                bitmap = t.asImageBitmap(),
+                                contentDescription = "Selected image ${i + 1}",
+                                contentScale = ContentScale.Crop,
+                                modifier = Modifier.size(72.dp)
+                            )
+                            Icon(
+                                Icons.Default.CheckCircle,
+                                contentDescription = "Selected",
+                                tint = SuccessGreen,
+                                modifier = Modifier.align(Alignment.TopEnd).size(20.dp)
+                            )
+                        }
+                    }
+                }
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    "${thumbs.size} image${if (thumbs.size == 1) "" else "s"} selected · Original format: $fromLabel",
+                    fontSize = 13.sp, color = DeepNavy, fontWeight = FontWeight.SemiBold
+                )
+            }
+        }
+        Spacer(Modifier.height(14.dp))
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Card(Modifier.weight(1f), colors = CardDefaults.cardColors(containerColor = SoftGrey), shape = RoundedCornerShape(12.dp)) {
+                Column(Modifier.fillMaxWidth().padding(12.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text("From", fontSize = 12.sp, color = Slate)
+                    Text(fromLabel, fontWeight = FontWeight.Bold, color = DeepNavy, fontSize = 16.sp)
+                }
+            }
+            Text("→", fontSize = 22.sp, color = DeepNavy, modifier = Modifier.padding(horizontal = 10.dp))
+            Card(Modifier.weight(1f), colors = CardDefaults.cardColors(containerColor = SoftGrey), shape = RoundedCornerShape(12.dp)) {
+                Column(Modifier.fillMaxWidth().padding(12.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text("To", fontSize = 12.sp, color = Slate)
+                    Text(target.label, fontWeight = FontWeight.Bold, color = DeepNavy, fontSize = 16.sp)
+                }
+            }
+        }
+        Spacer(Modifier.height(14.dp))
+        if (ConvertFormats.qualityApplies(target) || target.id == "jpg") {
+            Card(colors = CardDefaults.cardColors(containerColor = SoftGrey), shape = RoundedCornerShape(14.dp)) {
+                Column(Modifier.fillMaxWidth().padding(14.dp)) {
+                    Text("Conversion options", fontWeight = FontWeight.Bold, color = DeepNavy, fontSize = 15.sp)
+                    if (ConvertFormats.qualityApplies(target)) {
+                        Spacer(Modifier.height(8.dp))
+                        Text("Image quality: $quality%", fontSize = 13.sp, color = DeepNavy)
+                        Slider(
+                            value = quality.toFloat(),
+                            onValueChange = { onQuality(it.toInt().coerceIn(10, 100)) },
+                            valueRange = 10f..100f
+                        )
+                    }
+                    if (target.id == "jpg") {
+                        Spacer(Modifier.height(6.dp))
+                        Text("Background for transparent areas", fontSize = 13.sp, color = DeepNavy)
+                        Spacer(Modifier.height(6.dp))
+                        Row {
+                            listOf("White", "Custom Color").forEach { b ->
+                                val selected = bg == b
+                                OutlinedButton(
+                                    onClick = { onBg(b) },
+                                    modifier = Modifier.padding(end = 8.dp),
+                                    colors = ButtonDefaults.outlinedButtonColors(containerColor = if (selected) SkyBlue else Color.Transparent, contentColor = if (selected) DeepNavy else Slate)
+                                ) { Text(b, fontSize = 11.sp, maxLines = 1, softWrap = false) }
+                            }
+                        }
+                        if (bg == "Custom Color") {
+                            Spacer(Modifier.height(8.dp))
+                            Row {
+                                listOf(0xFF42A5F5, 0xFF172B4D, 0xFFE91E63, 0xFF1E9E50, 0xFFFFC107, 0xFF9C27B0).forEach { c ->
+                                    Box(
+                                        Modifier.padding(end = 10.dp).size(34.dp).background(Color(c), CircleShape)
+                                            .clickable { onCustomColor(c) },
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        if (customColor == c) Text("✓", color = Color.White, fontWeight = FontWeight.Bold)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            Spacer(Modifier.height(14.dp))
+        }
+        Button(
+            onClick = onConvert,
+            enabled = !busy && thumbs.isNotEmpty(),
+            modifier = Modifier.fillMaxWidth().height(52.dp),
+            colors = ButtonDefaults.buttonColors(containerColor = Orange, contentColor = Color.White),
+            shape = RoundedCornerShape(14.dp)
+        ) {
+            Text(if (busy) "Converting…" else if (thumbs.size > 1) "Convert ${thumbs.size} Images" else "Convert Image", fontWeight = FontWeight.Bold)
+        }
+        Spacer(Modifier.height(10.dp))
+        Card(colors = CardDefaults.cardColors(containerColor = PaleBlue), shape = RoundedCornerShape(14.dp)) {
+            Text(
+                if (target.id == "pdf" && thumbs.size > 1) "All selected images become pages of one PDF document, saved to Downloads/PixelCraft."
+                else if (thumbs.size > 1) "Every selected image is converted and saved to Pictures/PixelCraft."
+                else "Your converted image keeps its original dimensions.",
+                modifier = Modifier.padding(14.dp), fontSize = 13.sp, color = Slate
+            )
+        }
+        Spacer(Modifier.height(24.dp))
+    }
+}
+
+@Composable
+private fun ConvertResultScreen(
+    modifier: Modifier = Modifier,
+    preview: Bitmap?,
+    fromLabel: String,
+    target: ConvertFormats.Fmt,
+    origSize: Long,
+    newSize: Long,
+    saved: Boolean,
+    onSave: () -> Unit,
+    onConvertAnother: () -> Unit
+) {
+    Column(modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).padding(horizontal = 16.dp).verticalScroll(rememberScrollState()), horizontalAlignment = Alignment.CenterHorizontally) {
+        Spacer(Modifier.height(10.dp))
+        Card(colors = CardDefaults.cardColors(containerColor = PaleBlue), shape = RoundedCornerShape(16.dp)) {
+            Column(Modifier.fillMaxWidth().padding(18.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                if (preview != null) {
+                    Image(
+                        bitmap = preview.asImageBitmap(),
+                        contentDescription = "Converted image preview",
+                        contentScale = ContentScale.Fit,
+                        modifier = Modifier.fillMaxWidth().height(240.dp)
+                    )
+                    if (target.id == "pdf") {
+                        Spacer(Modifier.height(6.dp))
+                        Text("Saved as a PDF document", fontSize = 12.sp, color = Slate)
+                    }
+                } else {
+                    Icon(Icons.Default.CheckCircle, contentDescription = null, tint = SuccessGreen, modifier = Modifier.size(72.dp))
+                }
+                Spacer(Modifier.height(12.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.CheckCircle, contentDescription = null, tint = SuccessGreen, modifier = Modifier.size(20.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("Converted to ${target.label}", fontWeight = FontWeight.Bold, color = DeepNavy, fontSize = 17.sp)
+                }
+                Spacer(Modifier.height(10.dp))
+                Text("Original: $fromLabel${if (origSize > 0) " · ${formatBytes(origSize)}" else ""}", fontSize = 14.sp, color = Slate)
+                Spacer(Modifier.height(4.dp))
+                Text("Converted: ${target.label}${if (newSize > 0) " · ${formatBytes(newSize)}" else ""}", fontSize = 14.sp, color = DeepNavy, fontWeight = FontWeight.SemiBold)
+            }
+        }
+        Spacer(Modifier.height(16.dp))
+        Button(
+            onClick = onSave,
+            enabled = !saved,
+            modifier = Modifier.fillMaxWidth().height(52.dp),
+            colors = ButtonDefaults.buttonColors(containerColor = Orange, contentColor = Color.White),
+            shape = RoundedCornerShape(14.dp)
+        ) {
+            Text(if (saved) "Saved ✓" else if (target.id == "pdf") "Save PDF to Downloads" else "Save to Phone", fontWeight = FontWeight.Bold)
+        }
+        Spacer(Modifier.height(10.dp))
+        OutlinedButton(onClick = onConvertAnother, modifier = Modifier.fillMaxWidth().height(48.dp), shape = RoundedCornerShape(14.dp)) {
+            Text("Convert Another Image", color = DeepNavy)
         }
         Spacer(Modifier.height(24.dp))
     }

@@ -146,4 +146,23 @@ class MainFlowUiTest {
             waitForText("Other Shop")
         }
     }
+
+    @Test
+    fun convertHomeShowsAllSixFormats() {
+        val bytes = javaClass.classLoader!!.getResourceAsStream("test_photo.jpg")!!.readBytes()
+        val tmp = File.createTempFile("pc_ui_test_convert", ".jpg")
+        tmp.writeBytes(bytes)
+        tmp.deleteOnExit()
+        val intent = Intent(ApplicationProvider.getApplicationContext(), MainActivity::class.java)
+            .putExtra("pixelcraft.test.photo", tmp.absolutePath)
+            .putExtra("pixelcraft.test.tool", "convert")
+        ActivityScenario.launch<MainActivity>(intent).use {
+            waitForText("Convert images into the format you need.")
+            waitForText("Select Your Image")
+            waitForText("Convert to")
+            waitForText("JPG/JPEG")
+            waitForText("PDF")
+            waitForText("TIFF")
+        }
+    }
 }
