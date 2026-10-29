@@ -375,6 +375,10 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
     var printResultMime by remember { mutableStateOf("") }
     var printResultDims by remember { mutableStateOf("") }
     var printSaved by remember { mutableStateOf(false) }
+    var printPdfUri by remember { mutableStateOf<Uri?>(null) }
+    val printPdfThumbs = remember { mutableStateListOf<Bitmap>() }
+    var printPdfPickerOpen by remember { mutableStateOf(false) }
+    var printPageBitmap by remember { mutableStateOf<Bitmap?>(null) }
     var printSheetOn by remember { mutableStateOf(false) }
     var printSheet by remember { mutableStateOf("4 × 6") }
     var printCopyCount by remember { mutableStateOf(4) }
@@ -1307,10 +1311,79 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
         }
     }
 
+    fun loadPrintPdf(uri: Uri) {
+        busy = true
+        busyLabel = "Reading PDF…"
+        scope.launch {
+            try {
+                val thumbs = withContext(Dispatchers.IO) {
+                    val pfd = context.contentResolver.openFileDescriptor(uri, "r")
+                        ?: throw IllegalStateException("Could not open the PDF")
+                    pfd.use { ConvertFormats.renderPdfPages(it, maxPages = 12, maxDim = 300) }
+                }
+                if (thumbs.isEmpty()) throw IllegalStateException("No pages")
+                printPdfUri = uri
+                printPdfThumbs.clear()
+                printPdfThumbs.addAll(thumbs)
+                printPdfPickerOpen = true
+                busy = false
+                busyLabel = ""
+            } catch (e: Exception) {
+                busy = false
+                busyLabel = ""
+                snackbar.showSnackbar("Could not read that PDF: ${e.message ?: "unknown error"}")
+            }
+        }
+    }
+
+    fun selectPrintPdfPage(index: Int) {
+        val uri = printPdfUri ?: return
+        printPdfPickerOpen = false
+        busy = true
+        busyLabel = "Rendering page ${index + 1}…"
+        scope.launch {
+            try {
+                val page = withContext(Dispatchers.IO) {
+                    val pfd = context.contentResolver.openFileDescriptor(uri, "r")
+                        ?: throw IllegalStateException("Could not open the PDF")
+                    pfd.use { ConvertFormats.renderPdfPages(it, maxPages = index + 1, maxDim = 2600) }.last()
+                }
+                printPageBitmap = page
+                printUri = uri
+                printImgW = page.width
+                printImgH = page.height
+                printThumb = thumbOf(page)
+                printPreview = if (maxOf(page.width, page.height) > 1200) {
+                    val sc = 1200f / maxOf(page.width, page.height)
+                    Bitmap.createScaledBitmap(page, (page.width * sc).toInt().coerceAtLeast(1), (page.height * sc).toInt().coerceAtLeast(1), true)
+                } else page
+                printName = queryDisplayName(context, uri) ?: "document.pdf"
+                printLabel = "PDF · Page ${index + 1}"
+                printOrigSize = querySourceSize(context, uri)
+                printResultBytes = null
+                printSaved = false
+                printPdfThumbs.clear()
+                busy = false
+                busyLabel = ""
+            } catch (e: Exception) {
+                busy = false
+                busyLabel = ""
+                snackbar.showSnackbar("Could not render that page: ${e.message ?: "unknown error"}")
+            }
+        }
+    }
+
+    /** Custom-field value to inches; px mode converts through the selected PPI. */
+    fun printToIn(v: Double): Double = if (printUnit == "px") v / printPpi else PrintUtils.toInches(v, printUnit)
+
+    /** Inches back to a display string in the chosen unit (px rounds to whole pixels). */
+    fun printFromIn(inches: Double): String =
+        if (printUnit == "px") (inches * printPpi).toInt().toString() else PrintUtils.fmtDim(inches, printUnit)
+
     fun printDimsIn(): Pair<Double, Double> {
         val p = PrintUtils.presets.firstOrNull { it.name == printPreset }
-        var wIn = p?.wIn ?: PrintUtils.toInches(printWText.replace(",", ".").toDoubleOrNull() ?: 0.0, printUnit)
-        var hIn = p?.hIn ?: PrintUtils.toInches(printHText.replace(",", ".").toDoubleOrNull() ?: 0.0, printUnit)
+        var wIn = p?.wIn ?: printToIn(printWText.replace(",", ".").toDoubleOrNull() ?: 0.0)
+        var hIn = p?.hIn ?: printToIn(printHText.replace(",", ".").toDoubleOrNull() ?: 0.0)
         if (printLandscape && hIn > wIn) { val t = wIn; wIn = hIn; hIn = t }
         if (!printLandscape && wIn > hIn) { val t = wIn; wIn = hIn; hIn = t }
         return wIn to hIn
@@ -1375,7 +1448,8 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
     }
 
     fun applyPrintExport() {
-        val uri = printUri ?: return
+        val uri = printUri
+        if (uri == null && printPageBitmap == null) return
         val (wIn, hIn) = printDimsIn()
         if (wIn <= 0 || hIn <= 0) { scope.launch { snackbar.showSnackbar("Enter a valid print size first.") }; return }
         val sheetMode = printSheetOn && printMultiCopyEligible()
@@ -1388,19 +1462,20 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                 val marginIn = if (printMarginsOn) PrintUtils.MARGIN_IN else 0.0
                 val bg = if (printBgWhite) android.graphics.Color.WHITE else android.graphics.Color.rgb(0xF2, 0xF2, 0xF2)
                 val result = withContext(Dispatchers.IO) {
+                    val src = printPageBitmap ?: decodeOrientedBitmap(context, uri!!)
                     if (sheetMode) {
                         val (sW, sH) = printSheetDimsIn()
                         val g = printSheetGrid()
                         val gapIn = if (g[3] == 1) PrintUtils.SHEET_GAP_IN else 0.0
                         if (printFormat == "PDF") {
-                            buildPrintSheetPdf(context, uri, sW, sH, wIn, hIn, g[0], g[1], g[2], gapIn, printPpi, printFilename)
+                            buildPrintSheetPdf(src, sW, sH, wIn, hIn, g[0], g[1], g[2], gapIn, printPpi, printFilename)
                         } else {
-                            buildPrintSheetRaster(context, uri, sW, sH, wIn, hIn, g[0], g[1], g[2], gapIn, printPpi, printJpgQuality, printFormat, printFilename)
+                            buildPrintSheetRaster(src, sW, sH, wIn, hIn, g[0], g[1], g[2], gapIn, printPpi, printJpgQuality, printFormat, printFilename)
                         }
                     } else if (printFormat == "PDF") {
-                        buildPrintPdf(context, uri, wIn, hIn, bleedIn, marginIn, printFitMode, printPpi, printCropMarks, printFilename)
+                        buildPrintPdf(src, wIn, hIn, bleedIn, marginIn, printFitMode, printPpi, printCropMarks, printFilename)
                     } else {
-                        buildPrintRaster(context, uri, wIn, hIn, bleedIn, marginIn, bg, printFitMode, printPpi, printJpgQuality, printFormat, printFilename)
+                        buildPrintRaster(src, wIn, hIn, bleedIn, marginIn, bg, printFitMode, printPpi, printJpgQuality, printFormat, printFilename)
                     }
                 }
                 printResultBytes = result.bytes
@@ -1469,6 +1544,7 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
         printPpi = 300; printFitMode = "Fit"; printMarginsOn = false; printCropMarks = false
         printBgWhite = true; printFormat = "JPG"; printFilename = "print-ready"; printJpgQuality = 92
         printResultBytes = null; printResultName = ""; printResultMime = ""; printResultDims = ""
+        printPdfUri = null; printPdfThumbs.clear(); printPdfPickerOpen = false; printPageBitmap = null
         printSheetOn = false; printSheet = "4 × 6"; printCopyCount = 4
         printSaved = false; printGoSetup = false
     }
@@ -2114,6 +2190,9 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
     }
     val printPicker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
         if (uri != null) loadPrintPhoto(uri)
+    }
+    val printPdfPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        uri?.let { loadPrintPdf(it) }
     }
     val compressPicker = rememberLauncherForActivityResult(ActivityResultContracts.PickMultipleVisualMedia(20)) { uris ->
         if (uris.isNotEmpty()) loadCompressPhotos(uris)
@@ -3079,6 +3158,9 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                 imgW = printImgW,
                 imgH = printImgH,
                 onPick = { printPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
+                onPickPdf = { printPdfPicker.launch(arrayOf("application/pdf")) },
+                pdfThumbs = if (printPdfPickerOpen) printPdfThumbs else emptyList(),
+                onPdfPage = { selectPrintPdfPage(it) },
                 onContinue = { screen = Screen.PrintSetup }
             )
             Screen.PrintSetup -> {
@@ -3099,7 +3181,7 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                         val w = v.replace(",", ".").toDoubleOrNull()
                         val a = printImageAspect()
                         if (printLockAspect && w != null && w > 0 && a > 0) {
-                            printHText = PrintUtils.fmtDim(PrintUtils.toInches(w, printUnit) / a, printUnit)
+                            printHText = printFromIn(printToIn(w) / a)
                         }
                     },
                     hText = printHText,
@@ -3109,7 +3191,7 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                         val h = v.replace(",", ".").toDoubleOrNull()
                         val a = printImageAspect()
                         if (printLockAspect && h != null && h > 0 && a > 0) {
-                            printWText = PrintUtils.fmtDim(PrintUtils.toInches(h, printUnit) * a, printUnit)
+                            printWText = printFromIn(printToIn(h) * a)
                         }
                     },
                     landscape = printLandscape,
@@ -3132,9 +3214,9 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                         val w = printWText.replace(",", ".").toDoubleOrNull()
                         val h = printHText.replace(",", ".").toDoubleOrNull()
                         if (a > 0 && w != null && w > 0) {
-                            printHText = PrintUtils.fmtDim(PrintUtils.toInches(w, printUnit) / a, printUnit)
+                            printHText = printFromIn(printToIn(w) / a)
                         } else if (a > 0 && h != null && h > 0) {
-                            printWText = PrintUtils.fmtDim(PrintUtils.toInches(h, printUnit) * a, printUnit)
+                            printWText = printFromIn(printToIn(h) * a)
                         }
                         printPreset = "Custom"
                     },
@@ -5651,8 +5733,7 @@ private fun encodePrintRaster(bmp: Bitmap, format: String, quality: Int, bg: Int
     return PrintOutput(baos.toByteArray(), "$filename.$ext", if (format == "PNG") "image/png" else "image/jpeg", "$wPx × $hPx px$extraDims")
 }
 
-private fun buildPrintRaster(context: Context, uri: Uri, wIn: Double, hIn: Double, bleedIn: Double, marginIn: Double, bg: Int, mode: String, ppi: Int, quality: Int, format: String, filename: String): PrintOutput {
-    val src = decodeOrientedBitmap(context, uri)
+private fun buildPrintRaster(src: Bitmap, wIn: Double, hIn: Double, bleedIn: Double, marginIn: Double, bg: Int, mode: String, ppi: Int, quality: Int, format: String, filename: String): PrintOutput {
     val totalWIn = wIn + bleedIn * 2
     val totalHIn = hIn + bleedIn * 2
     val req = PrintUtils.requiredPixels(totalWIn, totalHIn, ppi)
@@ -5670,8 +5751,7 @@ private fun buildPrintRaster(context: Context, uri: Uri, wIn: Double, hIn: Doubl
     return encodePrintRaster(out, format, quality, bg, filename, capped[0], capped[1], if (wasCapped) " (scaled to fit device memory)" else "")
 }
 
-private fun buildPrintSheetRaster(context: Context, uri: Uri, sheetWIn: Double, sheetHIn: Double, cellWIn: Double, cellHIn: Double, cols: Int, rows: Int, count: Int, gapIn: Double, ppi: Int, quality: Int, format: String, filename: String): PrintOutput {
-    val src = decodeOrientedBitmap(context, uri)
+private fun buildPrintSheetRaster(src: Bitmap, sheetWIn: Double, sheetHIn: Double, cellWIn: Double, cellHIn: Double, cols: Int, rows: Int, count: Int, gapIn: Double, ppi: Int, quality: Int, format: String, filename: String): PrintOutput {
     val req = PrintUtils.requiredPixels(sheetWIn, sheetHIn, ppi)
     val capped = PrintUtils.cappedPixels(req[0], req[1])
     val wasCapped = capped[0] != req[0] || capped[1] != req[1]
@@ -5683,8 +5763,7 @@ private fun buildPrintSheetRaster(context: Context, uri: Uri, sheetWIn: Double, 
         " · $count ${if (count == 1) "copy" else "copies"} ($cols × $rows)" + (if (wasCapped) " (scaled to fit device memory)" else ""))
 }
 
-private fun buildPrintPdf(context: Context, uri: Uri, wIn: Double, hIn: Double, bleedIn: Double, marginIn: Double, mode: String, ppi: Int, cropMarks: Boolean, filename: String): PrintOutput {
-    val src = decodeOrientedBitmap(context, uri)
+private fun buildPrintPdf(src: Bitmap, wIn: Double, hIn: Double, bleedIn: Double, marginIn: Double, mode: String, ppi: Int, cropMarks: Boolean, filename: String): PrintOutput {
     val pageWIn = wIn + bleedIn * 2
     val pageHIn = hIn + bleedIn * 2
     val pageWPt = (pageWIn * 72).toInt().coerceAtLeast(1)
@@ -5723,8 +5802,7 @@ private fun buildPrintPdf(context: Context, uri: Uri, wIn: Double, hIn: Double, 
     return PrintOutput(baos.toByteArray(), "$filename.pdf", "application/pdf", dims)
 }
 
-private fun buildPrintSheetPdf(context: Context, uri: Uri, sheetWIn: Double, sheetHIn: Double, cellWIn: Double, cellHIn: Double, cols: Int, rows: Int, count: Int, gapIn: Double, ppi: Int, filename: String): PrintOutput {
-    val src = decodeOrientedBitmap(context, uri)
+private fun buildPrintSheetPdf(src: Bitmap, sheetWIn: Double, sheetHIn: Double, cellWIn: Double, cellHIn: Double, cols: Int, rows: Int, count: Int, gapIn: Double, ppi: Int, filename: String): PrintOutput {
     val cellPx0 = PrintUtils.requiredPixels(cellWIn, cellHIn, ppi)
     val cellPx = PrintUtils.cappedPixels(cellPx0[0], cellPx0[1])
     val cell = PrintUtils.renderPrint(src, cellPx[0], cellPx[1], "Fill", android.graphics.Color.WHITE)
@@ -7284,6 +7362,9 @@ private fun PrintHomeScreen(
     imgW: Int,
     imgH: Int,
     onPick: () -> Unit,
+    onPickPdf: () -> Unit,
+    pdfThumbs: List<Bitmap>,
+    onPdfPage: (Int) -> Unit,
     onContinue: () -> Unit
 ) {
     Column(modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).padding(horizontal = 16.dp).verticalScroll(rememberScrollState())) {
@@ -7298,6 +7379,8 @@ private fun PrintHomeScreen(
                     Text("Choose a photo, artwork, document image or design from your phone.", fontSize = 13.sp, color = Slate, textAlign = TextAlign.Center)
                     Spacer(Modifier.height(14.dp))
                     Button(onClick = onPick, colors = ButtonDefaults.buttonColors(containerColor = SkyBlue)) { Text("Choose Image", color = Color.White) }
+                    Spacer(Modifier.height(8.dp))
+                    OutlinedButton(onClick = onPickPdf) { Text("Select PDF", color = DeepNavy) }
                 } else {
                     Image(bitmap = thumb.asImageBitmap(), contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.size(120.dp))
                     Spacer(Modifier.height(10.dp))
@@ -7307,7 +7390,30 @@ private fun PrintHomeScreen(
                         fontSize = 13.sp, color = Slate
                     )
                     Spacer(Modifier.height(10.dp))
-                    OutlinedButton(onClick = onPick) { Text("Change", color = DeepNavy) }
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedButton(onClick = onPick) { Text("Change", color = DeepNavy) }
+                        OutlinedButton(onClick = onPickPdf) { Text("Select PDF", color = DeepNavy) }
+                    }
+                }
+            }
+        }
+        if (pdfThumbs.isNotEmpty()) {
+            Spacer(Modifier.height(12.dp))
+            Card(colors = CardDefaults.cardColors(containerColor = SoftGrey), shape = RoundedCornerShape(12.dp)) {
+                Column(Modifier.fillMaxWidth().padding(14.dp)) {
+                    Text("Choose a page", fontWeight = FontWeight.SemiBold, color = DeepNavy, fontSize = 15.sp)
+                    Spacer(Modifier.height(8.dp))
+                    Row(Modifier.horizontalScroll(rememberScrollState())) {
+                        pdfThumbs.forEachIndexed { i, t ->
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                modifier = Modifier.padding(end = 10.dp).clickable { onPdfPage(i) }
+                            ) {
+                                Image(bitmap = t.asImageBitmap(), contentDescription = null, contentScale = ContentScale.Fit, modifier = Modifier.height(120.dp).border(1.dp, Slate))
+                                Text("Page ${i + 1}", fontSize = 12.sp, color = DeepNavy)
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -7427,8 +7533,8 @@ private fun PrintSetupScreen(
                 }
                 Spacer(Modifier.height(8.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    listOf("in", "cm", "mm").forEach { u ->
-                        PrintPresetChip(u, if (u == "in") "inches" else if (u == "cm") "centimeters" else "millimeters", unit == u) { onUnit(u) }
+                    listOf("in", "cm", "mm", "px").forEach { u ->
+                        PrintPresetChip(u, if (u == "in") "inches" else if (u == "cm") "centimeters" else if (u == "mm") "millimeters" else "pixels", unit == u) { onUnit(u) }
                     }
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -7448,6 +7554,9 @@ private fun PrintSetupScreen(
                         Text("Adds 3 mm on each side for professional printing.", fontSize = 12.sp, color = Slate)
                     }
                     Switch(checked = bleedOn, onCheckedChange = onBleedOn, colors = SwitchDefaults.colors(checkedTrackColor = SkyBlue))
+                }
+                if (unit == "px") {
+                    Text("Pixel size converts through the PPI chosen below: inches = pixels / PPI.", fontSize = 12.sp, color = Slate, modifier = Modifier.padding(top = 4.dp))
                 }
                 TextButton(onClick = onResetProportions, enabled = aspect > 0) { Text("Reset to original proportions", color = SkyBlue) }
             }
@@ -7541,7 +7650,14 @@ private fun PrintSetupScreen(
             Column(Modifier.fillMaxWidth().padding(14.dp)) {
                 Text("Print calculator", fontWeight = FontWeight.Bold, color = DeepNavy, fontSize = 15.sp)
                 Spacer(Modifier.height(8.dp))
-                Row { Text("Print size", Modifier.weight(1f), fontSize = 13.sp, color = Slate); Text("${PrintUtils.fmtDim(wIn, unit)} × ${PrintUtils.fmtDim(hIn, unit)} $unit", fontSize = 13.sp, color = DeepNavy, fontWeight = FontWeight.SemiBold) }
+                Row {
+                    Text("Print size", Modifier.weight(1f), fontSize = 13.sp, color = Slate)
+                    Text(
+                        if (unit == "px") "${PrintUtils.fmtDim(wIn, "in")} × ${PrintUtils.fmtDim(hIn, "in")} in (${PrintUtils.fmtDim(wIn, "cm")} × ${PrintUtils.fmtDim(hIn, "cm")} cm)"
+                        else "${PrintUtils.fmtDim(wIn, unit)} × ${PrintUtils.fmtDim(hIn, unit)} $unit",
+                        fontSize = 13.sp, color = DeepNavy, fontWeight = FontWeight.SemiBold
+                    )
+                }
                 Row { Text("Image pixels", Modifier.weight(1f), fontSize = 13.sp, color = Slate); Text("$imgW × $imgH px", fontSize = 13.sp, color = DeepNavy, fontWeight = FontWeight.SemiBold) }
                 Row { Text("Effective PPI", Modifier.weight(1f), fontSize = 13.sp, color = Slate); Text("${effPpi.toInt()} PPI", fontSize = 13.sp, color = DeepNavy, fontWeight = FontWeight.SemiBold) }
                 Row { Text("Required pixels", Modifier.weight(1f), fontSize = 13.sp, color = Slate); Text("${req[0]} × ${req[1]} px (${PrintUtils.megapixels(req[0], req[1])} MP)", fontSize = 13.sp, color = DeepNavy, fontWeight = FontWeight.SemiBold) }

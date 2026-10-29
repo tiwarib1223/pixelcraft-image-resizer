@@ -74,6 +74,11 @@ Stage 3 v0.10.1 (built on Stage 2E v0.8.1): queue overview screen, the full "Sel
 
 
 
+## v0.15.1 addition - PDF as input + pixels unit (both his approvals)
+- "Select PDF" sits next to Choose Image on the landing page. Picking a PDF renders page thumbnails and asks him to choose a page; the chosen page renders at good resolution (up to 2600 px) via PdfRenderer and then flows through the whole tool exactly like an image (calculator, quality check, preview, export). Label shows "PDF · Page N". Device-only path (host JVM has no PDF engine) - same known caveat as the converter's PDF input.
+## v0.15.1 addition - pixels as a custom-size unit (his approval)
+- Custom size now offers px alongside in/cm/mm. In px mode the fields take pixels and the calculator works in reverse: physical size = pixels / PPI at the selected PPI, shown in inches and cm; required pixels equals what he entered; the quality check automatically compares the source image against the entered pixels; aspect lock and reset-to-proportions work in px too.
+
 ## v0.15.0 feature - Print Size & DPI (his GO "research deeply and make perfect" + full 3-batch spec)
 - The old placeholder calculator became the real "Print Size & DPI" tool, four screens in the app's design language (his mockup's dark theme was layout-only, per his instruction):
   1. "Print Size & DPI" - subtitle "Prepare images for printing at the right size and resolution.", Select Your Image card; after picking, the image shows with preview, pixel dimensions, format and file size (his standing rule), "Your original image remains unchanged."
