@@ -74,6 +74,9 @@ Stage 3 v0.10.1 (built on Stage 2E v0.8.1): queue overview screen, the full "Sel
 
 
 
+## v0.15.10 - Light grey is now a real soft grey (his bug: "default and light grey same"; FINAL: "Keep but light grey should be soft grey")
+- The old "Light grey" was #F2F2F2 - nearly identical to White, so switching looked like it did nothing. Now #E0E0E0 (Material grey 300): visibly soft grey, clearly distinguishable from White on a phone screen, still light. Both options, their order and the default are unchanged: "White / default" stays the default, "Light grey / soft grey" stays the alternative. The value is ONE shared constant (PrintUtils.LIGHT_GREY_BG) used by BOTH the print preview and the export rasterizer, so the two paths can never drift apart. New unit test proves: constant value, >= 0x20 channel distance from white, and a real rendered pixel of the exported bitmap is exactly that grey (white path still renders white).
+
 ## v0.15.9 - typed page entry removed entirely (his veto: "But no typing")
 - The typed page-number entry is gone completely: no box, no underline, no placeholder, no hint, no keyboard, nothing tappable except Add. The row is plain "Select pages" text on the left and the Add button on the right, same line. Add applies the currently ✅-marked pages - the same action as the big "Use N selected pages" button (both stay, matching his mental model of Add = apply my marks); with nothing marked, Add shows a gentle "Tap pages below to select them first." Selection by ✅ marks on thumbnails is the one way to pick pages, and thumbnails now show clean - no "Page N" labels under them (his removal, confirmed by screenshot); the ✅ mark plus blue border on selected pages is the only overlay. Kept as he confirmed: "N pages selected: ..." banner, "Choose a page (N pages)", thumbnail page labels, "Use N selected pages", All pages mode. (The page-list parser code remains but is user-unreachable, covered by its unit test.)
 

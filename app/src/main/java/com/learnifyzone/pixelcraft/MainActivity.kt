@@ -1635,7 +1635,7 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                 printResultFiles.clear()
                 val bleedIn = if (printBleedOn) PrintUtils.BLEED_IN else 0.0
                 val marginIn = if (printMarginsOn) PrintUtils.MARGIN_IN else 0.0
-                val bg = if (printBgWhite) android.graphics.Color.WHITE else android.graphics.Color.rgb(0xF2, 0xF2, 0xF2)
+                val bg = if (printBgWhite) android.graphics.Color.WHITE else PrintUtils.LIGHT_GREY_BG
                 if (allPagesMode) {
                     // Every page in one run with the same settings, composed one page
                     // at a time into temp cache files - nothing is saved until Save.
@@ -8301,7 +8301,7 @@ private fun PrintPreviewScreen(
     val marginIn = if (marginsOn && !sheetMode) PrintUtils.MARGIN_IN else 0.0
     val pageWIn = if (sheetMode) sheetWIn else wIn + bleedIn * 2
     val pageHIn = if (sheetMode) sheetHIn else hIn + bleedIn * 2
-    val bg = if (bgWhite) Color.White else Color(0xFFF2F2F2)
+    val bg = if (bgWhite) Color.White else Color(PrintUtils.LIGHT_GREY_BG)
 
     Column(modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).padding(horizontal = 16.dp).verticalScroll(rememberScrollState())) {
         Spacer(Modifier.height(10.dp))
@@ -8385,7 +8385,7 @@ private fun PrintPreviewScreen(
                     Text("Background for transparent images", fontSize = 13.sp, color = Slate)
                     Row(Modifier.horizontalScroll(rememberScrollState())) {
                         PrintPresetChip("White", "default", bgWhite) { onBgWhite(true) }
-                        PrintPresetChip("Light grey", "soft", !bgWhite) { onBgWhite(false) }
+                        PrintPresetChip("Light grey", "soft grey", !bgWhite) { onBgWhite(false) }
                     }
                 }
             }

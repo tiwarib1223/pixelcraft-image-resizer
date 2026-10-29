@@ -168,4 +168,22 @@ class PrintUtilsTest {
         assertEquals("ID / Passport", us.group)
         assertEquals(listOf(150, 200, 300, 600), PrintUtils.ppiOptions)
     }
+
+    @Test
+    fun lightGreyBackgroundIsVisibleAndApplied() {
+        // His v0.15.10 bug: "default and light grey same" - #F2F2F2 was invisible next to White.
+        // The shared constant must be a clearly visible grey AND renderPrint must actually paint it.
+        assertEquals(0xFFE0E0E0.toInt(), PrintUtils.LIGHT_GREY_BG)
+        assertTrue("light grey must be clearly darker than white",
+            Color.red(Color.WHITE) - Color.red(PrintUtils.LIGHT_GREY_BG) >= 0x18)
+
+        // Transparent source rendered with the light-grey background: the uncovered area is exactly that grey.
+        val src = Bitmap.createBitmap(10, 10, Bitmap.Config.ARGB_8888) // fully transparent
+        val out = PrintUtils.renderPrint(src, 40, 30, "Fit", PrintUtils.LIGHT_GREY_BG)
+        assertEquals(PrintUtils.LIGHT_GREY_BG, out.getPixel(2, 2))
+        // And with white it is white - the two options can never look the same again.
+        val outW = PrintUtils.renderPrint(src, 40, 30, "Fit", Color.WHITE)
+        assertEquals(Color.WHITE, outW.getPixel(2, 2))
+        assertTrue(out.getPixel(2, 2) != outW.getPixel(2, 2))
+    }
 }

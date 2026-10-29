@@ -15,6 +15,11 @@ import kotlin.math.roundToInt
  * which is exercised through Robolectric native graphics.
  */
 object PrintUtils {
+    /** Light-grey background for transparent images - clearly visible against white (#E0E0E0 - Material grey 300, the clearly visible end of his soft-grey range; the old #F2F2F2 was
+     *  indistinguishable from White, his v0.15.10 bug). ONE constant shared by the preview and the exporter so the
+     *  two paths can never drift apart again. */
+    const val LIGHT_GREY_BG: Int = 0xFFE0E0E0.toInt()
+
 
     enum class Quality { GOOD, ACCEPTABLE, LOW }
 
