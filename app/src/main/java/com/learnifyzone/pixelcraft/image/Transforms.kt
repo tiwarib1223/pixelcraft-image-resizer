@@ -106,4 +106,32 @@ object Transforms {
         val scale = maxDim.toDouble() / longest
         return max(1, (w * scale).roundToInt()) to max(1, (h * scale).roundToInt())
     }
+
+    /** Rotate 90 degrees clockwise. */
+    fun rotateRight(src: Bitmap): Bitmap {
+        val m = android.graphics.Matrix().apply { postRotate(90f) }
+        return Bitmap.createBitmap(src, 0, 0, src.width, src.height, m, true)
+    }
+
+    /** Rotate 90 degrees counter-clockwise. */
+    fun rotateLeft(src: Bitmap): Bitmap {
+        val m = android.graphics.Matrix().apply { postRotate(-90f) }
+        return Bitmap.createBitmap(src, 0, 0, src.width, src.height, m, true)
+    }
+
+    /** Mirror horizontally (left-right flip). */
+    fun flipH(src: Bitmap): Bitmap {
+        val m = android.graphics.Matrix().apply { postScale(-1f, 1f) }
+        return Bitmap.createBitmap(src, 0, 0, src.width, src.height, m, true)
+    }
+
+    /** Mirror vertically (top-bottom flip). */
+    fun flipV(src: Bitmap): Bitmap {
+        val m = android.graphics.Matrix().apply { postScale(1f, -1f) }
+        return Bitmap.createBitmap(src, 0, 0, src.width, src.height, m, true)
+    }
+
+    /** Crop a pixel rectangle (left, top, right, bottom) out of the photo. */
+    fun cropRegion(src: Bitmap, rectPx: IntArray): Bitmap =
+        Bitmap.createBitmap(src, rectPx[0], rectPx[1], rectPx[2] - rectPx[0], rectPx[3] - rectPx[1])
 }

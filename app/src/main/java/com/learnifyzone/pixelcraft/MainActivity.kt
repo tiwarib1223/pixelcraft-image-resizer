@@ -22,13 +22,17 @@ import androidx.activity.result.IntentSenderRequest
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -63,7 +67,10 @@ import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Create
 import androidx.compose.material.icons.filled.PhotoSizeSelectLarge
+import androidx.compose.material.icons.filled.RotateLeft
 import androidx.compose.material.icons.filled.RotateRight
+import androidx.compose.material.icons.filled.SwapHoriz
+import androidx.compose.material.icons.filled.SwapVert
 import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Tune
@@ -102,6 +109,7 @@ import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -112,12 +120,18 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
@@ -132,6 +146,7 @@ import com.learnifyzone.pixelcraft.image.BackgroundRemoval
 import com.learnifyzone.pixelcraft.image.ExportFormat
 import com.learnifyzone.pixelcraft.image.SaveUtils
 import com.learnifyzone.pixelcraft.image.Transforms
+import com.learnifyzone.pixelcraft.image.CropMath
 import com.learnifyzone.pixelcraft.image.Transforms.CropAnchor
 import com.learnifyzone.pixelcraft.image.Transforms.FitPad
 import kotlinx.coroutines.Dispatchers
@@ -165,7 +180,9 @@ class MainActivity : ComponentActivity() {
 
 private enum class MainTab { Home, MyPhotos, Presets, Settings }
 private enum class Screen { Home, Editor, Export, Print, Success, QueueOverview, QueueResult }
-private enum class Tool(val label: String) { Resize("Resize"), Presets("Presets"), Crop("Crop"), Background("Background"), Format("Format") }
+private enum class Tool(val label: String) { Resize("Resize"), Presets("Presets"), Crop("Crop & Rotate"), Background("Background"), Format("Format") }
+
+private enum class CropTransform { LEFT, RIGHT, FLIP_H, FLIP_V }
 private enum class BgChoice(val label: String) { TRANSPARENT("Transparent"), WHITE("White"), CUSTOM("Custom Color") }
 private enum class AdaptMode(val label: String) { FIT("Fit"), CROP("Crop"), STRETCH("Stretch") }
 private data class Feature(val title: String, val description: String, val icon: String, val active: Boolean = false)
@@ -217,6 +234,9 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
     val recentThumbs = remember { mutableStateMapOf<String, ImageBitmap?>() }
     var pendingPreset by remember { mutableStateOf<Preset?>(null) }
     var pendingBgTool by remember { mutableStateOf(false) }
+    var pendingCropTool by remember { mutableStateOf(false) }
+    var cropRect by remember { mutableStateOf(CropMath.defaultRect()) }
+    var cropAspect by rememberSaveable { mutableStateOf("Free") }
     var bgCutout by remember { mutableStateOf<Bitmap?>(null) }
     var bgPreview by remember { mutableStateOf<Bitmap?>(null) }
     var bgChoice by remember { mutableStateOf(BgChoice.TRANSPARENT) }
@@ -366,7 +386,13 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                     }
                 }
                 screen = Screen.Editor
-                tool = if (pendingBgTool) { pendingBgTool = false; Tool.Background } else Tool.Resize
+                cropRect = CropMath.defaultRect()
+                cropAspect = "Free"
+                tool = when {
+                    pendingBgTool -> { pendingBgTool = false; Tool.Background }
+                    pendingCropTool -> { pendingCropTool = false; Tool.Crop }
+                    else -> Tool.Resize
+                }
                 // Clear busy BEFORE the snackbar: showSnackbar suspends until dismissal,
                 // so gating busy on it left the Process button spinning for ~4s after every load.
                 busy = false
@@ -386,6 +412,7 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
     LaunchedEffect(Unit) {
         val testPath = (context as? Activity)?.intent?.getStringExtra("pixelcraft.test.photo")
         if (!testPath.isNullOrBlank() && sourceUri == null && workingBitmap == null) {
+            if ((context as? Activity)?.intent?.getStringExtra("pixelcraft.test.tool") == "crop") pendingCropTool = true
             loadPhoto(Uri.fromFile(File(testPath)), isCamera = false)
         }
     }
@@ -951,6 +978,7 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
     fun resetEditor() {
         val uri = sourceUri
         val stayInBackground = tool == Tool.Background
+        val stayInCrop = tool == Tool.Crop
         clearProcessedResults()
         workingBitmap = null
         processedBitmap = null
@@ -978,10 +1006,12 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
         pendingPreset = null
         pendingDraft = null
         pendingBgTool = stayInBackground
+        pendingCropTool = stayInCrop
+        cropRect = CropMath.defaultRect()
         if (uri != null) {
             scope.launch(Dispatchers.IO) { DraftsStore.remove(context, uri.toString()) }
         }
-        tool = if (stayInBackground) Tool.Background else Tool.Resize
+        tool = if (stayInBackground) Tool.Background else if (stayInCrop) Tool.Crop else Tool.Resize
         screen = Screen.Editor
     }
 
@@ -1290,6 +1320,10 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                                 if (workingBitmap != null) { screen = Screen.Editor; tool = Tool.Background }
                                 else { pendingBgTool = true; pickPhotos() }
                             }
+                            "Crop & Rotate" -> {
+                                if (workingBitmap != null) { screen = Screen.Editor; tool = Tool.Crop; cropAspect = "Free"; cropRect = CropMath.defaultRect() }
+                                else { pendingCropTool = true; pickPhotos() }
+                            }
                             else -> scope.launch { snackbar.showSnackbar("$feature is planned for a later development stage.") }
                         }
                     }
@@ -1392,6 +1426,7 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                         Tool.Resize -> Unit
                         Tool.Presets -> { saveDraftIfNeeded(); screen = Screen.Home; tab = MainTab.Presets }
                         Tool.Background -> Unit
+                        Tool.Crop -> { cropAspect = "Free"; cropRect = CropMath.defaultRect() }
                         else -> scope.launch { snackbar.showSnackbar("${selected.label} is planned for a later stage. Resize and export are available now.") }
                     }
                 },
@@ -1401,7 +1436,60 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                         val rotated = rotateRight(src)
                         workingBitmap = rotated
                         applyTarget(rotated.width, rotated.height)
-                        scope.launch { snackbar.showSnackbar("Rotated 90°. Tap Process when the size is right.") }
+                        if (tool == Tool.Crop) {
+                            cropRect = CropMath.maxRectForAspect(cropAspect, rotated.width, rotated.height)
+                            scope.launch { snackbar.showSnackbar("Rotated 90°.") }
+                        } else {
+                            scope.launch { snackbar.showSnackbar("Rotated 90°. Tap Process when the size is right.") }
+                        }
+                    }
+                },
+                cropRect = cropRect,
+                cropAspect = cropAspect,
+                onCropRect = { cropRect = it },
+                onCropAspect = { asp ->
+                    cropAspect = asp
+                    val src = workingBitmap
+                    if (src != null) cropRect = CropMath.maxRectForAspect(asp, src.width, src.height)
+                },
+                onCropTransform = { kind ->
+                    val src = workingBitmap
+                    if (src != null) {
+                        val out = when (kind) {
+                            CropTransform.LEFT -> Transforms.rotateLeft(src)
+                            CropTransform.RIGHT -> Transforms.rotateRight(src)
+                            CropTransform.FLIP_H -> Transforms.flipH(src)
+                            CropTransform.FLIP_V -> Transforms.flipV(src)
+                        }
+                        workingBitmap = out
+                        applyTarget(out.width, out.height)
+                        invalidateProcessed()
+                        cropRect = CropMath.maxRectForAspect(cropAspect, out.width, out.height)
+                    }
+                },
+                onApplyCrop = {
+                    val src = workingBitmap
+                    if (src != null) {
+                        val px = CropMath.toPixels(cropRect, src.width, src.height)
+                        busy = true
+                        busyLabel = "Cropping…"
+                        scope.launch {
+                            try {
+                                val result = withContext(Dispatchers.Default) { Transforms.cropRegion(src, px) }
+                                processedBitmap = result
+                                exportName = suggestBaseName(result.width, result.height)
+                                beforeAfter = true
+                                estimatedBytes = withContext(Dispatchers.IO) { estimateBytes(result, outFormat(), quality) }
+                                cropRect = CropMath.defaultRect()
+                                screen = Screen.Export
+                                snackbar.showSnackbar("Cropped: ${result.width} × ${result.height} px.")
+                            } catch (e: Exception) {
+                                snackbar.showSnackbar("Couldn't crop this photo.")
+                            } finally {
+                                busy = false
+                                busyLabel = ""
+                            }
+                        }
                     }
                 },
                 onProcess = { showDimensionsSheet = true },
@@ -2168,6 +2256,12 @@ private fun EditorScreen(
     onSizeUnit: (String) -> Unit,
     onResizeDpi: (String) -> Unit,
     onRotate: () -> Unit,
+    cropRect: FloatArray,
+    cropAspect: String,
+    onCropRect: (FloatArray) -> Unit,
+    onCropAspect: (String) -> Unit,
+    onCropTransform: (CropTransform) -> Unit,
+    onApplyCrop: () -> Unit,
     onProcess: () -> Unit,
     onExport: () -> Unit,
     bgPreview: Bitmap?,
@@ -2221,7 +2315,15 @@ private fun EditorScreen(
         ) {
             val display = if (tool == Tool.Background && bgPreview != null) bgPreview else working
             val displayImage = remember(display) { display?.asImageBitmap() }
-            if (displayImage != null) {
+            if (tool == Tool.Crop && working != null) {
+                CropPreview(
+                    bitmap = working,
+                    rect = cropRect,
+                    aspect = CropMath.aspectValue(cropAspect, working.width, working.height),
+                    onRect = onCropRect,
+                    modifier = Modifier.fillMaxSize().padding(8.dp)
+                )
+            } else if (displayImage != null) {
                 Image(bitmap = displayImage, contentDescription = "Image preview", modifier = Modifier.fillMaxSize().padding(8.dp), contentScale = ContentScale.Fit)
             } else {
                 Column(
@@ -2362,11 +2464,51 @@ private fun EditorScreen(
                     Text("Continue to Export", fontWeight = FontWeight.Bold)
                 }
             }
+        } else if (tool == Tool.Crop) {
+            Card(colors = CardDefaults.cardColors(containerColor = PaleBlue), shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth().padding(bottom = 10.dp)) {
+                Text("Drag the corners on the photo to frame it. Drag inside the frame to move it. Rotate or flip first if you like - everything happens on your phone, nothing is uploaded.", color = Slate, fontSize = 13.sp, lineHeight = 18.sp, modifier = Modifier.padding(16.dp))
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())) {
+                listOf(
+                    Triple(CropTransform.LEFT, "Left 90°", Icons.Default.RotateLeft),
+                    Triple(CropTransform.RIGHT, "Right 90°", Icons.Default.RotateRight),
+                    Triple(CropTransform.FLIP_H, "Flip H", Icons.Default.SwapHoriz),
+                    Triple(CropTransform.FLIP_V, "Flip V", Icons.Default.SwapVert)
+                ).forEach { (kind, label, icon) ->
+                    OutlinedButton(onClick = { onCropTransform(kind) }, shape = RoundedCornerShape(10.dp), enabled = !busy && working != null) {
+                        Icon(icon, contentDescription = label, modifier = Modifier.size(16.dp), tint = DeepNavy)
+                        Spacer(Modifier.width(4.dp))
+                        Text(label, color = DeepNavy, fontSize = 12.sp, maxLines = 1, softWrap = false)
+                    }
+                }
+            }
+            Text("Aspect ratio", color = DeepNavy, fontWeight = FontWeight.SemiBold, fontSize = 14.sp, modifier = Modifier.padding(top = 12.dp, bottom = 8.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())) {
+                listOf("Free", "Original", "1:1", "4:3", "16:9", "9:16").forEach { label ->
+                    val selected = cropAspect == label
+                    Surface(modifier = Modifier.clickable { onCropAspect(label) }, shape = RoundedCornerShape(9.dp), color = if (selected) SkyBlue else PaleBlue) {
+                        Text(label, modifier = Modifier.padding(horizontal = 14.dp, vertical = 9.dp), fontSize = 12.sp, color = if (selected) Color.White else DeepNavy, fontWeight = FontWeight.SemiBold, maxLines = 1, softWrap = false)
+                    }
+                }
+            }
+            Button(
+                onClick = onApplyCrop,
+                modifier = Modifier.fillMaxWidth().padding(top = 12.dp).height(52.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = Orange, contentColor = Color.White),
+                shape = RoundedCornerShape(14.dp),
+                enabled = !busy && working != null
+            ) {
+                if (busy) CircularProgressIndicator(modifier = Modifier.size(20.dp), color = Color.White, strokeWidth = 2.dp) else {
+                    Icon(Icons.Default.ContentCut, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text("Apply Crop", fontWeight = FontWeight.Bold)
+                }
+            }
         } else {
             Text("${tool.label} controls will be added in the next development stages. Resize and export are available now.", color = DeepNavy, fontSize = 13.sp)
         }
         Spacer(Modifier.height(12.dp))
-        if (tool != Tool.Background) {
+        if (tool != Tool.Background && tool != Tool.Crop) {
         Button(
             onClick = onProcess,
             modifier = Modifier.fillMaxWidth().height(52.dp),
@@ -3111,6 +3253,103 @@ private fun PrintCalculator(modifier: Modifier, hasPhoto: Boolean, onApply: (Int
             colors = ButtonDefaults.buttonColors(containerColor = Orange),
             enabled = pxW != null && pxH != null
         ) { Text(if (hasPhoto) "Apply to photo" else "Select a photo first", color = Color.White) }
+    }
+}
+
+/**
+ * Interactive crop frame over the photo: dimmed outside area, rule-of-thirds
+ * grid, big corner handles. Drag a corner to resize (aspect lock honored),
+ * drag inside the frame to move it. rect is normalized over the photo.
+ */
+@Composable
+private fun CropPreview(
+    bitmap: Bitmap,
+    rect: FloatArray,
+    aspect: Float?,
+    onRect: (FloatArray) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    BoxWithConstraints(modifier, contentAlignment = Alignment.Center) {
+        val boxW = constraints.maxWidth.toFloat()
+        val boxH = constraints.maxHeight.toFloat()
+        val scale = minOf(boxW / bitmap.width, boxH / bitmap.height)
+        val dispW = bitmap.width * scale
+        val dispH = bitmap.height * scale
+        val offX = (boxW - dispW) / 2f
+        val offY = (boxH - dispH) / 2f
+        val density = LocalDensity.current
+        val imageBitmap = remember(bitmap) { bitmap.asImageBitmap() }
+        Image(
+            bitmap = imageBitmap,
+            contentDescription = "Crop preview - drag the corners to frame the photo",
+            modifier = Modifier.size(with(density) { dispW.toDp() }, with(density) { dispH.toDp() })
+                .offset { IntOffset(offX.roundToInt(), offY.roundToInt()) },
+            contentScale = ContentScale.FillBounds
+        )
+        val hitRadius = with(density) { 28.dp.toPx() }
+        val currentRect by rememberUpdatedState(rect)
+        val currentOnRect by rememberUpdatedState(onRect)
+        val imgAspect = bitmap.width.toFloat() / bitmap.height.toFloat()
+        Canvas(
+            Modifier.fillMaxSize().pointerInput(bitmap, aspect) {
+                var mode = -1 // -1 none, 0..3 corner handle, 4 move frame
+                detectDragGestures(
+                    onDragStart = { p ->
+                        val r0 = currentRect
+                        val l = offX + r0[0] * dispW
+                        val t = offY + r0[1] * dispH
+                        val r = offX + r0[2] * dispW
+                        val b = offY + r0[3] * dispH
+                        val corners = listOf(l to t, r to t, l to b, r to b)
+                        mode = -1
+                        var best = Float.MAX_VALUE
+                        var bestIdx = -1
+                        corners.forEachIndexed { i, c ->
+                            val d = (p.x - c.first) * (p.x - c.first) + (p.y - c.second) * (p.y - c.second)
+                            if (d < best) { best = d; bestIdx = i }
+                        }
+                        if (bestIdx >= 0 && best <= hitRadius * hitRadius) mode = bestIdx
+                        else if (p.x in l..r && p.y in t..b) mode = 4
+                    },
+                    onDrag = { change, drag ->
+                        change.consume()
+                        val dx = drag.x / dispW
+                        val dy = drag.y / dispH
+                        val next = when {
+                            mode == 4 -> CropMath.move(currentRect, dx, dy)
+                            mode in 0..3 -> CropMath.dragCorner(currentRect, mode, dx, dy, aspect, imgAspect)
+                            else -> currentRect
+                        }
+                        if (next !== currentRect) currentOnRect(next)
+                    },
+                    onDragEnd = { mode = -1 }
+                )
+            }
+        ) {
+            val l = offX + rect[0] * dispW
+            val t = offY + rect[1] * dispH
+            val r = offX + rect[2] * dispW
+            val b = offY + rect[3] * dispH
+            val dim = Color.Black.copy(alpha = 0.45f)
+            drawRect(dim, Offset.Zero, Size(boxW, t))
+            drawRect(dim, Offset(0f, b), Size(boxW, boxH - b))
+            drawRect(dim, Offset(0f, t), Size(l, b - t))
+            drawRect(dim, Offset(r, t), Size(boxW - r, b - t))
+            val grid = Color.White.copy(alpha = 0.5f)
+            val gridStroke = 1.dp.toPx()
+            for (i in 1..2) {
+                val gx = l + (r - l) * i / 3f
+                val gy = t + (b - t) * i / 3f
+                drawLine(grid, Offset(gx, t), Offset(gx, b), gridStroke)
+                drawLine(grid, Offset(l, gy), Offset(r, gy), gridStroke)
+            }
+            drawRect(SkyBlue, Offset(l, t), Size(r - l, b - t), style = Stroke(2.dp.toPx()))
+            val handleR = 9.dp.toPx()
+            listOf(l to t, r to t, l to b, r to b).forEach { c ->
+                drawCircle(Color.White, handleR, Offset(c.first, c.second))
+                drawCircle(SkyBlue, handleR, Offset(c.first, c.second), style = Stroke(3.dp.toPx()))
+            }
+        }
     }
 }
 

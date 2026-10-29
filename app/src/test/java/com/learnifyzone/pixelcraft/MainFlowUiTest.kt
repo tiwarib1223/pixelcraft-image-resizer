@@ -5,6 +5,9 @@ import android.os.Looper
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.onRoot
+import androidx.compose.ui.test.printToString
 import androidx.test.core.app.ActivityScenario
 import androidx.test.core.app.ApplicationProvider
 import org.junit.Rule
@@ -63,6 +66,24 @@ class MainFlowUiTest {
             waitForText("mm")
             waitForText("DPI - 300 is standard for print")
             waitForText("Export")
+        }
+    }
+
+    @Test
+    fun cropRotateToolShowsItsControls() {
+        val bytes = javaClass.classLoader!!.getResourceAsStream("test_photo.jpg")!!.readBytes()
+        val tmp = File.createTempFile("pc_ui_test_crop", ".jpg")
+        tmp.writeBytes(bytes)
+        tmp.deleteOnExit()
+        val intent = Intent(ApplicationProvider.getApplicationContext(), MainActivity::class.java)
+            .putExtra("pixelcraft.test.photo", tmp.absolutePath)
+            .putExtra("pixelcraft.test.tool", "crop")
+        ActivityScenario.launch<MainActivity>(intent).use {
+            waitForText("Aspect ratio")
+            waitForText("Apply Crop")
+            waitForText("Flip H")
+            waitForText("Left 90°")
+            waitForText("16:9")
         }
     }
 }

@@ -2,6 +2,7 @@ package com.learnifyzone.pixelcraft
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertThrows
+import com.learnifyzone.pixelcraft.image.CropMath
 import org.junit.Test
 
 class ResizeMathTest {
@@ -17,5 +18,41 @@ class ResizeMathTest {
         assertThrows(IllegalArgumentException::class.java) {
             ResizeMath.fromPercent(0, 100, 50.0)
         }
+    }
+
+    @Test fun cropAspectMaxRectIsCenteredAndCorrectRatio() {
+        val r = CropMath.maxRectForAspect("1:1", 2000, 1000)
+        val wPx = (r[2] - r[0]) * 2000
+        val hPx = (r[3] - r[1]) * 1000
+        assertEquals(wPx, hPx, 2.0f)
+        assertEquals(r[0], 1f - r[2], 0.001f)
+        assertEquals(r[1], 1f - r[3], 0.001f)
+    }
+
+    @Test fun cropFreeRectDefaultsNearlyFullPhoto() {
+        val r = CropMath.maxRectForAspect("Free", 2000, 1000)
+        assertEquals(0.05f, r[0], 0.001f)
+        assertEquals(0.95f, r[2], 0.001f)
+    }
+
+    @Test fun cropPixelsClampToPhotoBounds() {
+        val px = CropMath.toPixels(floatArrayOf(-0.2f, 0.1f, 1.4f, 0.9f), 1000, 800)
+        assertEquals(0, px[0])
+        assertEquals(1000, px[2])
+        assertEquals(80, px[1])
+        assertEquals(720, px[3])
+    }
+
+    @Test fun cropCornerDragKeepsLockedAspect() {
+        val r = CropMath.dragCorner(floatArrayOf(0.2f, 0.2f, 0.8f, 0.8f), 3, -0.2f, 0.1f, 1.0f, 1.0f)
+        assertEquals(r[2] - r[0], r[3] - r[1], 0.001f)
+    }
+
+    @Test fun cropMoveKeepsFrameInsidePhoto() {
+        val r = CropMath.move(floatArrayOf(0.1f, 0.1f, 0.6f, 0.6f), 0.8f, -0.5f)
+        assertEquals(0.5f, r[0], 0.001f)
+        assertEquals(0f, r[1], 0.001f)
+        assertEquals(1f, r[2], 0.001f)
+        assertEquals(0.5f, r[3], 0.001f)
     }
 }

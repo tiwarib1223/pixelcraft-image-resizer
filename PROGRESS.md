@@ -1,7 +1,7 @@
 # PixelCraft Image Resizer — Progress
 
 ## Current stage
-Stage 2E v0.8.1 (built on Stage 2C v0.3.0): queue overview screen, the full "Select new dimensions" Process sheet, batch processing of the whole queue with live percent progress, a result screen with savings summary, and batch save (new copies or replace originals). Stage 2C delivered: "My Photos" library screen, export format picker (JPG/PNG/WEBP/PDF), size unit picker (pixels/inch/cm/mm), queue thumbnail strip, and a persistent debug signing key. Stage 2 delivered: process-then-export workflow, aspect-ratio adaptation, camera capture, multi-select (up to 50) with one-by-one queue, recently edited photos, quality control.
+Stage 3 v0.9.0 (built on Stage 2E v0.8.1): queue overview screen, the full "Select new dimensions" Process sheet, batch processing of the whole queue with live percent progress, a result screen with savings summary, and batch save (new copies or replace originals). Stage 2C delivered: "My Photos" library screen, export format picker (JPG/PNG/WEBP/PDF), size unit picker (pixels/inch/cm/mm), queue thumbnail strip, and a persistent debug signing key. Stage 2 delivered: process-then-export workflow, aspect-ratio adaptation, camera capture, multi-select (up to 50) with one-by-one queue, recently edited photos, quality control.
 
 ## Stage 2C: implemented in source
 - New bottom-nav tab "My Photos" with three internal tabs, all zero-permission and on-device:
@@ -73,6 +73,11 @@ Stage 2E v0.8.1 (built on Stage 2C v0.3.0): queue overview screen, the full "Sel
 
 
 
+
+## v0.9.0 feature (his ask: "Now we build next tab" > "Crop and rotate" + his design reference "Make like this")
+- CROP & ROTATE TOOL, built to his design reference in the app's light style: an interactive crop frame right on the photo - drag the corners to resize, drag inside the frame to move it, dimmed outside area, rule-of-thirds grid, big corner handles sized for fingers. Left 90° / Right 90° / Flip H / Flip V buttons apply instantly. Aspect ratio chips: Free, Original, 1:1, 4:3, 16:9, 9:16 - locked ratios keep their shape while dragging.
+- "Apply Crop" goes straight to the result page (before/after + sizes + export), no bounce back - same flow as Resize. The Crop & Rotate editor chip and the home toolkit tile both open the tool (photo picker first if no photo is loaded). Reset stays inside the tool with the Select Image card, same as Remove Background.
+- Crop-frame math is a pure, unit-tested module (centering, aspect locks, corner drags, bounds clamping). All on-device, zero permissions, no new dependencies.
 
 ## v0.8.1 fix (his test: "Not good brother. Previous was good")
 - REVERTED the background remover to the U-2-Netp engine (the v0.7.0 quality he said was good). He tested v0.8.0's heavier ISNet engine on a real photo (baby + bunny) and it left background patches, so the ISNet model and its code are REMOVED. Engine chain is again: U-2-Netp > ML Kit fallback, all on-device and offline.
