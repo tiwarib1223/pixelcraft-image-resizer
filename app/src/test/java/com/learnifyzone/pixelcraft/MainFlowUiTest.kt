@@ -219,4 +219,39 @@ class MainFlowUiTest {
             waitForText("Smaller file")
         }
     }
+
+    @Test
+    fun printHomeShowsImageDetails() {
+        val bytes = javaClass.classLoader!!.getResourceAsStream("test_photo.jpg")!!.readBytes()
+        val tmp = File.createTempFile("pc_ui_test_print", ".jpg")
+        tmp.writeBytes(bytes)
+        tmp.deleteOnExit()
+        val intent = Intent(ApplicationProvider.getApplicationContext(), MainActivity::class.java)
+            .putExtra("pixelcraft.test.photo", tmp.absolutePath)
+            .putExtra("pixelcraft.test.tool", "print")
+        ActivityScenario.launch<MainActivity>(intent).use {
+            waitForText("Prepare images for printing at the right size and resolution.")
+            waitForText("Set Up Print Size")
+            waitForText("Your original image remains unchanged. Print files are always saved as new files.")
+        }
+    }
+
+    @Test
+    fun printSetupShowsCalculatorAndQuality() {
+        val bytes = javaClass.classLoader!!.getResourceAsStream("test_photo.jpg")!!.readBytes()
+        val tmp = File.createTempFile("pc_ui_test_print2", ".jpg")
+        tmp.writeBytes(bytes)
+        tmp.deleteOnExit()
+        val intent = Intent(ApplicationProvider.getApplicationContext(), MainActivity::class.java)
+            .putExtra("pixelcraft.test.photo", tmp.absolutePath)
+            .putExtra("pixelcraft.test.tool", "printsetup")
+        ActivityScenario.launch<MainActivity>(intent).use {
+            waitForText("Choose the print size")
+            waitForText("Print Resolution (PPI)")
+            waitForText("Recommended")
+            waitForText("Print calculator")
+            waitForText("Effective PPI")
+            waitForText("Continue to Print Preview")
+        }
+    }
 }

@@ -162,6 +162,7 @@ import com.learnifyzone.pixelcraft.image.CropMath
 import com.learnifyzone.pixelcraft.image.SocialPlatform
 import com.learnifyzone.pixelcraft.image.SocialSize
 import com.learnifyzone.pixelcraft.image.CompressUtils
+import com.learnifyzone.pixelcraft.image.PrintUtils
 import com.learnifyzone.pixelcraft.image.ConvertFormats
 import com.learnifyzone.pixelcraft.image.ShopSizes
 import com.learnifyzone.pixelcraft.image.SocialSizes
@@ -197,7 +198,7 @@ class MainActivity : ComponentActivity() {
 }
 
 private enum class MainTab { Home, MyPhotos, Presets, Settings }
-private enum class Screen { Home, Editor, Export, Print, Success, QueueOverview, QueueResult, SocialHome, SocialPlatform, SocialEdit, ShopHome, ShopOther, ShopPlatform, ShopEdit, ShopCollage, ConvertHome, ConvertEdit, ConvertResult, CompressHome, CompressSettings, CompressResult }
+private enum class Screen { Home, Editor, Export, PrintHome, PrintSetup, PrintPreview, PrintExport, Success, QueueOverview, QueueResult, SocialHome, SocialPlatform, SocialEdit, ShopHome, ShopOther, ShopPlatform, ShopEdit, ShopCollage, ConvertHome, ConvertEdit, ConvertResult, CompressHome, CompressSettings, CompressResult }
 private enum class Tool(val label: String) { Resize("Resize"), Presets("Presets"), Crop("Crop & Rotate"), Background("Background"), Circle("Circle Cutter"), Format("Format") }
 
 private enum class CropTransform { LEFT, RIGHT, FLIP_H, FLIP_V }
@@ -344,6 +345,41 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
     var compressBatchFiles by remember { mutableStateOf<List<Pair<String, ByteArray>>?>(null) }
     var compressBatchOrig by remember { mutableStateOf<List<Long>?>(null) }
     var compressSaved by remember { mutableStateOf(false) }
+
+    // ---- Print Size & DPI state ----
+    var printUri by remember { mutableStateOf<Uri?>(null) }
+    var printThumb by remember { mutableStateOf<Bitmap?>(null) }
+    var printPreview by remember { mutableStateOf<Bitmap?>(null) }
+    var printName by remember { mutableStateOf("image") }
+    var printLabel by remember { mutableStateOf("") }
+    var printOrigSize by remember { mutableStateOf(-1L) }
+    var printImgW by remember { mutableStateOf(0) }
+    var printImgH by remember { mutableStateOf(0) }
+    var printPreset by remember { mutableStateOf("A4") }
+    var printUnit by remember { mutableStateOf("in") }
+    var printWText by remember { mutableStateOf("") }
+    var printHText by remember { mutableStateOf("") }
+    var printLandscape by remember { mutableStateOf(false) }
+    var printLockAspect by remember { mutableStateOf(true) }
+    var printBleedOn by remember { mutableStateOf(false) }
+    var printPpi by remember { mutableStateOf(300) }
+    var printFitMode by remember { mutableStateOf("Fit") }
+    var printMarginsOn by remember { mutableStateOf(false) }
+    var printCropMarks by remember { mutableStateOf(false) }
+    var printBgWhite by remember { mutableStateOf(true) }
+    var printFormat by remember { mutableStateOf("JPG") }
+    var printFilename by remember { mutableStateOf("print-ready") }
+    var printJpgQuality by remember { mutableStateOf(92) }
+    var printResultBytes by remember { mutableStateOf<ByteArray?>(null) }
+    var printResultName by remember { mutableStateOf("") }
+    var printResultMime by remember { mutableStateOf("") }
+    var printResultDims by remember { mutableStateOf("") }
+    var printSaved by remember { mutableStateOf(false) }
+    var printSheetOn by remember { mutableStateOf(false) }
+    var printSheet by remember { mutableStateOf("4 × 6") }
+    var printCopyCount by remember { mutableStateOf(4) }
+    var pendingPrintTool by remember { mutableStateOf(false) }
+    var printGoSetup by remember { mutableStateOf(false) }
     var convertPdfPages by remember { mutableStateOf<List<Bitmap>?>(null) }
     val convertPdfChecked = remember { mutableStateListOf<Boolean>() }
     var circleShape by rememberSaveable { mutableStateOf("Circle") }
@@ -537,6 +573,18 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                     compressOrigSizes.add(querySourceSize(context, uri))
                     screen = if (compressGoSettings) { compressGoSettings = false; Screen.CompressSettings } else Screen.CompressHome
                 }
+                if (pendingPrintTool) {
+                    pendingPrintTool = false
+                    printUri = uri
+                    printImgW = loaded.width; printImgH = loaded.height
+                    printThumb = thumbOf(loaded)
+                    printPreview = loaded
+                    printName = queryDisplayName(context, uri) ?: "image"
+                    printLabel = ConvertFormats.detectFormat(context, uri)
+                    printOrigSize = querySourceSize(context, uri)
+                    printResultBytes = null; printSaved = false
+                    screen = if (printGoSetup) { printGoSetup = false; Screen.PrintSetup } else Screen.PrintHome
+                }
                 // Clear busy BEFORE the snackbar: showSnackbar suspends until dismissal,
                 // so gating busy on it left the Process button spinning for ~4s after every load.
                 busy = false
@@ -568,6 +616,8 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
             }
             if (testTool == "compress") pendingCompressTool = true
             if (testTool == "compresssettings") { pendingCompressTool = true; compressGoSettings = true }
+            if (testTool == "print") pendingPrintTool = true
+            if (testTool == "printsetup") { pendingPrintTool = true; printGoSetup = true }
             loadPhoto(Uri.fromFile(File(testPath)), isCamera = false)
         }
     }
@@ -1231,6 +1281,198 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
         compressGoSettings = false
     }
 
+    fun loadPrintPhoto(uri: Uri) {
+        scope.launch {
+            busy = true
+            busyLabel = "Loading photo…"
+            try {
+                val loaded = withContext(Dispatchers.IO) { decodeOrientedBitmap(context, uri) }
+                printUri = uri
+                printImgW = loaded.width; printImgH = loaded.height
+                printThumb = thumbOf(loaded)
+                printPreview = if (maxOf(loaded.width, loaded.height) > 1200) {
+                    val sc = 1200f / maxOf(loaded.width, loaded.height)
+                    Bitmap.createScaledBitmap(loaded, (loaded.width * sc).toInt().coerceAtLeast(1), (loaded.height * sc).toInt().coerceAtLeast(1), true)
+                } else loaded
+                printName = queryDisplayName(context, uri) ?: "image"
+                printLabel = ConvertFormats.detectFormat(context, uri)
+                printOrigSize = querySourceSize(context, uri)
+                printResultBytes = null; printSaved = false
+                screen = if (printGoSetup) { printGoSetup = false; Screen.PrintSetup } else Screen.PrintHome
+            } catch (e: Exception) {
+                snackbar.showSnackbar("Could not open that image.")
+            }
+            busy = false
+            busyLabel = ""
+        }
+    }
+
+    fun printDimsIn(): Pair<Double, Double> {
+        val p = PrintUtils.presets.firstOrNull { it.name == printPreset }
+        var wIn = p?.wIn ?: PrintUtils.toInches(printWText.replace(",", ".").toDoubleOrNull() ?: 0.0, printUnit)
+        var hIn = p?.hIn ?: PrintUtils.toInches(printHText.replace(",", ".").toDoubleOrNull() ?: 0.0, printUnit)
+        if (printLandscape && hIn > wIn) { val t = wIn; wIn = hIn; hIn = t }
+        if (!printLandscape && wIn > hIn) { val t = wIn; wIn = hIn; hIn = t }
+        return wIn to hIn
+    }
+
+    fun printImageAspect(): Double {
+        if (printImgW <= 0 || printImgH <= 0) return 0.0
+        val lo = minOf(printImgW, printImgH).toDouble()
+        val hi = maxOf(printImgW, printImgH).toDouble()
+        return if (printLandscape) hi / lo else lo / hi
+    }
+
+    fun printMultiCopyEligible(): Boolean {
+        val g = PrintUtils.presets.firstOrNull { it.name == printPreset }?.group
+        return g == "ID / Passport" || g == "Photo sizes"
+    }
+
+    fun printSheetDimsIn(): Pair<Double, Double> {
+        val sp = PrintUtils.presets.firstOrNull { it.name == printSheet } ?: PrintUtils.presets.first { it.name == "A4" }
+        var wIn = sp.wIn
+        var hIn = sp.hIn
+        if (printLandscape && hIn > wIn) { val t = wIn; wIn = hIn; hIn = t }
+        if (!printLandscape && wIn > hIn) { val t = wIn; wIn = hIn; hIn = t }
+        return wIn to hIn
+    }
+
+    /** Highest copy count achievable on the chosen sheet (tight layout included). */
+    fun printSheetMaxCount(): Int {
+        val (cW, cH) = printDimsIn()
+        val (sW, sH) = printSheetDimsIn()
+        val tight = PrintUtils.gridFit(sW, sH, cW, cH, 0.0, 0.0)
+        return tight[0] * tight[1]
+    }
+
+    /**
+     * Grid for the multi-copy sheet: [cols, rows, count, gapIn].
+     * Tries the comfortable 3 mm gap / 5 mm margin first; when the requested
+     * count only fits with the copies touching (real passport sheets are like
+     * that - cut guides are drawn between copies), falls back to a tight layout.
+     * count is 0 when nothing fits.
+     */
+    fun printSheetGrid(): IntArray {
+        val (cW, cH) = printDimsIn()
+        val (sW, sH) = printSheetDimsIn()
+        val fit = PrintUtils.gridFit(sW, sH, cW, cH, PrintUtils.SHEET_GAP_IN, PrintUtils.SHEET_MARGIN_IN)
+        val maxGapped = fit[0] * fit[1]
+        val tight = PrintUtils.gridFit(sW, sH, cW, cH, 0.0, 0.0)
+        val maxTight = tight[0] * tight[1]
+        val wanted = if (printCopyCount <= 0) maxGapped else printCopyCount
+        if (wanted <= 0) return intArrayOf(0, 0, 0, 0)
+        if (wanted <= maxGapped) {
+            val cols = minOf(fit[0], kotlin.math.ceil(kotlin.math.sqrt(wanted.toDouble())).toInt()).coerceAtLeast(1)
+            val rows = kotlin.math.ceil(wanted.toDouble() / cols).toInt()
+            return intArrayOf(cols, rows, wanted, 1)   // gap flag 1 = standard gap
+        }
+        if (wanted <= maxTight) {
+            val cols = minOf(tight[0], kotlin.math.ceil(kotlin.math.sqrt(wanted.toDouble())).toInt()).coerceAtLeast(1)
+            val rows = kotlin.math.ceil(wanted.toDouble() / cols).toInt()
+            return intArrayOf(cols, rows, wanted, 0)   // 0 = touching
+        }
+        return intArrayOf(0, 0, 0, 0)
+    }
+
+    fun applyPrintExport() {
+        val uri = printUri ?: return
+        val (wIn, hIn) = printDimsIn()
+        if (wIn <= 0 || hIn <= 0) { scope.launch { snackbar.showSnackbar("Enter a valid print size first.") }; return }
+        val sheetMode = printSheetOn && printMultiCopyEligible()
+        if (sheetMode && printSheetGrid()[2] <= 0) { scope.launch { snackbar.showSnackbar("That count does not fit on $printSheet - try fewer copies or A4.") }; return }
+        busy = true
+        busyLabel = "Preparing print file…"
+        scope.launch {
+            try {
+                val bleedIn = if (printBleedOn) PrintUtils.BLEED_IN else 0.0
+                val marginIn = if (printMarginsOn) PrintUtils.MARGIN_IN else 0.0
+                val bg = if (printBgWhite) android.graphics.Color.WHITE else android.graphics.Color.rgb(0xF2, 0xF2, 0xF2)
+                val result = withContext(Dispatchers.IO) {
+                    if (sheetMode) {
+                        val (sW, sH) = printSheetDimsIn()
+                        val g = printSheetGrid()
+                        val gapIn = if (g[3] == 1) PrintUtils.SHEET_GAP_IN else 0.0
+                        if (printFormat == "PDF") {
+                            buildPrintSheetPdf(context, uri, sW, sH, wIn, hIn, g[0], g[1], g[2], gapIn, printPpi, printFilename)
+                        } else {
+                            buildPrintSheetRaster(context, uri, sW, sH, wIn, hIn, g[0], g[1], g[2], gapIn, printPpi, printJpgQuality, printFormat, printFilename)
+                        }
+                    } else if (printFormat == "PDF") {
+                        buildPrintPdf(context, uri, wIn, hIn, bleedIn, marginIn, printFitMode, printPpi, printCropMarks, printFilename)
+                    } else {
+                        buildPrintRaster(context, uri, wIn, hIn, bleedIn, marginIn, bg, printFitMode, printPpi, printJpgQuality, printFormat, printFilename)
+                    }
+                }
+                printResultBytes = result.bytes
+                printResultName = result.name
+                printResultMime = result.mime
+                printResultDims = result.dims
+                printSaved = false
+            } catch (e: Exception) {
+                snackbar.showSnackbar("Could not create the print file: ${e.message ?: "unknown error"}")
+            }
+            busy = false
+            busyLabel = ""
+        }
+    }
+
+    fun savePrintResult() {
+        val bytes = printResultBytes ?: return
+        busy = true
+        busyLabel = "Saving…"
+        scope.launch {
+            try {
+                withContext(Dispatchers.IO) {
+                    if (printResultMime == "application/pdf") saveToDownloads(context, printResultName, printResultMime, bytes)
+                    else saveToGallery(context, printResultName, printResultMime, bytes)
+                }
+                printSaved = true
+                busy = false
+                busyLabel = ""
+                snackbar.showSnackbar("Saved $printResultName. Your original is unchanged.")
+            } catch (e: Exception) {
+                busy = false
+                busyLabel = ""
+                snackbar.showSnackbar("Save failed: ${e.message ?: "unknown error"}")
+            }
+        }
+    }
+
+    fun sharePrintResult() {
+        val bytes = printResultBytes ?: return
+        scope.launch {
+            try {
+                val shareUri = withContext(Dispatchers.IO) {
+                    val dir = File(context.cacheDir, "images").apply { mkdirs() }
+                    val file = File(dir, printResultName)
+                    FileOutputStream(file).use { it.write(bytes) }
+                    FileProvider.getUriForFile(context, context.packageName + ".fileprovider", file)
+                }
+                val intent = Intent(Intent.ACTION_SEND).apply {
+                    type = printResultMime
+                    putExtra(Intent.EXTRA_STREAM, shareUri)
+                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                }
+                context.startActivity(Intent.createChooser(intent, "Share print file"))
+            } catch (e: Exception) {
+                snackbar.showSnackbar("Share failed: ${e.message ?: "unknown error"}")
+            }
+        }
+    }
+
+    fun resetPrint() {
+        printUri = null; printThumb = null; printPreview = null
+        printName = "image"; printLabel = ""; printOrigSize = -1L
+        printImgW = 0; printImgH = 0
+        printPreset = "A4"; printUnit = "in"; printWText = ""; printHText = ""
+        printLandscape = false; printLockAspect = true; printBleedOn = false
+        printPpi = 300; printFitMode = "Fit"; printMarginsOn = false; printCropMarks = false
+        printBgWhite = true; printFormat = "JPG"; printFilename = "print-ready"; printJpgQuality = 92
+        printResultBytes = null; printResultName = ""; printResultMime = ""; printResultDims = ""
+        printSheetOn = false; printSheet = "4 × 6"; printCopyCount = 4
+        printSaved = false; printGoSetup = false
+    }
+
     fun saveConvertResult() {
         val fmt = convertTarget
         val batch = convertBatchResults
@@ -1870,6 +2112,9 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
     val convertPdfPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         uri?.let { loadPdfInput(it) }
     }
+    val printPicker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
+        if (uri != null) loadPrintPhoto(uri)
+    }
     val compressPicker = rememberLauncherForActivityResult(ActivityResultContracts.PickMultipleVisualMedia(20)) { uris ->
         if (uris.isNotEmpty()) loadCompressPhotos(uris)
     }
@@ -2065,6 +2310,10 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
             Screen.ConvertHome -> { resetConvert(); screen = Screen.Home }
             Screen.CompressResult -> screen = Screen.CompressSettings
             Screen.CompressSettings -> screen = Screen.CompressHome
+            Screen.PrintExport -> screen = Screen.PrintPreview
+            Screen.PrintPreview -> screen = Screen.PrintSetup
+            Screen.PrintSetup -> screen = Screen.PrintHome
+            Screen.PrintHome -> { resetPrint(); screen = Screen.Home }
             Screen.CompressHome -> { resetCompress(); screen = Screen.Home }
             else -> screen = Screen.Home
         }
@@ -2160,7 +2409,7 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
         containerColor = MaterialTheme.colorScheme.background,
         snackbarHost = { SnackbarHost(snackbar) },
         topBar = {
-            if (screen == Screen.Editor || screen == Screen.Export || screen == Screen.Print || screen == Screen.QueueOverview || screen == Screen.QueueResult || screen == Screen.Success || screen == Screen.SocialHome || screen == Screen.SocialPlatform || screen == Screen.SocialEdit || screen == Screen.ShopHome || screen == Screen.ShopOther || screen == Screen.ShopPlatform || screen == Screen.ShopEdit || screen == Screen.ShopCollage || screen == Screen.ConvertHome || screen == Screen.ConvertEdit || screen == Screen.ConvertResult || screen == Screen.CompressHome || screen == Screen.CompressSettings || screen == Screen.CompressResult) {
+            if (screen == Screen.Editor || screen == Screen.Export || screen == Screen.PrintHome || screen == Screen.PrintSetup || screen == Screen.PrintPreview || screen == Screen.PrintExport || screen == Screen.QueueOverview || screen == Screen.QueueResult || screen == Screen.Success || screen == Screen.SocialHome || screen == Screen.SocialPlatform || screen == Screen.SocialEdit || screen == Screen.ShopHome || screen == Screen.ShopOther || screen == Screen.ShopPlatform || screen == Screen.ShopEdit || screen == Screen.ShopCollage || screen == Screen.ConvertHome || screen == Screen.ConvertEdit || screen == Screen.ConvertResult || screen == Screen.CompressHome || screen == Screen.CompressSettings || screen == Screen.CompressResult) {
                 TopAppBar(
                     title = {
                         Text(
@@ -2184,6 +2433,10 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                                 Screen.CompressHome -> "Image Compressor"
                                 Screen.CompressSettings -> "Compression Settings"
                                 Screen.CompressResult -> "Compression Results"
+                                Screen.PrintHome -> "Print Size & DPI"
+                                Screen.PrintSetup -> "Print Setup"
+                                Screen.PrintPreview -> "Print Preview"
+                                Screen.PrintExport -> "Export Print File"
                                 else -> "Print Size & DPI"
                             },
                             fontWeight = FontWeight.SemiBold
@@ -2211,6 +2464,10 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                                 Screen.ConvertHome -> { resetConvert(); screen = Screen.Home }
                                 Screen.CompressResult -> screen = Screen.CompressSettings
                                 Screen.CompressSettings -> screen = Screen.CompressHome
+                                Screen.PrintExport -> screen = Screen.PrintPreview
+                                Screen.PrintPreview -> screen = Screen.PrintSetup
+                                Screen.PrintSetup -> screen = Screen.PrintHome
+                                Screen.PrintHome -> { resetPrint(); screen = Screen.Home }
                                 Screen.CompressHome -> { resetCompress(); screen = Screen.Home }
                                 else -> screen = Screen.Home
                             }
@@ -2260,6 +2517,14 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                                     .padding(horizontal = 14.dp),
                                 color = DeepNavy
                             )
+                        } else if (screen == Screen.PrintSetup) {
+                            Text(
+                                "Reset",
+                                modifier = Modifier
+                                    .clickable { resetPrint(); screen = Screen.PrintHome }
+                                    .padding(horizontal = 14.dp),
+                                color = DeepNavy
+                            )
                         } else if (screen == Screen.ShopCollage) {
                             Text(
                                 "Reset",
@@ -2301,11 +2566,11 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                     onSelectPhotos = { pickPhotos() },
                     onTakePhoto = { openCamera() },
                     onRecent = { uri -> loadPhoto(uri, isCamera = false) },
-                    onPrint = { screen = Screen.Print },
+                    onPrint = { resetPrint(); screen = Screen.PrintHome },
                     onFeature = { feature ->
                         when (feature) {
                             "Resize" -> pickPhotos()
-                            "Print Size & DPI" -> screen = Screen.Print
+                            "Print Size & DPI" -> { resetPrint(); screen = Screen.PrintHome }
                             "Social Media Sizes" -> screen = Screen.SocialHome
                             "Online Shop Sizes" -> screen = Screen.ShopHome
                             "Format Converter" -> screen = Screen.ConvertHome
@@ -2805,19 +3070,147 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                 onSave = { saveCompressResult() },
                 onAgain = { resetCompress(); screen = Screen.CompressHome }
             )
-            Screen.Print -> PrintCalculator(
+            Screen.PrintHome -> PrintHomeScreen(
                 modifier = Modifier.padding(padding),
-                hasPhoto = workingBitmap != null,
-                onApply = { pxW, pxH ->
-                    if (workingBitmap != null) {
-                        applyTarget(pxW, pxH)
-                        screen = Screen.Editor
-                        tool = Tool.Resize
-                    } else {
-                        scope.launch { snackbar.showSnackbar("Select a photo to apply a print-size calculation.") }
-                    }
-                }
+                thumb = printThumb,
+                name = printName,
+                label = printLabel,
+                sizeBytes = printOrigSize,
+                imgW = printImgW,
+                imgH = printImgH,
+                onPick = { printPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
+                onContinue = { screen = Screen.PrintSetup }
             )
+            Screen.PrintSetup -> {
+                val (pwIn, phIn) = printDimsIn()
+                PrintSetupScreen(
+                    modifier = Modifier.padding(padding),
+                    preset = printPreset,
+                    onPreset = {
+                        printPreset = it
+                        if (PrintUtils.presets.firstOrNull { p -> p.name == it }?.group == "ID / Passport") printSheetOn = true
+                    },
+                    unit = printUnit,
+                    onUnit = { printUnit = it },
+                    wText = printWText,
+                    onWText = { v ->
+                        printWText = v
+                        printPreset = "Custom"
+                        val w = v.replace(",", ".").toDoubleOrNull()
+                        val a = printImageAspect()
+                        if (printLockAspect && w != null && w > 0 && a > 0) {
+                            printHText = PrintUtils.fmtDim(PrintUtils.toInches(w, printUnit) / a, printUnit)
+                        }
+                    },
+                    hText = printHText,
+                    onHText = { v ->
+                        printHText = v
+                        printPreset = "Custom"
+                        val h = v.replace(",", ".").toDoubleOrNull()
+                        val a = printImageAspect()
+                        if (printLockAspect && h != null && h > 0 && a > 0) {
+                            printWText = PrintUtils.fmtDim(PrintUtils.toInches(h, printUnit) * a, printUnit)
+                        }
+                    },
+                    landscape = printLandscape,
+                    onLandscape = { printLandscape = it },
+                    lockAspect = printLockAspect,
+                    onLockAspect = { printLockAspect = it },
+                    bleedOn = printBleedOn,
+                    onBleedOn = { printBleedOn = it },
+                    ppi = printPpi,
+                    onPpi = { printPpi = it },
+                    fitMode = printFitMode,
+                    onFitMode = { printFitMode = it },
+                    imgW = printImgW,
+                    imgH = printImgH,
+                    wIn = pwIn,
+                    hIn = phIn,
+                    aspect = printImageAspect(),
+                    onResetProportions = {
+                        val a = printImageAspect()
+                        val w = printWText.replace(",", ".").toDoubleOrNull()
+                        val h = printHText.replace(",", ".").toDoubleOrNull()
+                        if (a > 0 && w != null && w > 0) {
+                            printHText = PrintUtils.fmtDim(PrintUtils.toInches(w, printUnit) / a, printUnit)
+                        } else if (a > 0 && h != null && h > 0) {
+                            printWText = PrintUtils.fmtDim(PrintUtils.toInches(h, printUnit) * a, printUnit)
+                        }
+                        printPreset = "Custom"
+                    },
+                    multiCopy = printMultiCopyEligible(),
+                    sheetOn = printSheetOn,
+                    onSheetOn = { printSheetOn = it },
+                    sheet = printSheet,
+                    onSheet = { printSheet = it },
+                    copyCount = printCopyCount,
+                    onCopyCount = { printCopyCount = it },
+                    maxCount = printSheetMaxCount(),
+                    gridCount = printSheetGrid()[2],
+                    onContinue = { screen = Screen.PrintPreview }
+                )
+            }
+            Screen.PrintPreview -> {
+                val (vwIn, vhIn) = printDimsIn()
+                PrintPreviewScreen(
+                    modifier = Modifier.padding(padding),
+                    preview = printPreview,
+                    wIn = vwIn,
+                    hIn = vhIn,
+                    preset = printPreset,
+                    landscape = printLandscape,
+                    ppi = printPpi,
+                    fitMode = printFitMode,
+                    onFitMode = { printFitMode = it },
+                    marginsOn = printMarginsOn,
+                    onMarginsOn = { printMarginsOn = it },
+                    bleedOn = printBleedOn,
+                    onBleedOn = { printBleedOn = it },
+                    cropMarks = printCropMarks,
+                    onCropMarks = { printCropMarks = it },
+                    bgWhite = printBgWhite,
+                    onBgWhite = { printBgWhite = it },
+                    sheetMode = printSheetOn && printMultiCopyEligible(),
+                    sheet = printSheet,
+                    grid = printSheetGrid(),
+                    sheetWIn = printSheetDimsIn().first,
+                    sheetHIn = printSheetDimsIn().second,
+                    onContinue = { screen = Screen.PrintExport }
+                )
+            }
+            Screen.PrintExport -> {
+                val (ewIn, ehIn) = printDimsIn()
+                PrintExportScreen(
+                    modifier = Modifier.padding(padding),
+                    format = printFormat,
+                    onFormat = { printFormat = it },
+                    filename = printFilename,
+                    onFilename = { printFilename = it },
+                    jpgQuality = printJpgQuality,
+                    onJpgQuality = { printJpgQuality = it },
+                    wIn = ewIn,
+                    hIn = ehIn,
+                    ppi = printPpi,
+                    bleedOn = printBleedOn,
+                    marginsOn = printMarginsOn,
+                    cropMarks = printCropMarks,
+                    imgW = printImgW,
+                    imgH = printImgH,
+                    sheetMode = printSheetOn && printMultiCopyEligible(),
+                    grid = printSheetGrid(),
+                    sheet = printSheet,
+                    resultReady = printResultBytes != null,
+                    resultName = printResultName,
+                    resultSize = printResultBytes?.size?.toLong() ?: -1L,
+                    resultDims = printResultDims,
+                    saved = printSaved,
+                    busy = busy,
+                    onCreate = { applyPrintExport() },
+                    onSave = { savePrintResult() },
+                    onShare = { sharePrintResult() },
+                    onAgain = { resetPrint(); screen = Screen.PrintHome }
+                )
+            }
             Screen.Success -> SuccessScreen(
                 modifier = Modifier.padding(padding),
                 name = savedName,
@@ -2887,7 +3280,7 @@ private fun HomeScreen(
         Feature("Format Converter", "Any format to any format", "⇄"),
         Feature("Compress", "Reduce file size", "↓"),
         Feature("Batch Resize", "Process many photos", "▤"),
-        Feature("Print Size & DPI", "Calculate print dimensions", "◉")
+        Feature("Print Size & DPI", "Ready images for printing", "◉")
     )
     Column(modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).padding(horizontal = 16.dp).verticalScroll(rememberScrollState())) {
         Row(Modifier.fillMaxWidth().padding(top = 12.dp, bottom = 12.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -4776,40 +5169,6 @@ private fun SettingsScreen(modifier: Modifier, darkMode: Boolean, onDarkMode: (B
     }
 }
 
-@Composable
-private fun PrintCalculator(modifier: Modifier, hasPhoto: Boolean, onApply: (Int, Int) -> Unit) {
-    var width by rememberSaveable { mutableStateOf("20") }
-    var height by rememberSaveable { mutableStateOf("25") }
-    var dpi by rememberSaveable { mutableStateOf("300") }
-    val w = width.toDoubleOrNull()
-    val h = height.toDoubleOrNull()
-    val density = dpi.toDoubleOrNull()
-    val pxW = if (w != null && density != null && w > 0 && density > 0) (w / 2.54 * density).toInt() else null
-    val pxH = if (h != null && density != null && h > 0 && density > 0) (h / 2.54 * density).toInt() else null
-    Column(modifier.fillMaxSize().padding(18.dp).verticalScroll(rememberScrollState())) {
-        Text("Print Size & DPI", color = DeepNavy, fontSize = 26.sp, fontWeight = FontWeight.Bold)
-        Text("Print size → required pixels", color = Slate, modifier = Modifier.padding(top = 4.dp, bottom = 18.dp))
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlinedTextField(width, { width = it }, modifier = Modifier.weight(1f), label = { Text("Width (cm)") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), singleLine = true)
-            OutlinedTextField(height, { height = it }, modifier = Modifier.weight(1f), label = { Text("Height (cm)") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), singleLine = true)
-        }
-        OutlinedTextField(dpi, { dpi = it }, modifier = Modifier.fillMaxWidth().padding(top = 8.dp), label = { Text("DPI") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), singleLine = true)
-        Card(modifier = Modifier.fillMaxWidth().padding(top = 18.dp), colors = CardDefaults.cardColors(containerColor = PaleBlue)) {
-            Column(Modifier.padding(18.dp)) {
-                Text(if (pxW != null && pxH != null) "$pxW × $pxH px" else "Enter valid values", color = DeepNavy, fontSize = 22.sp, fontWeight = FontWeight.Bold)
-                Text("${width} × ${height} cm at ${dpi} DPI", color = Slate, fontSize = 13.sp)
-            }
-        }
-        Text("Changing DPI alone does not add image detail. This calculator estimates the pixels needed for a print.", color = Slate, fontSize = 12.sp, modifier = Modifier.padding(vertical = 14.dp))
-        Button(
-            onClick = { if (pxW != null && pxH != null) onApply(pxW, pxH) },
-            modifier = Modifier.fillMaxWidth().height(52.dp),
-            colors = ButtonDefaults.buttonColors(containerColor = Orange),
-            enabled = pxW != null && pxH != null
-        ) { Text(if (hasPhoto) "Apply to photo" else "Select a photo first", color = Color.White) }
-    }
-}
-
 /**
  * Interactive crop frame over the photo: dimmed outside area, rule-of-thirds
  * grid, big corner handles. Drag a corner to resize (aspect lock honored),
@@ -5277,6 +5636,127 @@ private fun querySourceSize(context: Context, uri: Uri): Long {
     } catch (e: Exception) {
         -1L
     }
+}
+
+private data class PrintOutput(val bytes: ByteArray, val name: String, val mime: String, val dims: String)
+
+private fun encodePrintRaster(bmp: Bitmap, format: String, quality: Int, bg: Int, filename: String, wPx: Int, hPx: Int, extraDims: String): PrintOutput {
+    val baos = java.io.ByteArrayOutputStream()
+    if (format == "PNG") {
+        bmp.compress(Bitmap.CompressFormat.PNG, 100, baos)
+    } else {
+        ConvertFormats.flatten(bmp, bg).compress(Bitmap.CompressFormat.JPEG, quality.coerceIn(1, 100), baos)
+    }
+    val ext = if (format == "PNG") "png" else "jpg"
+    return PrintOutput(baos.toByteArray(), "$filename.$ext", if (format == "PNG") "image/png" else "image/jpeg", "$wPx × $hPx px$extraDims")
+}
+
+private fun buildPrintRaster(context: Context, uri: Uri, wIn: Double, hIn: Double, bleedIn: Double, marginIn: Double, bg: Int, mode: String, ppi: Int, quality: Int, format: String, filename: String): PrintOutput {
+    val src = decodeOrientedBitmap(context, uri)
+    val totalWIn = wIn + bleedIn * 2
+    val totalHIn = hIn + bleedIn * 2
+    val req = PrintUtils.requiredPixels(totalWIn, totalHIn, ppi)
+    val capped = PrintUtils.cappedPixels(req[0], req[1])
+    val wasCapped = capped[0] != req[0] || capped[1] != req[1]
+    val marginPxX = (marginIn * capped[0] / totalWIn).toInt()
+    val marginPxY = (marginIn * capped[1] / totalHIn).toInt()
+    val areaW = (capped[0] - marginPxX * 2).coerceAtLeast(1)
+    val areaH = (capped[1] - marginPxY * 2).coerceAtLeast(1)
+    val placed = PrintUtils.renderPrint(src, areaW, areaH, mode, if (format == "PNG") android.graphics.Color.TRANSPARENT else bg)
+    val out = Bitmap.createBitmap(capped[0], capped[1], Bitmap.Config.ARGB_8888)
+    val c = android.graphics.Canvas(out)
+    c.drawColor(if (format == "PNG") android.graphics.Color.TRANSPARENT else bg)
+    c.drawBitmap(placed, marginPxX.toFloat(), marginPxY.toFloat(), null)
+    return encodePrintRaster(out, format, quality, bg, filename, capped[0], capped[1], if (wasCapped) " (scaled to fit device memory)" else "")
+}
+
+private fun buildPrintSheetRaster(context: Context, uri: Uri, sheetWIn: Double, sheetHIn: Double, cellWIn: Double, cellHIn: Double, cols: Int, rows: Int, count: Int, gapIn: Double, ppi: Int, quality: Int, format: String, filename: String): PrintOutput {
+    val src = decodeOrientedBitmap(context, uri)
+    val req = PrintUtils.requiredPixels(sheetWIn, sheetHIn, ppi)
+    val capped = PrintUtils.cappedPixels(req[0], req[1])
+    val wasCapped = capped[0] != req[0] || capped[1] != req[1]
+    val cellWPx = (cellWIn * capped[0] / sheetWIn).toInt().coerceAtLeast(1)
+    val cellHPx = (cellHIn * capped[1] / sheetHIn).toInt().coerceAtLeast(1)
+    val gapPx = (gapIn * capped[0] / sheetWIn).toInt()
+    val sheet = PrintUtils.renderSheet(src, capped[0], capped[1], cellWPx, cellHPx, cols, rows, gapPx, true, count)
+    return encodePrintRaster(sheet, format, quality, android.graphics.Color.WHITE, filename, capped[0], capped[1],
+        " · $count ${if (count == 1) "copy" else "copies"} ($cols × $rows)" + (if (wasCapped) " (scaled to fit device memory)" else ""))
+}
+
+private fun buildPrintPdf(context: Context, uri: Uri, wIn: Double, hIn: Double, bleedIn: Double, marginIn: Double, mode: String, ppi: Int, cropMarks: Boolean, filename: String): PrintOutput {
+    val src = decodeOrientedBitmap(context, uri)
+    val pageWIn = wIn + bleedIn * 2
+    val pageHIn = hIn + bleedIn * 2
+    val pageWPt = (pageWIn * 72).toInt().coerceAtLeast(1)
+    val pageHPt = (pageHIn * 72).toInt().coerceAtLeast(1)
+    val areaWIn = (pageWIn - marginIn * 2).coerceAtLeast(0.1)
+    val areaHIn = (pageHIn - marginIn * 2).coerceAtLeast(0.1)
+    val req0 = PrintUtils.requiredPixels(areaWIn, areaHIn, ppi)
+    val req = PrintUtils.cappedPixels(req0[0], req0[1])
+    val placed = PrintUtils.renderPrint(src, req[0], req[1], mode, android.graphics.Color.WHITE)
+    val doc = PdfDocument()
+    val page = doc.startPage(PdfDocument.PageInfo.Builder(pageWPt, pageHPt, 1).create())
+    val canvas = page.canvas
+    canvas.drawColor(android.graphics.Color.WHITE)
+    val left = (marginIn * 72).toFloat()
+    val top = (marginIn * 72).toFloat()
+    canvas.drawBitmap(placed, null, android.graphics.RectF(left, top, pageWPt - left, pageHPt - top), android.graphics.Paint(android.graphics.Paint.FILTER_BITMAP_FLAG))
+    if (cropMarks && bleedIn > 0) {
+        val paint = android.graphics.Paint().apply { color = android.graphics.Color.BLACK; strokeWidth = 0.7f }
+        val t = (bleedIn * 72).toFloat()
+        val len = 12f
+        val off = 4f
+        canvas.drawLine(t - off - len, t, t - off, t, paint)
+        canvas.drawLine(t, t - off - len, t, t - off, paint)
+        canvas.drawLine(pageWPt - t + off, t, pageWPt - t + off + len, t, paint)
+        canvas.drawLine(pageWPt - t, t - off - len, pageWPt - t, t - off, paint)
+        canvas.drawLine(t - off - len, pageHPt - t, t - off, pageHPt - t, paint)
+        canvas.drawLine(t, pageHPt - t + off, t, pageHPt - t + off + len, paint)
+        canvas.drawLine(pageWPt - t + off, pageHPt - t, pageWPt - t + off + len, pageHPt - t, paint)
+        canvas.drawLine(pageWPt - t, pageHPt - t + off, pageWPt - t, pageHPt - t + off + len, paint)
+    }
+    doc.finishPage(page)
+    val baos = java.io.ByteArrayOutputStream()
+    doc.writeTo(baos)
+    doc.close()
+    val dims = "${PrintUtils.fmtDim(pageWIn, "in")} × ${PrintUtils.fmtDim(pageHIn, "in")} in PDF page"
+    return PrintOutput(baos.toByteArray(), "$filename.pdf", "application/pdf", dims)
+}
+
+private fun buildPrintSheetPdf(context: Context, uri: Uri, sheetWIn: Double, sheetHIn: Double, cellWIn: Double, cellHIn: Double, cols: Int, rows: Int, count: Int, gapIn: Double, ppi: Int, filename: String): PrintOutput {
+    val src = decodeOrientedBitmap(context, uri)
+    val cellPx0 = PrintUtils.requiredPixels(cellWIn, cellHIn, ppi)
+    val cellPx = PrintUtils.cappedPixels(cellPx0[0], cellPx0[1])
+    val cell = PrintUtils.renderPrint(src, cellPx[0], cellPx[1], "Fill", android.graphics.Color.WHITE)
+    val pageWPt = (sheetWIn * 72).toInt().coerceAtLeast(1)
+    val pageHPt = (sheetHIn * 72).toInt().coerceAtLeast(1)
+    val doc = PdfDocument()
+    val page = doc.startPage(PdfDocument.PageInfo.Builder(pageWPt, pageHPt, 1).create())
+    val canvas = page.canvas
+    canvas.drawColor(android.graphics.Color.WHITE)
+    val cellWPt = (cellWIn * 72).toFloat()
+    val cellHPt = (cellHIn * 72).toFloat()
+    val gapPt = (gapIn * 72).toFloat()
+    val gridW = cols * cellWPt + (cols - 1) * gapPt
+    val gridH = rows * cellHPt + (rows - 1) * gapPt
+    val startX = (pageWPt - gridW) / 2f
+    val startY = (pageHPt - gridH) / 2f
+    val paint = android.graphics.Paint(android.graphics.Paint.FILTER_BITMAP_FLAG)
+    val guide = android.graphics.Paint().apply { color = android.graphics.Color.LTGRAY; style = android.graphics.Paint.Style.STROKE; strokeWidth = 0.5f }
+    for (i in 0 until count) {
+        val r = i / cols
+        val c = i % cols
+        val x = startX + c * (cellWPt + gapPt)
+        val y = startY + r * (cellHPt + gapPt)
+        canvas.drawBitmap(cell, null, android.graphics.RectF(x, y, x + cellWPt, y + cellHPt), paint)
+        canvas.drawRect(x, y, x + cellWPt, y + cellHPt, guide)
+    }
+    doc.finishPage(page)
+    val baos = java.io.ByteArrayOutputStream()
+    doc.writeTo(baos)
+    doc.close()
+    val dims = "$count ${if (count == 1) "copy" else "copies"} ($cols × $rows) · ${PrintUtils.fmtDim(sheetWIn, "in")} × ${PrintUtils.fmtDim(sheetHIn, "in")} in PDF page"
+    return PrintOutput(baos.toByteArray(), "$filename.pdf", "application/pdf", dims)
 }
 
 fun queryDisplayName(context: android.content.Context, uri: android.net.Uri): String? {
@@ -6788,5 +7268,571 @@ private fun CompressResultScreen(
             Text("Compress Another", color = DeepNavy)
         }
         Spacer(Modifier.height(24.dp))
+    }
+}
+
+
+// ---------------- Print Size & DPI screens (v0.15.0) ----------------
+
+@Composable
+private fun PrintHomeScreen(
+    modifier: Modifier = Modifier,
+    thumb: Bitmap?,
+    name: String,
+    label: String,
+    sizeBytes: Long,
+    imgW: Int,
+    imgH: Int,
+    onPick: () -> Unit,
+    onContinue: () -> Unit
+) {
+    Column(modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).padding(horizontal = 16.dp).verticalScroll(rememberScrollState())) {
+        Spacer(Modifier.height(10.dp))
+        Text("Prepare images for printing at the right size and resolution.", fontSize = 15.sp, color = Slate)
+        Spacer(Modifier.height(16.dp))
+        Card(colors = CardDefaults.cardColors(containerColor = PaleBlue), shape = RoundedCornerShape(14.dp)) {
+            Column(Modifier.fillMaxWidth().padding(18.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                if (thumb == null) {
+                    Text("Select Your Image", fontWeight = FontWeight.Bold, color = DeepNavy, fontSize = 17.sp)
+                    Spacer(Modifier.height(4.dp))
+                    Text("Choose a photo, artwork, document image or design from your phone.", fontSize = 13.sp, color = Slate, textAlign = TextAlign.Center)
+                    Spacer(Modifier.height(14.dp))
+                    Button(onClick = onPick, colors = ButtonDefaults.buttonColors(containerColor = SkyBlue)) { Text("Choose Image", color = Color.White) }
+                } else {
+                    Image(bitmap = thumb.asImageBitmap(), contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.size(120.dp))
+                    Spacer(Modifier.height(10.dp))
+                    Text(name, fontWeight = FontWeight.SemiBold, color = DeepNavy, fontSize = 15.sp, maxLines = 1)
+                    Text(
+                        "$imgW × $imgH px" + (if (label.isNotBlank()) " · $label" else "") + (if (sizeBytes > 0) " · ${formatBytes(sizeBytes)}" else ""),
+                        fontSize = 13.sp, color = Slate
+                    )
+                    Spacer(Modifier.height(10.dp))
+                    OutlinedButton(onClick = onPick) { Text("Change", color = DeepNavy) }
+                }
+            }
+        }
+        Spacer(Modifier.height(16.dp))
+        Button(
+            onClick = onContinue,
+            enabled = thumb != null,
+            modifier = Modifier.fillMaxWidth().height(52.dp),
+            colors = ButtonDefaults.buttonColors(containerColor = SkyBlue),
+            shape = RoundedCornerShape(12.dp)
+        ) { Text("Set Up Print Size", color = Color.White, fontWeight = FontWeight.Bold) }
+        Spacer(Modifier.height(14.dp))
+        Card(colors = CardDefaults.cardColors(containerColor = SoftGrey), shape = RoundedCornerShape(12.dp)) {
+            Text(
+                "Your original image remains unchanged. Print files are always saved as new files.",
+                fontSize = 13.sp, color = Slate, modifier = Modifier.padding(14.dp)
+            )
+        }
+        Spacer(Modifier.height(20.dp))
+    }
+}
+
+@Composable
+private fun PrintPresetChip(name: String, desc: String, selected: Boolean, onClick: () -> Unit) {
+    Card(
+        colors = CardDefaults.cardColors(containerColor = if (selected) PaleBlue else SoftGrey),
+        shape = RoundedCornerShape(10.dp),
+        modifier = Modifier
+            .padding(end = 8.dp, bottom = 8.dp)
+            .border(if (selected) 2.dp else 0.dp, if (selected) SkyBlue else Color.Transparent, RoundedCornerShape(10.dp))
+            .clickable { onClick() }
+    ) {
+        Column(Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
+            Text(name, fontWeight = FontWeight.Bold, color = DeepNavy, fontSize = 14.sp)
+            Text(desc, fontSize = 11.sp, color = Slate)
+        }
+    }
+}
+
+@Composable
+private fun PrintSetupScreen(
+    modifier: Modifier = Modifier,
+    preset: String,
+    onPreset: (String) -> Unit,
+    unit: String,
+    onUnit: (String) -> Unit,
+    wText: String,
+    onWText: (String) -> Unit,
+    hText: String,
+    onHText: (String) -> Unit,
+    landscape: Boolean,
+    onLandscape: (Boolean) -> Unit,
+    lockAspect: Boolean,
+    onLockAspect: (Boolean) -> Unit,
+    bleedOn: Boolean,
+    onBleedOn: (Boolean) -> Unit,
+    ppi: Int,
+    onPpi: (Int) -> Unit,
+    fitMode: String,
+    onFitMode: (String) -> Unit,
+    imgW: Int,
+    imgH: Int,
+    wIn: Double,
+    hIn: Double,
+    aspect: Double,
+    onResetProportions: () -> Unit,
+    multiCopy: Boolean,
+    sheetOn: Boolean,
+    onSheetOn: (Boolean) -> Unit,
+    sheet: String,
+    onSheet: (String) -> Unit,
+    copyCount: Int,
+    onCopyCount: (Int) -> Unit,
+    maxCount: Int,
+    gridCount: Int,
+    onContinue: () -> Unit
+) {
+    val effPpi = PrintUtils.effectivePpi(imgW, imgH, wIn, hIn)
+    val req = if (wIn > 0 && hIn > 0) PrintUtils.requiredPixels(wIn, hIn, ppi) else intArrayOf(0, 0)
+    val quality = PrintUtils.qualityLevel(effPpi, ppi)
+    val ratioMismatch = wIn > 0 && hIn > 0 && aspect > 0 && kotlin.math.abs((wIn / hIn) - aspect) / aspect > 0.02
+
+    Column(modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).padding(horizontal = 16.dp).verticalScroll(rememberScrollState())) {
+        Spacer(Modifier.height(10.dp))
+        Text("Choose the print size", fontWeight = FontWeight.Bold, color = DeepNavy, fontSize = 17.sp)
+        Spacer(Modifier.height(10.dp))
+        listOf("Paper sizes", "Paper sizes (US)", "Photo sizes", "ID / Passport", "Square", "Posters").forEach { group ->
+            Text(group, fontWeight = FontWeight.SemiBold, color = Slate, fontSize = 13.sp)
+            Spacer(Modifier.height(6.dp))
+            Row(Modifier.horizontalScroll(rememberScrollState())) {
+                PrintUtils.presets.filter { it.group == group }.forEach { p ->
+                    PrintPresetChip(p.name, p.desc, preset == p.name) { onPreset(p.name) }
+                }
+            }
+            Spacer(Modifier.height(4.dp))
+        }
+        Spacer(Modifier.height(6.dp))
+        Card(colors = CardDefaults.cardColors(containerColor = SoftGrey), shape = RoundedCornerShape(12.dp)) {
+            Column(Modifier.fillMaxWidth().padding(14.dp)) {
+                Text("Custom size", fontWeight = FontWeight.SemiBold, color = DeepNavy, fontSize = 15.sp)
+                Spacer(Modifier.height(8.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(
+                        wText, onWText,
+                        modifier = Modifier.weight(1f),
+                        label = { Text("Width ($unit)") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                        singleLine = true
+                    )
+                    OutlinedTextField(
+                        hText, onHText,
+                        modifier = Modifier.weight(1f),
+                        label = { Text("Height ($unit)") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                        singleLine = true
+                    )
+                }
+                Spacer(Modifier.height(8.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    listOf("in", "cm", "mm").forEach { u ->
+                        PrintPresetChip(u, if (u == "in") "inches" else if (u == "cm") "centimeters" else "millimeters", unit == u) { onUnit(u) }
+                    }
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    PrintPresetChip("Portrait", "taller than wide", !landscape) { onLandscape(false) }
+                    PrintPresetChip("Landscape", "wider than tall", landscape) { onLandscape(true) }
+                }
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Keep aspect ratio", fontWeight = FontWeight.SemiBold, color = DeepNavy, fontSize = 14.sp)
+                        Text("Changing one side calculates the other.", fontSize = 12.sp, color = Slate)
+                    }
+                    Switch(checked = lockAspect, onCheckedChange = onLockAspect, colors = SwitchDefaults.colors(checkedTrackColor = SkyBlue))
+                }
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Bleed allowance", fontWeight = FontWeight.SemiBold, color = DeepNavy, fontSize = 14.sp)
+                        Text("Adds 3 mm on each side for professional printing.", fontSize = 12.sp, color = Slate)
+                    }
+                    Switch(checked = bleedOn, onCheckedChange = onBleedOn, colors = SwitchDefaults.colors(checkedTrackColor = SkyBlue))
+                }
+                TextButton(onClick = onResetProportions, enabled = aspect > 0) { Text("Reset to original proportions", color = SkyBlue) }
+            }
+        }
+        if (multiCopy && maxCount > 1) {
+            Spacer(Modifier.height(12.dp))
+            Card(colors = CardDefaults.cardColors(containerColor = PaleBlue), shape = RoundedCornerShape(12.dp)) {
+                Column(Modifier.fillMaxWidth().padding(14.dp)) {
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text("Multiple copies on one sheet", fontWeight = FontWeight.SemiBold, color = DeepNavy, fontSize = 15.sp)
+                            Text("Neat grid with cutting guides.", fontSize = 12.sp, color = Slate)
+                        }
+                        Switch(checked = sheetOn, onCheckedChange = onSheetOn, colors = SwitchDefaults.colors(checkedTrackColor = SkyBlue))
+                    }
+                    if (sheetOn) {
+                        Spacer(Modifier.height(6.dp))
+                        Text("Sheet", fontSize = 12.sp, color = Slate)
+                        Row(Modifier.horizontalScroll(rememberScrollState())) {
+                            listOf("A4", "4 × 6", "5 × 7").forEach { sh ->
+                                PrintPresetChip(sh, "sheet", sheet == sh) { onSheet(sh) }
+                            }
+                        }
+                        Text("Copies", fontSize = 12.sp, color = Slate)
+                        Row(Modifier.horizontalScroll(rememberScrollState())) {
+                            listOf(4, 6, 8).filter { it <= maxCount }.forEach { n ->
+                                PrintPresetChip("$n", "copies", copyCount == n) { onCopyCount(n) }
+                            }
+                            PrintPresetChip("Max", "$maxCount fit", copyCount <= 0 || copyCount > maxCount) { onCopyCount(0) }
+                        }
+                        if (gridCount > 0) {
+                            Text("$gridCount ${if (gridCount == 1) "copy" else "copies"} on $sheet", fontSize = 13.sp, color = DeepNavy, fontWeight = FontWeight.SemiBold)
+                        } else {
+                            Text("That count does not fit on $sheet - try fewer copies or A4.", fontSize = 13.sp, color = Color(0xFFC62828))
+                        }
+                    }
+                }
+            }
+        }
+        if (ratioMismatch) {
+            Spacer(Modifier.height(12.dp))
+            Card(colors = CardDefaults.cardColors(containerColor = SoftGrey), shape = RoundedCornerShape(12.dp)) {
+                Column(Modifier.fillMaxWidth().padding(14.dp)) {
+                    Text("The print shape differs from your image.", fontWeight = FontWeight.SemiBold, color = DeepNavy, fontSize = 14.sp)
+                    Spacer(Modifier.height(6.dp))
+                    Row(Modifier.horizontalScroll(rememberScrollState())) {
+                        PrintPresetChip("Fit", "whole image, white edges", fitMode == "Fit") { onFitMode("Fit") }
+                        PrintPresetChip("Fill & Crop", "fills page, crops edges", fitMode == "Fill") { onFitMode("Fill") }
+                        PrintPresetChip("Stretch", "fills exactly", fitMode == "Stretch") { onFitMode("Stretch") }
+                    }
+                    if (fitMode == "Stretch") {
+                        Text("Stretch can distort the image.", fontSize = 13.sp, color = Color(0xFFC62828))
+                    }
+                }
+            }
+        }
+        Spacer(Modifier.height(14.dp))
+        Text("Print Resolution (PPI)", fontWeight = FontWeight.Bold, color = DeepNavy, fontSize = 17.sp)
+        Text("Often called DPI. Higher means more detail in print.", fontSize = 13.sp, color = Slate)
+        Spacer(Modifier.height(8.dp))
+        listOf(
+            Triple(150, "Large prints", "May be appropriate for larger prints viewed from a distance."),
+            Triple(200, "General print", "A useful option for many everyday print jobs."),
+            Triple(300, "Recommended", "A common target for high-quality photographs and detailed prints."),
+            Triple(600, "Fine detail", "For workflows that specifically benefit from higher resolution.")
+        ).forEach { (opt, badge, desc) ->
+            Card(
+                colors = CardDefaults.cardColors(containerColor = if (ppi == opt) PaleBlue else SoftGrey),
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 8.dp)
+                    .border(if (ppi == opt) 2.dp else 0.dp, if (ppi == opt) SkyBlue else Color.Transparent, RoundedCornerShape(12.dp))
+                    .clickable { onPpi(opt) }
+            ) {
+                Column(Modifier.padding(14.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("$opt PPI", fontWeight = FontWeight.Bold, color = DeepNavy, fontSize = 15.sp, modifier = Modifier.weight(1f))
+                        Text(
+                            badge, fontSize = 11.sp, fontWeight = FontWeight.SemiBold,
+                            color = if (badge == "Recommended") SuccessGreen else Slate,
+                            modifier = Modifier.background(Color.White, RoundedCornerShape(6.dp)).padding(horizontal = 8.dp, vertical = 3.dp)
+                        )
+                    }
+                    Text(desc, fontSize = 13.sp, color = Slate)
+                }
+            }
+        }
+        Spacer(Modifier.height(6.dp))
+        Card(colors = CardDefaults.cardColors(containerColor = PaleBlue), shape = RoundedCornerShape(12.dp)) {
+            Column(Modifier.fillMaxWidth().padding(14.dp)) {
+                Text("Print calculator", fontWeight = FontWeight.Bold, color = DeepNavy, fontSize = 15.sp)
+                Spacer(Modifier.height(8.dp))
+                Row { Text("Print size", Modifier.weight(1f), fontSize = 13.sp, color = Slate); Text("${PrintUtils.fmtDim(wIn, unit)} × ${PrintUtils.fmtDim(hIn, unit)} $unit", fontSize = 13.sp, color = DeepNavy, fontWeight = FontWeight.SemiBold) }
+                Row { Text("Image pixels", Modifier.weight(1f), fontSize = 13.sp, color = Slate); Text("$imgW × $imgH px", fontSize = 13.sp, color = DeepNavy, fontWeight = FontWeight.SemiBold) }
+                Row { Text("Effective PPI", Modifier.weight(1f), fontSize = 13.sp, color = Slate); Text("${effPpi.toInt()} PPI", fontSize = 13.sp, color = DeepNavy, fontWeight = FontWeight.SemiBold) }
+                Row { Text("Required pixels", Modifier.weight(1f), fontSize = 13.sp, color = Slate); Text("${req[0]} × ${req[1]} px (${PrintUtils.megapixels(req[0], req[1])} MP)", fontSize = 13.sp, color = DeepNavy, fontWeight = FontWeight.SemiBold) }
+                Spacer(Modifier.height(6.dp))
+                Text("This is the target calculation, not a claim that the selected image already has sufficient resolution.", fontSize = 11.sp, color = Slate)
+            }
+        }
+        Spacer(Modifier.height(10.dp))
+        val (qColor, qTitle, qText) = when (quality) {
+            PrintUtils.Quality.GOOD -> Triple(SuccessGreen, "✓ Good resolution", "The image meets or exceeds the chosen target PPI at the requested size.")
+            PrintUtils.Quality.ACCEPTABLE -> Triple(Orange, "⚠ Acceptable with limitations", "The image may print adequately, depending on the subject, print method and viewing distance.")
+            PrintUtils.Quality.LOW -> Triple(Color(0xFFC62828), "⚠ Low resolution", "The image may appear soft or pixelated at the selected print size. Consider a smaller print or a higher-resolution original.")
+        }
+        Card(colors = CardDefaults.cardColors(containerColor = SoftGrey), shape = RoundedCornerShape(12.dp)) {
+            Column(Modifier.fillMaxWidth().padding(14.dp)) {
+                Text(qTitle, fontWeight = FontWeight.Bold, color = qColor, fontSize = 15.sp)
+                Text(qText, fontSize = 13.sp, color = Slate)
+            }
+        }
+        Spacer(Modifier.height(14.dp))
+        Button(
+            onClick = onContinue,
+            enabled = wIn > 0 && hIn > 0,
+            modifier = Modifier.fillMaxWidth().height(52.dp),
+            colors = ButtonDefaults.buttonColors(containerColor = SkyBlue),
+            shape = RoundedCornerShape(12.dp)
+        ) { Text("Continue to Print Preview", color = Color.White, fontWeight = FontWeight.Bold) }
+        Spacer(Modifier.height(20.dp))
+    }
+}
+
+@Composable
+private fun PrintPreviewScreen(
+    modifier: Modifier = Modifier,
+    preview: Bitmap?,
+    wIn: Double,
+    hIn: Double,
+    preset: String,
+    landscape: Boolean,
+    ppi: Int,
+    fitMode: String,
+    onFitMode: (String) -> Unit,
+    marginsOn: Boolean,
+    onMarginsOn: (Boolean) -> Unit,
+    bleedOn: Boolean,
+    onBleedOn: (Boolean) -> Unit,
+    cropMarks: Boolean,
+    onCropMarks: (Boolean) -> Unit,
+    bgWhite: Boolean,
+    onBgWhite: (Boolean) -> Unit,
+    sheetMode: Boolean,
+    sheet: String,
+    grid: IntArray,
+    sheetWIn: Double,
+    sheetHIn: Double,
+    onContinue: () -> Unit
+) {
+    val bleedIn = if (bleedOn && !sheetMode) PrintUtils.BLEED_IN else 0.0
+    val marginIn = if (marginsOn && !sheetMode) PrintUtils.MARGIN_IN else 0.0
+    val pageWIn = if (sheetMode) sheetWIn else wIn + bleedIn * 2
+    val pageHIn = if (sheetMode) sheetHIn else hIn + bleedIn * 2
+    val bg = if (bgWhite) Color.White else Color(0xFFF2F2F2)
+
+    Column(modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).padding(horizontal = 16.dp).verticalScroll(rememberScrollState())) {
+        Spacer(Modifier.height(10.dp))
+        Text(
+            if (sheetMode) "$sheet sheet · ${grid[2]} ${if (grid[2] == 1) "copy" else "copies"} · $ppi PPI"
+            else "$preset · ${if (landscape) "Landscape" else "Portrait"} · $ppi PPI",
+            fontSize = 14.sp, color = Slate
+        )
+        Spacer(Modifier.height(10.dp))
+        Card(colors = CardDefaults.cardColors(containerColor = SoftGrey), shape = RoundedCornerShape(12.dp)) {
+            BoxWithConstraints(Modifier.fillMaxWidth().height(340.dp).padding(18.dp)) {
+                val pageRatio = (pageWIn / pageHIn).toFloat()
+                var pw = maxWidth
+                var ph = maxWidth / pageRatio
+                if (ph > maxHeight) { ph = maxHeight; pw = maxHeight * pageRatio }
+                Box(Modifier.size(pw, ph).align(Alignment.Center)) {
+                    if (bleedIn > 0) {
+                        Box(Modifier.fillMaxSize().background(Color(0xFFFFE9E9)))
+                        Spacer(Modifier.fillMaxSize())
+                    }
+                    val bleedPadX = if (bleedIn > 0) pw * (bleedIn / pageWIn).toFloat() else 0.dp
+                    val bleedPadY = if (bleedIn > 0) ph * (bleedIn / pageHIn).toFloat() else 0.dp
+                    Box(Modifier.fillMaxSize().padding(horizontal = bleedPadX, vertical = bleedPadY).background(Color.White).border(1.dp, DeepNavy)) {
+                        if (sheetMode && preview != null && grid[2] > 0) {
+                            val sheetPreview = remember(preview, grid[0], grid[1], grid[2], grid[3]) {
+                                PrintUtils.renderSheet(
+                                    preview, 900, (900 * pageHIn / pageWIn).toInt(),
+                                    (900 * (wIn / pageWIn)).toInt().coerceAtLeast(1),
+                                    (900 * (hIn / pageWIn)).toInt().coerceAtLeast(1),
+                                    grid[0], grid[1],
+                                    (900 * (if (grid[3] == 1) PrintUtils.SHEET_GAP_IN else 0.0) / pageWIn).toInt(),
+                                    true, grid[2]
+                                )
+                            }
+                            Image(bitmap = sheetPreview.asImageBitmap(), contentDescription = null, contentScale = ContentScale.Fit, modifier = Modifier.fillMaxSize())
+                        } else if (preview != null) {
+                            val marginPadX = pw * (marginIn / pageWIn).toFloat()
+                            val marginPadY = ph * (marginIn / pageHIn).toFloat()
+                            Box(Modifier.fillMaxSize().padding(horizontal = marginPadX, vertical = marginPadY).background(bg)) {
+                                Image(
+                                    bitmap = preview.asImageBitmap(), contentDescription = null,
+                                    contentScale = when (fitMode) { "Fill" -> ContentScale.Crop; "Stretch" -> ContentScale.FillBounds; else -> ContentScale.Fit },
+                                    modifier = Modifier.fillMaxSize()
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        if (bleedIn > 0) Text("Pink band = bleed area (trimmed after printing).", fontSize = 11.sp, color = Slate, modifier = Modifier.padding(top = 4.dp))
+        if (sheetMode) Text("Thin grey lines are cutting guides.", fontSize = 11.sp, color = Slate, modifier = Modifier.padding(top = 4.dp))
+        Spacer(Modifier.height(10.dp))
+        if (!sheetMode) {
+            Card(colors = CardDefaults.cardColors(containerColor = SoftGrey), shape = RoundedCornerShape(12.dp)) {
+                Column(Modifier.fillMaxWidth().padding(14.dp)) {
+                    Text("Placement", fontWeight = FontWeight.SemiBold, color = DeepNavy, fontSize = 14.sp)
+                    Spacer(Modifier.height(6.dp))
+                    Row(Modifier.horizontalScroll(rememberScrollState())) {
+                        PrintPresetChip("Fit", "whole image", fitMode == "Fit") { onFitMode("Fit") }
+                        PrintPresetChip("Fill & Crop", "fill page", fitMode == "Fill") { onFitMode("Fill") }
+                        PrintPresetChip("Stretch", "exact fill", fitMode == "Stretch") { onFitMode("Stretch") }
+                    }
+                    if (fitMode == "Stretch") Text("Stretch can distort the image.", fontSize = 13.sp, color = Color(0xFFC62828))
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        Text("White margins (0.25 in)", Modifier.weight(1f), fontSize = 14.sp, color = DeepNavy)
+                        Switch(checked = marginsOn, onCheckedChange = onMarginsOn, colors = SwitchDefaults.colors(checkedTrackColor = SkyBlue))
+                    }
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        Text("Bleed (3 mm)", Modifier.weight(1f), fontSize = 14.sp, color = DeepNavy)
+                        Switch(checked = bleedOn, onCheckedChange = onBleedOn, colors = SwitchDefaults.colors(checkedTrackColor = SkyBlue))
+                    }
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        Text("Crop marks (PDF export)", Modifier.weight(1f), fontSize = 14.sp, color = DeepNavy)
+                        Switch(checked = cropMarks, onCheckedChange = onCropMarks, colors = SwitchDefaults.colors(checkedTrackColor = SkyBlue))
+                    }
+                    Text("Background for transparent images", fontSize = 13.sp, color = Slate)
+                    Row(Modifier.horizontalScroll(rememberScrollState())) {
+                        PrintPresetChip("White", "default", bgWhite) { onBgWhite(true) }
+                        PrintPresetChip("Light grey", "soft", !bgWhite) { onBgWhite(false) }
+                    }
+                }
+            }
+            Spacer(Modifier.height(10.dp))
+        }
+        Text("This preview is approximate - screens can't guarantee exact printed dimensions on every device or printer.", fontSize = 12.sp, color = Slate)
+        Spacer(Modifier.height(12.dp))
+        Button(
+            onClick = onContinue,
+            enabled = !sheetMode || grid[2] > 0,
+            modifier = Modifier.fillMaxWidth().height(52.dp),
+            colors = ButtonDefaults.buttonColors(containerColor = SkyBlue),
+            shape = RoundedCornerShape(12.dp)
+        ) { Text("Continue to Export", color = Color.White, fontWeight = FontWeight.Bold) }
+        Spacer(Modifier.height(20.dp))
+    }
+}
+
+@Composable
+private fun PrintExportScreen(
+    modifier: Modifier = Modifier,
+    format: String,
+    onFormat: (String) -> Unit,
+    filename: String,
+    onFilename: (String) -> Unit,
+    jpgQuality: Int,
+    onJpgQuality: (Int) -> Unit,
+    wIn: Double,
+    hIn: Double,
+    ppi: Int,
+    bleedOn: Boolean,
+    marginsOn: Boolean,
+    cropMarks: Boolean,
+    imgW: Int,
+    imgH: Int,
+    sheetMode: Boolean,
+    grid: IntArray,
+    sheet: String,
+    resultReady: Boolean,
+    resultName: String,
+    resultSize: Long,
+    resultDims: String,
+    saved: Boolean,
+    busy: Boolean,
+    onCreate: () -> Unit,
+    onSave: () -> Unit,
+    onShare: () -> Unit,
+    onAgain: () -> Unit
+) {
+    Column(modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).padding(horizontal = 16.dp).verticalScroll(rememberScrollState())) {
+        Spacer(Modifier.height(10.dp))
+        Text("Choose output format", fontWeight = FontWeight.Bold, color = DeepNavy, fontSize = 17.sp)
+        Spacer(Modifier.height(8.dp))
+        listOf(
+            Triple("JPG", "JPG / JPEG", "For photographs and common print services."),
+            Triple("PNG", "PNG", "For artwork, graphics and supported transparency."),
+            Triple("PDF", "PDF", "For a print-ready page with the image placed at the selected physical dimensions.")
+        ).forEach { (id, title, desc) ->
+            Card(
+                colors = CardDefaults.cardColors(containerColor = if (format == id) PaleBlue else SoftGrey),
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 8.dp)
+                    .border(if (format == id) 2.dp else 0.dp, if (format == id) SkyBlue else Color.Transparent, RoundedCornerShape(12.dp))
+                    .clickable { onFormat(id) }
+            ) {
+                Column(Modifier.padding(14.dp)) {
+                    Text(title, fontWeight = FontWeight.Bold, color = DeepNavy, fontSize = 15.sp)
+                    Text(desc, fontSize = 13.sp, color = Slate)
+                }
+            }
+        }
+        OutlinedTextField(
+            filename, onFilename,
+            modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+            label = { Text("Filename") },
+            singleLine = true
+        )
+        if (format == "JPG") {
+            Spacer(Modifier.height(8.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("JPEG quality", Modifier.weight(1f), fontWeight = FontWeight.SemiBold, color = DeepNavy, fontSize = 14.sp)
+                Text("$jpgQuality%", color = SkyBlue, fontWeight = FontWeight.Bold)
+            }
+            Slider(value = jpgQuality.toFloat(), onValueChange = { onJpgQuality(it.toInt()) }, valueRange = 50f..100f)
+        }
+        Spacer(Modifier.height(8.dp))
+        Card(colors = CardDefaults.cardColors(containerColor = SoftGrey), shape = RoundedCornerShape(12.dp)) {
+            Column(Modifier.fillMaxWidth().padding(14.dp)) {
+                Text("Summary", fontWeight = FontWeight.Bold, color = DeepNavy, fontSize = 15.sp)
+                Spacer(Modifier.height(6.dp))
+                if (sheetMode) {
+                    Row { Text("Sheet", Modifier.weight(1f), fontSize = 13.sp, color = Slate); Text(sheet, fontSize = 13.sp, color = DeepNavy, fontWeight = FontWeight.SemiBold) }
+                    Row { Text("Copies", Modifier.weight(1f), fontSize = 13.sp, color = Slate); Text("${grid[2]} (${grid[0]} × ${grid[1]})", fontSize = 13.sp, color = DeepNavy, fontWeight = FontWeight.SemiBold) }
+                    Row { Text("Each copy", Modifier.weight(1f), fontSize = 13.sp, color = Slate); Text("${PrintUtils.fmtDim(wIn, "mm")} × ${PrintUtils.fmtDim(hIn, "mm")} mm", fontSize = 13.sp, color = DeepNavy, fontWeight = FontWeight.SemiBold) }
+                } else {
+                    Row { Text("Print size", Modifier.weight(1f), fontSize = 13.sp, color = Slate); Text("${PrintUtils.fmtDim(wIn, "in")} × ${PrintUtils.fmtDim(hIn, "in")} in", fontSize = 13.sp, color = DeepNavy, fontWeight = FontWeight.SemiBold) }
+                    val req = PrintUtils.requiredPixels(wIn, hIn, ppi)
+                    Row { Text("Pixels", Modifier.weight(1f), fontSize = 13.sp, color = Slate); Text("${req[0]} × ${req[1]} px", fontSize = 13.sp, color = DeepNavy, fontWeight = FontWeight.SemiBold) }
+                }
+                Row { Text("Resolution", Modifier.weight(1f), fontSize = 13.sp, color = Slate); Text("$ppi PPI", fontSize = 13.sp, color = DeepNavy, fontWeight = FontWeight.SemiBold) }
+                if (!sheetMode && (bleedOn || marginsOn || cropMarks)) {
+                    val extras = buildList {
+                        if (bleedOn) add("bleed")
+                        if (marginsOn) add("margins")
+                        if (cropMarks) add("crop marks")
+                    }.joinToString(" · ")
+                    Row { Text("Options", Modifier.weight(1f), fontSize = 13.sp, color = Slate); Text(extras, fontSize = 13.sp, color = DeepNavy, fontWeight = FontWeight.SemiBold) }
+                }
+            }
+        }
+        Spacer(Modifier.height(12.dp))
+        Button(
+            onClick = onCreate,
+            enabled = !busy && (wIn > 0 && hIn > 0) && (!sheetMode || grid[2] > 0) && filename.isNotBlank(),
+            modifier = Modifier.fillMaxWidth().height(52.dp),
+            colors = ButtonDefaults.buttonColors(containerColor = SkyBlue),
+            shape = RoundedCornerShape(12.dp)
+        ) { Text(if (busy) "Working…" else "Create File", color = Color.White, fontWeight = FontWeight.Bold) }
+        if (resultReady) {
+            Spacer(Modifier.height(12.dp))
+            Card(colors = CardDefaults.cardColors(containerColor = PaleBlue), shape = RoundedCornerShape(12.dp)) {
+                Column(Modifier.fillMaxWidth().padding(14.dp)) {
+                    Text(resultName, fontWeight = FontWeight.Bold, color = DeepNavy, fontSize = 15.sp, maxLines = 1)
+                    Text((if (resultSize > 0) formatBytes(resultSize) + " · " else "") + resultDims, fontSize = 13.sp, color = Slate)
+                    if (saved) {
+                        Spacer(Modifier.height(6.dp))
+                        Text("✓ Saved. Your original is unchanged.", color = SuccessGreen, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                    }
+                }
+            }
+            Spacer(Modifier.height(10.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(
+                    onClick = onSave,
+                    enabled = !busy && !saved,
+                    modifier = Modifier.weight(1f).height(50.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = SuccessGreen),
+                    shape = RoundedCornerShape(12.dp)
+                ) { Text(if (saved) "Saved ✓" else "Save to Phone", color = Color.White, fontWeight = FontWeight.Bold) }
+                OutlinedButton(onClick = onShare, enabled = !busy, modifier = Modifier.weight(1f).height(50.dp), shape = RoundedCornerShape(12.dp)) {
+                    Text("Share", color = DeepNavy)
+                }
+            }
+            Text("Nothing is saved until you tap Save to Phone.", fontSize = 12.sp, color = Slate, modifier = Modifier.padding(top = 6.dp))
+        }
+        Spacer(Modifier.height(10.dp))
+        TextButton(onClick = onAgain, modifier = Modifier.fillMaxWidth()) { Text("Start Over", color = SkyBlue) }
+        Spacer(Modifier.height(20.dp))
     }
 }
