@@ -8,6 +8,7 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Matrix
 import android.graphics.pdf.PdfDocument
+import android.os.ParcelFileDescriptor
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -41,6 +42,7 @@ import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -311,6 +313,10 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
     var convertResultOrigSize by remember { mutableLongStateOf(-1L) }
     var convertResultFrom by remember { mutableStateOf("") }
     var convertSaved by remember { mutableStateOf(false) }
+    val convertReadyBitmaps = remember { mutableStateListOf<Bitmap?>() }
+    var pendingPdfTestPath by remember { mutableStateOf<String?>(null) }
+    var convertPdfPages by remember { mutableStateOf<List<Bitmap>?>(null) }
+    val convertPdfChecked = remember { mutableStateListOf<Boolean>() }
     var circleShape by rememberSaveable { mutableStateOf("Circle") }
     var circleRect by remember { mutableStateOf(CropMath.defaultRect()) }
     var circleChoice by remember { mutableStateOf(BgChoice.TRANSPARENT) }
@@ -486,8 +492,9 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                     pendingConvertTool = false
                     convertUris.add(uri)
                     convertThumbs.add(thumbOf(loaded))
-                    convertLabels.add(ConvertFormats.friendlyFormat(context.contentResolver.getType(uri)))
+                    convertLabels.add(ConvertFormats.detectFormat(context, uri))
                     convertOrigSizes.add(querySourceSize(context, uri))
+                    convertReadyBitmaps.add(null)
                     screen = if (convertGoEdit) { convertGoEdit = false; Screen.ConvertEdit } else Screen.ConvertHome
                 }
                 // Clear busy BEFORE the snackbar: showSnackbar suspends until dismissal,
@@ -515,6 +522,10 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
             if (testTool == "social") pendingSocialTool = true
             if (testTool == "shop") pendingShopTool = true
             if (testTool == "convert") pendingConvertTool = true
+            if (testTool == "convertedit") { pendingConvertTool = true; convertGoEdit = true }
+            (context as? Activity)?.intent?.getStringExtra("pixelcraft.test.pdf")?.let { pdfPath ->
+                pendingPdfTestPath = pdfPath
+            }
             loadPhoto(Uri.fromFile(File(testPath)), isCamera = false)
         }
     }
@@ -802,7 +813,7 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                     withContext(Dispatchers.IO) { decodeOrientedBitmap(context, u) }?.let { bmp ->
                         newUris.add(u)
                         newThumbs.add(thumbOf(bmp))
-                        newLabels.add(ConvertFormats.friendlyFormat(context.contentResolver.getType(u)))
+                        newLabels.add(ConvertFormats.detectFormat(context, u))
                         newSizes.add(querySourceSize(context, u))
                     }
                 }
@@ -810,12 +821,66 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                 convertThumbs.clear(); convertThumbs.addAll(newThumbs)
                 convertLabels.clear(); convertLabels.addAll(newLabels)
                 convertOrigSizes.clear(); convertOrigSizes.addAll(newSizes)
+                convertReadyBitmaps.clear(); repeat(newUris.size) { convertReadyBitmaps.add(null) }
                 screen = if (convertGoEdit && convertUris.isNotEmpty()) { convertGoEdit = false; Screen.ConvertEdit } else Screen.ConvertHome
             } finally {
                 busy = false
                 busyLabel = ""
             }
         }
+    }
+
+    fun loadPdfInput(uri: Uri) {
+        busy = true
+        busyLabel = "Reading PDF…"
+        scope.launch {
+            try {
+                val pages = withContext(Dispatchers.IO) {
+                    val pfd: ParcelFileDescriptor = context.contentResolver.openFileDescriptor(uri, "r")
+                        ?: throw IllegalStateException("Could not open the PDF")
+                    pfd.use { ConvertFormats.renderPdfPages(it) }
+                }
+                if (pages.isEmpty()) throw IllegalStateException("No pages")
+                convertPdfPages = pages
+                convertPdfChecked.clear()
+                repeat(pages.size) { convertPdfChecked.add(true) }
+                busy = false
+                busyLabel = ""
+            } catch (e: Exception) {
+                busy = false
+                busyLabel = ""
+                snackbar.showSnackbar("Couldn't read this PDF. Try another file.")
+            }
+        }
+    }
+
+    fun confirmPdfPages() {
+        val pages = convertPdfPages ?: return
+        val chosen = pages.filterIndexed { i, _ -> convertPdfChecked.getOrNull(i) == true }
+        if (chosen.isEmpty()) {
+            scope.launch { snackbar.showSnackbar("Pick at least one page.") }
+            return
+        }
+        convertUris.clear()
+        convertThumbs.clear()
+        convertLabels.clear()
+        convertOrigSizes.clear()
+        convertReadyBitmaps.clear()
+        chosen.forEachIndexed { i, page ->
+            convertUris.add(Uri.EMPTY)
+            convertThumbs.add(thumbOf(page))
+            convertLabels.add("PDF p.${pages.indexOf(page) + 1}")
+            convertOrigSizes.add(-1L)
+            convertReadyBitmaps.add(page)
+        }
+        convertPdfPages = null
+        convertPdfChecked.clear()
+        screen = if (convertGoEdit) { convertGoEdit = false; Screen.ConvertEdit } else Screen.ConvertHome
+    }
+
+    fun discardPdfPages() {
+        convertPdfPages = null
+        convertPdfChecked.clear()
     }
 
     fun applyConvert() {
@@ -830,7 +895,8 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
             busyLabel = "Converting…"
             scope.launch {
                 try {
-                    val src = withContext(Dispatchers.IO) { decodeOrientedBitmap(context, convertUris.first()) }
+                    val src = convertReadyBitmaps.firstOrNull()
+                        ?: withContext(Dispatchers.IO) { decodeOrientedBitmap(context, convertUris.first()) }
                         ?: throw IllegalStateException("decode failed")
                     val bytes = withContext(Dispatchers.Default) { ConvertFormats.encode(src, fmt, convertQuality, bgColor) }
                     convertResultBytes = bytes
@@ -860,7 +926,9 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                         val bitmaps = mutableListOf<Bitmap>()
                         convertUris.forEachIndexed { i, u ->
                             busyLabel = "Reading ${i + 1} of ${convertUris.size}…"
-                            withContext(Dispatchers.IO) { decodeOrientedBitmap(context, u) }?.let { bitmaps.add(it) }
+                            val page = convertReadyBitmaps.getOrNull(i)
+                                ?: withContext(Dispatchers.IO) { decodeOrientedBitmap(context, u) }
+                            page?.let { bitmaps.add(it) }
                         }
                         busyLabel = "Building PDF…"
                         val bytes = withContext(Dispatchers.Default) { ConvertFormats.encodePdf(bitmaps, bgColor) }
@@ -871,7 +939,8 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                     } else {
                         convertUris.forEachIndexed { i, u ->
                             busyLabel = "Converting ${i + 1} of ${convertUris.size}…"
-                            val src = withContext(Dispatchers.IO) { decodeOrientedBitmap(context, u) } ?: return@forEachIndexed
+                            val src = convertReadyBitmaps.getOrNull(i)
+                                ?: withContext(Dispatchers.IO) { decodeOrientedBitmap(context, u) } ?: return@forEachIndexed
                             val bytes = withContext(Dispatchers.Default) { ConvertFormats.encode(src, fmt, convertQuality, bgColor) }
                             saveToGallery(context, "pixelcraft_${src.width}x${src.height}_${i + 1}.${fmt.extension}", fmt.mimeType, bytes)
                             outTotal += bytes.size
@@ -911,6 +980,7 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
 
     fun resetConvert() {
         convertUris.clear(); convertThumbs.clear(); convertLabels.clear(); convertOrigSizes.clear()
+        convertReadyBitmaps.clear(); convertPdfPages = null; convertPdfChecked.clear()
         convertResultBytes = null; convertResultPreview = null; convertSaved = false
         convertGoEdit = false
     }
@@ -1504,6 +1574,9 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
     val convertPicker = rememberLauncherForActivityResult(ActivityResultContracts.PickMultipleVisualMedia(20)) { uris ->
         if (uris.isNotEmpty()) loadConvertPhotos(uris)
     }
+    val convertPdfPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        uri?.let { loadPdfInput(it) }
+    }
 
     val multiPicker = rememberLauncherForActivityResult(ActivityResultContracts.PickMultipleVisualMedia(50)) { uris ->
         if (uris.size == 1) {
@@ -1663,6 +1736,13 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
         }
     }
 
+    LaunchedEffect(pendingPdfTestPath) {
+        pendingPdfTestPath?.let { path ->
+            pendingPdfTestPath = null
+            loadPdfInput(Uri.fromFile(File(path)))
+        }
+    }
+
     BackHandler(enabled = screen != Screen.Home) {
         when (screen) {
             Screen.Export -> {
@@ -1732,6 +1812,45 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
             title = { Text("Save", color = DeepNavy, fontWeight = FontWeight.Bold) },
             text = { Text(note, color = Slate, fontSize = 13.sp, lineHeight = 18.sp) },
             confirmButton = { TextButton(onClick = { batchSaveNote = null }) { Text("OK", color = DeepNavy, fontWeight = FontWeight.Bold) } }
+        )
+    }
+
+    convertPdfPages?.let { pages ->
+        AlertDialog(
+            onDismissRequest = { discardPdfPages() },
+            title = { Text("Select pages", color = DeepNavy, fontWeight = FontWeight.Bold) },
+            text = {
+                Column(Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState())) {
+                    pages.forEachIndexed { i, page ->
+                        val checked = convertPdfChecked.getOrNull(i) == true
+                        Row(
+                            Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).clickable { convertPdfChecked[i] = !checked }.padding(vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Image(
+                                bitmap = thumbOf(page).asImageBitmap(),
+                                contentDescription = "Page ${i + 1}",
+                                contentScale = ContentScale.Fit,
+                                modifier = Modifier.size(56.dp)
+                            )
+                            Spacer(Modifier.width(10.dp))
+                            Text("Page ${i + 1}", Modifier.weight(1f), color = DeepNavy, fontWeight = FontWeight.SemiBold)
+                            Icon(
+                                Icons.Default.CheckCircle,
+                                contentDescription = if (checked) "Selected" else "Not selected",
+                                tint = if (checked) SuccessGreen else SoftGrey,
+                                modifier = Modifier.size(22.dp)
+                            )
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { confirmPdfPages() }) {
+                    Text("Use ${convertPdfChecked.count { it }} Page${if (convertPdfChecked.count { it } == 1) "" else "s"}", color = DeepNavy, fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = { TextButton(onClick = { discardPdfPages() }) { Text("Cancel", color = Slate) } }
         )
     }
 
@@ -2279,6 +2398,7 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                 thumbs = convertThumbs,
                 labels = convertLabels,
                 onSelectImages = { convertPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
+                onSelectPdf = { convertPdfPicker.launch(arrayOf("application/pdf")) },
                 onTarget = { fmt ->
                     convertTarget = fmt
                     if (convertUris.isEmpty()) {
@@ -2301,7 +2421,8 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                 customColor = convertCustomColor,
                 onCustomColor = { convertCustomColor = it },
                 busy = busy,
-                onConvert = { applyConvert() }
+                onConvert = { applyConvert() },
+                onTarget = { convertTarget = it }
             )
             Screen.ConvertResult -> ConvertResultScreen(
                 modifier = Modifier.padding(padding),
@@ -5607,6 +5728,7 @@ private fun ConvertHomeScreen(
     thumbs: List<Bitmap>,
     labels: List<String>,
     onSelectImages: () -> Unit,
+    onSelectPdf: () -> Unit,
     onTarget: (ConvertFormats.Fmt) -> Unit
 ) {
     Column(modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).padding(horizontal = 16.dp).verticalScroll(rememberScrollState())) {
@@ -5641,6 +5763,10 @@ private fun ConvertHomeScreen(
                     Button(onClick = onSelectImages, colors = ButtonDefaults.buttonColors(containerColor = Orange, contentColor = Color.White), shape = RoundedCornerShape(12.dp)) {
                         Text(if (thumbs.isNotEmpty()) "Change" else "Select Image")
                     }
+                }
+                Spacer(Modifier.height(10.dp))
+                OutlinedButton(onClick = onSelectPdf, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(12.dp)) {
+                    Text("Select PDF (pages become images)", color = DeepNavy, fontSize = 13.sp)
                 }
             }
         }
@@ -5689,9 +5815,34 @@ private fun ConvertEditScreen(
     customColor: Long,
     onCustomColor: (Long) -> Unit,
     busy: Boolean,
-    onConvert: () -> Unit
+    onConvert: () -> Unit,
+    onTarget: (ConvertFormats.Fmt) -> Unit
 ) {
-    val fromLabel = labels.distinct().let { if (it.size == 1) it.first() else "Mixed" }
+    val fromLabel = labels.map { it.substringBefore(" p.") }.distinct().let { if (it.size == 1) it.first() else "Mixed" }
+    var showTargetPicker by remember { mutableStateOf(false) }
+    if (showTargetPicker) {
+        AlertDialog(
+            onDismissRequest = { showTargetPicker = false },
+            title = { Text("Convert to", color = DeepNavy, fontWeight = FontWeight.Bold) },
+            text = {
+                Column {
+                    ConvertFormats.targets.forEach { fmt ->
+                        Row(
+                            Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).clickable { onTarget(fmt); showTargetPicker = false }.padding(vertical = 10.dp, horizontal = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(Modifier.weight(1f)) {
+                                Text(fmt.label, fontWeight = FontWeight.SemiBold, color = DeepNavy, fontSize = 15.sp)
+                                Text(fmt.desc, fontSize = 12.sp, color = Slate)
+                            }
+                            if (fmt.id == target.id) Icon(Icons.Default.CheckCircle, contentDescription = "Current", tint = SuccessGreen, modifier = Modifier.size(20.dp))
+                        }
+                    }
+                }
+            },
+            confirmButton = { TextButton(onClick = { showTargetPicker = false }) { Text("Cancel", color = DeepNavy) } }
+        )
+    }
     Column(modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).padding(horizontal = 16.dp).verticalScroll(rememberScrollState())) {
         Spacer(Modifier.height(10.dp))
         Card(colors = CardDefaults.cardColors(containerColor = PaleBlue), shape = RoundedCornerShape(16.dp)) {
@@ -5710,6 +5861,11 @@ private fun ConvertEditScreen(
                                 contentDescription = "Selected",
                                 tint = SuccessGreen,
                                 modifier = Modifier.align(Alignment.TopEnd).size(20.dp)
+                            )
+                            Text(
+                                labels.getOrNull(i) ?: "",
+                                fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Color.White,
+                                modifier = Modifier.align(Alignment.BottomStart).background(DeepNavy).padding(horizontal = 5.dp, vertical = 2.dp)
                             )
                         }
                     }
@@ -5730,10 +5886,11 @@ private fun ConvertEditScreen(
                 }
             }
             Text("→", fontSize = 22.sp, color = DeepNavy, modifier = Modifier.padding(horizontal = 10.dp))
-            Card(Modifier.weight(1f), colors = CardDefaults.cardColors(containerColor = SoftGrey), shape = RoundedCornerShape(12.dp)) {
+            Card(Modifier.weight(1f).clickable { showTargetPicker = true }, colors = CardDefaults.cardColors(containerColor = SoftGrey), shape = RoundedCornerShape(12.dp)) {
                 Column(Modifier.fillMaxWidth().padding(12.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                     Text("To", fontSize = 12.sp, color = Slate)
                     Text(target.label, fontWeight = FontWeight.Bold, color = DeepNavy, fontSize = 16.sp)
+                    Text("Tap to change", fontSize = 10.sp, color = SkyBlue)
                 }
             }
         }

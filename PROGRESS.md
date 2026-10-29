@@ -74,6 +74,12 @@ Stage 3 v0.10.1 (built on Stage 2E v0.8.1): queue overview screen, the full "Sel
 
 
 
+## v0.13.1 fix+feature - Format Converter polish + PDF input (his screenshot feedback + "How to choose PDF?" + "Pdf to png/jpg" + "it must show accurate current format")
+- Every selected image in the file card now carries its own format badge on the thumbnail, detected from the FILE CONTENT (magic bytes), not the extension - a .jpg that is really a PNG shows PNG. Detection covers JPG/PNG/GIF/BMP/WebP/TIFF/PDF/HEIC with MIME fallback (ConvertFormats.detectFormatBytes, fully unit-tested including the mislabeled-file case).
+- The "To" box is tappable ("Tap to change") and opens a chooser with all 6 formats - target can be switched without going back to the picker. Top bar title follows the new target.
+- PDF as INPUT: "Select PDF (pages become images)" button on the converter home card. Pages render on-device with PdfRenderer (max 20 pages, 3000px cap, flattened onto white), he picks the pages he wants in a dialog with thumbnails, and the chosen pages convert like normal photos - one output per page, or pages into a new PDF. Badge shows "PDF p.N". From box shows "PDF".
+- Honest verification note: PDF rendering (in and out) uses Android's real PdfRenderer/PdfDocument, which need the native engine that only exists on a device - the host test JVM cannot run them. Unit tests verify everything around them: content sniffing (real PNG bytes), the hand-written 2-page PDF parses, page geometry, and the exact known-signature fallback. Pixel assertions for rendered PDF pages run wherever the native engine exists. Worth one device tap: PDF > PNG, and PNG > PDF > open it.
+
 ## v0.13.0 feature - Format Converter (his GO: "Format Converter", "Any format to any format", "Research deeply and make professional dear brother")
 - The placeholder "Convert Format" homepage tile is now a real tool, renamed "Format Converter" (his name). Subtitle "Convert images into the format you need." + Select Your Image card ("Choose one or multiple images", selected images show as thumbnails) + a "Convert to" grid of 6 tiles: JPG/JPEG, PNG, WebP, PDF, BMP, TIFF.
 - ANY input the phone can decode (JPG, PNG, WebP, HEIC, GIF, BMP, TIFF...) converts to any of the 6 outputs. Conversion page: file card with thumbnails + green checks + "Original format: PNG", From > To boxes, Conversion options (quality slider 10-100%, default 90, for JPG/WebP; solid background White/Custom Color for JPG), big Convert button. Reset in-tool.

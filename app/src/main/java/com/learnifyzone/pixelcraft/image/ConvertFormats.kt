@@ -2,7 +2,11 @@ package com.learnifyzone.pixelcraft.image
 
 import android.graphics.Bitmap
 import android.graphics.Canvas
+import android.content.Context
 import android.graphics.pdf.PdfDocument
+import android.graphics.pdf.PdfRenderer
+import android.net.Uri
+import android.os.ParcelFileDescriptor
 import java.io.ByteArrayOutputStream
 
 /**
@@ -167,6 +171,69 @@ object ConvertFormats {
             return baos.toByteArray()
         } finally {
             doc.close()
+        }
+    }
+
+    /**
+     * Sniffs the true format from the file's magic bytes, so a ".jpg" that is
+     * really a PNG reports PNG. Returns null when the header is unknown.
+     */
+    fun detectFormatBytes(head: ByteArray, n: Int): String? {
+        fun ascii(off: Int, len: Int): String {
+            if (n < off + len) return ""
+            return String(head, off, len, Charsets.US_ASCII)
+        }
+        if (n >= 3 && head[0] == 0xFF.toByte() && head[1] == 0xD8.toByte() && head[2] == 0xFF.toByte()) return "JPG"
+        if (n >= 8 && head[0] == 0x89.toByte() && head[1] == 0x50.toByte() && head[2] == 0x4E.toByte() && head[3] == 0x47.toByte()) return "PNG"
+        if (ascii(0, 6) == "GIF87a" || ascii(0, 6) == "GIF89a") return "GIF"
+        if (n >= 2 && head[0] == 'B'.code.toByte() && head[1] == 'M'.code.toByte()) return "BMP"
+        if (ascii(0, 4) == "RIFF" && ascii(8, 4) == "WEBP") return "WEBP"
+        if (n >= 4 && ((ascii(0, 2) == "II" && head[2] == 42.toByte() && head[3] == 0.toByte()) ||
+                (ascii(0, 2) == "MM" && head[2] == 0.toByte() && head[3] == 42.toByte()))) return "TIFF"
+        if (ascii(0, 4) == "%PDF") return "PDF"
+        if (ascii(4, 4) == "ftyp") {
+            val brand = ascii(8, 4)
+            if (brand.startsWith("hei") || brand.startsWith("hev") || brand == "mif1" || brand == "msf1") return "HEIC"
+        }
+        return null
+    }
+
+    /** True format of the file behind [uri]: content sniff first, MIME type as fallback. */
+    fun detectFormat(context: Context, uri: Uri): String {
+        try {
+            context.contentResolver.openInputStream(uri)?.use { ins ->
+                val head = ByteArray(16)
+                val n = ins.read(head)
+                if (n > 0) detectFormatBytes(head, n)?.let { return it }
+            }
+        } catch (e: Exception) { /* fall through to MIME */ }
+        return friendlyFormat(try { context.contentResolver.getType(uri) } catch (e: Exception) { null })
+    }
+
+    /**
+     * Renders up to [maxPages] PDF pages to bitmaps, capped at [maxDim] on the long
+     * side and flattened onto white (PDF pages have no transparency). On-device only:
+     * the host JVM has no native pdfium.
+     */
+    fun renderPdfPages(pfd: ParcelFileDescriptor, maxPages: Int = 20, maxDim: Int = 3000): List<Bitmap> {
+        val renderer = PdfRenderer(pfd)
+        try {
+            val out = mutableListOf<Bitmap>()
+            val count = minOf(renderer.pageCount, maxPages)
+            for (i in 0 until count) {
+                val page = renderer.openPage(i)
+                val scale = minOf(1f, maxDim.toFloat() / maxOf(page.width, page.height).coerceAtLeast(1))
+                val w = (page.width * scale).toInt().coerceAtLeast(1)
+                val h = (page.height * scale).toInt().coerceAtLeast(1)
+                val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+                bmp.eraseColor(android.graphics.Color.WHITE)
+                page.render(bmp, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+                page.close()
+                out.add(bmp)
+            }
+            return out
+        } finally {
+            renderer.close()
         }
     }
 

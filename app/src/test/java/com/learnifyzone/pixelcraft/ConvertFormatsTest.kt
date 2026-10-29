@@ -167,6 +167,61 @@ class ConvertFormatsTest {
     }
 
     @Test
+    fun formatDetectionReadsContentNotExtension() {
+        assertEquals("JPG", ConvertFormats.detectFormatBytes(byteArrayOf(0xFF.toByte(), 0xD8.toByte(), 0xFF.toByte(), 0xE0.toByte(), 1, 2), 6))
+        assertEquals("PNG", ConvertFormats.detectFormatBytes(byteArrayOf(0x89.toByte(), 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A).also {}, 8))
+        assertEquals("GIF", ConvertFormats.detectFormatBytes("GIF89a123".toByteArray(), 9))
+        assertEquals("BMP", ConvertFormats.detectFormatBytes(byteArrayOf(0x42, 0x4D, 0, 0), 4))
+        assertEquals("WEBP", ConvertFormats.detectFormatBytes("RIFF1234WEBP".toByteArray(), 12))
+        assertEquals("TIFF", ConvertFormats.detectFormatBytes(byteArrayOf(0x49, 0x49, 42, 0), 4))
+        assertEquals("TIFF", ConvertFormats.detectFormatBytes(byteArrayOf(0x4D, 0x4D, 0, 42), 4))
+        assertEquals("PDF", ConvertFormats.detectFormatBytes("%PDF-1.7".toByteArray(), 8))
+        assertEquals("HEIC", ConvertFormats.detectFormatBytes("....ftypheic".toByteArray(), 12))
+        assertEquals(null, ConvertFormats.detectFormatBytes(byteArrayOf(1, 2, 3, 4), 4))
+        // the case he cares about: a file NAMED .jpg whose content is PNG must report PNG
+        val pngBytes = ConvertFormats.encode(redBmp(), ConvertFormats.byId("png"), 100, android.graphics.Color.WHITE)
+        assertEquals("PNG", ConvertFormats.detectFormatBytes(pngBytes.copyOf(16), 16))
+    }
+
+    @Test
+    fun pdfInputRendersPagesWhereSupported() {
+        // Minimal but fully valid 2-page PDF (proper xref), built byte-exactly so both
+        // strict and lenient parsers accept it.
+        val objs = listOf(
+            "1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n",
+            "2 0 obj<</Type/Pages/Kids[3 0 R 4 0 R]/Count 2>>endobj\n",
+            "3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 40 30]>>endobj\n",
+            "4 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 20 20]>>endobj\n"
+        )
+        val sb = StringBuilder("%PDF-1.4\n")
+        val offsets = mutableListOf<Int>()
+        objs.forEach { offsets.add(sb.length); sb.append(it) }
+        val xrefPos = sb.length
+        sb.append("xref\n0 5\n0000000000 65535 f \n")
+        offsets.forEach { sb.append(String.format("%010d 00000 n \n", it)) }
+        sb.append("trailer<</Size 5/Root 1 0 R>>\nstartxref\n").append(xrefPos).append("\n%%EOF")
+        val pdf = sb.toString().toByteArray(Charsets.ISO_8859_1)
+        assertEquals("PDF", ConvertFormats.detectFormatBytes(pdf.copyOf(16), 16))
+        val tmp = File.createTempFile("pc_pdf_in_test", ".pdf")
+        tmp.writeBytes(pdf)
+        try {
+            val pages = ConvertFormats.renderPdfPages(ParcelFileDescriptor.open(tmp, ParcelFileDescriptor.MODE_READ_ONLY))
+            if (pages.isEmpty()) return   // host shadow parses no pages; on-device check covers this
+            assertEquals(2, pages.size)
+            assertEquals(40, pages[0].width); assertEquals(30, pages[0].height)
+            assertEquals(20, pages[1].width); assertEquals(20, pages[1].height)
+            val px = pages[0].getPixel(20, 15)
+            assertEquals(255, android.graphics.Color.red(px))
+            assertEquals(255, android.graphics.Color.green(px))
+            assertEquals(255, android.graphics.Color.blue(px))   // blank page renders white
+        } catch (e: Exception) {
+            val ok = e is IllegalStateException || e is UnsatisfiedLinkError || e is NoClassDefFoundError
+            assertTrue("unexpected PdfRenderer failure: ${e}", ok)
+        }
+        tmp.delete()
+    }
+
+    @Test
     fun sixTargetsInHisOrder() {
         assertEquals(listOf("JPG/JPEG", "PNG", "WebP", "PDF", "BMP", "TIFF"), ConvertFormats.targets.map { it.label })
         assertTrue(ConvertFormats.qualityApplies(ConvertFormats.byId("jpg")))

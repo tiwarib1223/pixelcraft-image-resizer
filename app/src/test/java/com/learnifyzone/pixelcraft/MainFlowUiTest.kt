@@ -165,4 +165,22 @@ class MainFlowUiTest {
             waitForText("TIFF")
         }
     }
+
+    @Test
+    fun convertEditShowsFormatBadgesAndTappableTo() {
+        val bytes = javaClass.classLoader!!.getResourceAsStream("test_photo.jpg")!!.readBytes()
+        val tmp = File.createTempFile("pc_ui_test_convertedit", ".jpg")
+        tmp.writeBytes(bytes)
+        tmp.deleteOnExit()
+        val intent = Intent(ApplicationProvider.getApplicationContext(), MainActivity::class.java)
+            .putExtra("pixelcraft.test.photo", tmp.absolutePath)
+            .putExtra("pixelcraft.test.tool", "convertedit")
+        ActivityScenario.launch<MainActivity>(intent).use {
+            waitForText("1 image selected · Original format: JPG")
+            waitForText("From")
+            waitForText("To")
+            waitForText("Tap to change")
+            waitForText("Convert Image")
+        }
+    }
 }
