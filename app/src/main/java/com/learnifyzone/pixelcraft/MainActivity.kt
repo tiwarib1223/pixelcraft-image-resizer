@@ -1486,7 +1486,7 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                         when (feature) {
                             "Resize" -> pickPhotos()
                             "Print Size & DPI" -> screen = Screen.Print
-                            "Social & Shop Sizes" -> screen = Screen.SocialHome
+                            "Social Media Sizes" -> screen = Screen.SocialHome
                             "Remove Background" -> {
                                 if (workingBitmap != null) { screen = Screen.Editor; tool = Tool.Background }
                                 else { pendingBgTool = true; pickPhotos() }
@@ -1889,7 +1889,7 @@ private fun HomeScreen(
         Feature("Remove Background", "Cut out a product or person", "✦"),
         Feature("Crop & Rotate", "Adjust framing and angle", "⌗"),
         Feature("Circle Cutter", "Cut photos into shapes", "◯"),
-        Feature("Social & Shop Sizes", "Creator-ready dimensions", "▦"),
+        Feature("Social Media Sizes", "Creator-ready dimensions", "▦"),
         Feature("Convert Format", "JPEG, PNG and WebP", "⇄"),
         Feature("Compress", "Reduce file size", "↓"),
         Feature("Batch Resize", "Process many photos", "▤"),
