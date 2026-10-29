@@ -8,6 +8,7 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Matrix
 import android.graphics.pdf.PdfDocument
+import android.graphics.pdf.PdfRenderer
 import android.os.ParcelFileDescriptor
 import android.net.Uri
 import android.os.Build
@@ -383,6 +384,8 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
     val printPdfThumbQueued = remember { java.util.Collections.synchronizedSet(mutableSetOf<Int>()) }
     var printPdfThumbWorkerRunning by remember { mutableStateOf(false) }
     var printPdfPickerOpen by remember { mutableStateOf(false) }
+    var printPdfAllPages by remember { mutableStateOf(false) }
+    val printResultFiles = remember { mutableStateListOf<File>() }
     var printPageBitmap by remember { mutableStateOf<Bitmap?>(null) }
     var printSheetOn by remember { mutableStateOf(false) }
     var printSheet by remember { mutableStateOf("4 × 6") }
@@ -1287,6 +1290,7 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
     }
 
     fun loadPrintPhoto(uri: Uri) {
+        printPdfAllPages = false
         scope.launch {
             busy = true
             busyLabel = "Loading photo…"
@@ -1387,6 +1391,7 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
 
     fun selectPrintPdfPage(index: Int) {
         val uri = printPdfUri ?: return
+        printPdfAllPages = false
         printPdfPickerOpen = false
         busy = true
         busyLabel = "Rendering page ${index + 1}…"
@@ -1417,6 +1422,47 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                 busy = false
                 busyLabel = ""
                 snackbar.showSnackbar("Could not render that page: ${e.message ?: "unknown error"}")
+            }
+        }
+    }
+
+    fun selectPrintPdfAllPages() {
+        val uri = printPdfUri ?: return
+        val tmp = printPdfTempFile ?: return
+        printPdfPickerOpen = false
+        busy = true
+        busyLabel = "Rendering page 1…"
+        scope.launch {
+            try {
+                // Page 1 stands in for preview and aspect checks; every page is
+                // composed with the same settings later, one at a time, at export.
+                val page = withContext(Dispatchers.IO) { ConvertFormats.renderPdfPageFromFile(tmp, 0, maxDim = 2600) }
+                printPageBitmap = page
+                printUri = uri
+                printImgW = page.width
+                printImgH = page.height
+                printThumb = thumbOf(page)
+                printPreview = if (maxOf(page.width, page.height) > 1200) {
+                    val sc = 1200f / maxOf(page.width, page.height)
+                    Bitmap.createScaledBitmap(page, (page.width * sc).toInt().coerceAtLeast(1), (page.height * sc).toInt().coerceAtLeast(1), true)
+                } else page
+                printName = queryDisplayName(context, uri) ?: "document.pdf"
+                printLabel = "PDF · All $printPdfPageCount pages"
+                printOrigSize = querySourceSize(context, uri)
+                printPdfAllPages = true
+                printResultBytes = null
+                printResultFiles.forEach { it.delete() }
+                printResultFiles.clear()
+                printSaved = false
+                printPdfThumbs.clear()
+                printPdfThumbQueue.clear()
+                printPdfThumbQueued.clear()
+                busy = false
+                busyLabel = ""
+            } catch (e: Exception) {
+                busy = false
+                busyLabel = ""
+                snackbar.showSnackbar("Could not render that PDF: ${e.message ?: "unknown error"}")
             }
         }
     }
@@ -1502,36 +1548,67 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
         if (wIn <= 0 || hIn <= 0) { scope.launch { snackbar.showSnackbar("Enter a valid print size first.") }; return }
         val sheetMode = printSheetOn && printMultiCopyEligible()
         if (sheetMode && printSheetGrid()[2] <= 0) { scope.launch { snackbar.showSnackbar("That count does not fit on $printSheet - try fewer copies or A4.") }; return }
+        val allPagesMode = printPdfAllPages && printPdfTempFile != null
         busy = true
         busyLabel = "Preparing print file…"
         scope.launch {
             try {
+                printResultFiles.forEach { it.delete() }
+                printResultFiles.clear()
                 val bleedIn = if (printBleedOn) PrintUtils.BLEED_IN else 0.0
                 val marginIn = if (printMarginsOn) PrintUtils.MARGIN_IN else 0.0
                 val bg = if (printBgWhite) android.graphics.Color.WHITE else android.graphics.Color.rgb(0xF2, 0xF2, 0xF2)
-                val result = withContext(Dispatchers.IO) {
-                    val src = printPageBitmap ?: decodeOrientedBitmap(context, uri!!)
-                    if (sheetMode) {
-                        val (sW, sH) = printSheetDimsIn()
-                        val g = printSheetGrid()
-                        val gapIn = if (g[3] == 1) PrintUtils.SHEET_GAP_IN else 0.0
-                        if (printFormat == "PDF") {
-                            buildPrintSheetPdf(src, sW, sH, wIn, hIn, g[0], g[1], g[2], gapIn, printPpi, printFilename)
+                if (allPagesMode) {
+                    // Every page in one run with the same settings, composed one page
+                    // at a time into temp cache files - nothing is saved until Save.
+                    val m = withContext(Dispatchers.IO) {
+                        val tmpPdf = printPdfTempFile!!
+                        val outDir = File(context.cacheDir, "images").apply { mkdirs() }
+                        val onProg: (Int, Int) -> Unit = { p, n -> busyLabel = "Preparing print file… (page $p of $n)" }
+                        if (sheetMode) {
+                            val (sW, sH) = printSheetDimsIn()
+                            val g = printSheetGrid()
+                            val gapIn = if (g[3] == 1) PrintUtils.SHEET_GAP_IN else 0.0
+                            if (printFormat == "PDF") buildPrintSheetPdfAllPages(tmpPdf, sW, sH, wIn, hIn, g[0], g[1], g[2], gapIn, printPpi, printFilename, File(outDir, "$printFilename.pdf"), onProg)
+                            else buildPrintSheetRasterAllPages(tmpPdf, sW, sH, wIn, hIn, g[0], g[1], g[2], gapIn, printPpi, printJpgQuality, printFormat, printFilename, outDir, onProg)
+                        } else if (printFormat == "PDF") {
+                            buildPrintPdfAllPages(tmpPdf, wIn, hIn, bleedIn, marginIn, printFitMode, printPpi, printCropMarks, printFilename, File(outDir, "$printFilename.pdf"), onProg)
                         } else {
-                            buildPrintSheetRaster(src, sW, sH, wIn, hIn, g[0], g[1], g[2], gapIn, printPpi, printJpgQuality, printFormat, printFilename)
+                            buildPrintRasterAllPages(tmpPdf, wIn, hIn, bleedIn, marginIn, bg, printFitMode, printPpi, printJpgQuality, printFormat, printFilename, outDir, onProg)
                         }
-                    } else if (printFormat == "PDF") {
-                        buildPrintPdf(src, wIn, hIn, bleedIn, marginIn, printFitMode, printPpi, printCropMarks, printFilename)
-                    } else {
-                        buildPrintRaster(src, wIn, hIn, bleedIn, marginIn, bg, printFitMode, printPpi, printJpgQuality, printFormat, printFilename)
                     }
+                    printResultFiles.addAll(m.files)
+                    printResultBytes = null
+                    printResultName = m.name
+                    printResultMime = m.mime
+                    printResultDims = m.dims
+                } else {
+                    val result = withContext(Dispatchers.IO) {
+                        val src = printPageBitmap ?: decodeOrientedBitmap(context, uri!!)
+                        if (sheetMode) {
+                            val (sW, sH) = printSheetDimsIn()
+                            val g = printSheetGrid()
+                            val gapIn = if (g[3] == 1) PrintUtils.SHEET_GAP_IN else 0.0
+                            if (printFormat == "PDF") {
+                                buildPrintSheetPdf(src, sW, sH, wIn, hIn, g[0], g[1], g[2], gapIn, printPpi, printFilename)
+                            } else {
+                                buildPrintSheetRaster(src, sW, sH, wIn, hIn, g[0], g[1], g[2], gapIn, printPpi, printJpgQuality, printFormat, printFilename)
+                            }
+                        } else if (printFormat == "PDF") {
+                            buildPrintPdf(src, wIn, hIn, bleedIn, marginIn, printFitMode, printPpi, printCropMarks, printFilename)
+                        } else {
+                            buildPrintRaster(src, wIn, hIn, bleedIn, marginIn, bg, printFitMode, printPpi, printJpgQuality, printFormat, printFilename)
+                        }
+                    }
+                    printResultBytes = result.bytes
+                    printResultName = result.name
+                    printResultMime = result.mime
+                    printResultDims = result.dims
                 }
-                printResultBytes = result.bytes
-                printResultName = result.name
-                printResultMime = result.mime
-                printResultDims = result.dims
                 printSaved = false
             } catch (e: Exception) {
+                printResultFiles.forEach { it.delete() }
+                printResultFiles.clear()
                 snackbar.showSnackbar("Could not create the print file: ${e.message ?: "unknown error"}")
             }
             busy = false
@@ -1540,6 +1617,32 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
     }
 
     fun savePrintResult() {
+        if (printResultFiles.isNotEmpty()) {
+            busy = true
+            busyLabel = "Saving…"
+            scope.launch {
+                try {
+                    val count = printResultFiles.size
+                    withContext(Dispatchers.IO) {
+                        printResultFiles.forEachIndexed { idx, f ->
+                            if (count > 1) busyLabel = "Saving… (${idx + 1} of $count)"
+                            val bytes = f.readBytes()
+                            if (printResultMime == "application/pdf") saveToDownloads(context, f.name, printResultMime, bytes)
+                            else saveToGallery(context, f.name, printResultMime, bytes)
+                        }
+                    }
+                    printSaved = true
+                    busy = false
+                    busyLabel = ""
+                    snackbar.showSnackbar(if (count > 1) "Saved $count files. Your original is unchanged." else "Saved ${printResultFiles.first().name}. Your original is unchanged.")
+                } catch (e: Exception) {
+                    busy = false
+                    busyLabel = ""
+                    snackbar.showSnackbar("Save failed: ${e.message ?: "unknown error"}")
+                }
+            }
+            return
+        }
         val bytes = printResultBytes ?: return
         busy = true
         busyLabel = "Saving…"
@@ -1562,6 +1665,29 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
     }
 
     fun sharePrintResult() {
+        if (printResultFiles.isNotEmpty()) {
+            scope.launch {
+                try {
+                    val uris = ArrayList(printResultFiles.map { FileProvider.getUriForFile(context, context.packageName + ".fileprovider", it) })
+                    val intent = if (uris.size == 1) {
+                        Intent(Intent.ACTION_SEND).apply {
+                            type = printResultMime
+                            putExtra(Intent.EXTRA_STREAM, uris[0])
+                        }
+                    } else {
+                        Intent(Intent.ACTION_SEND_MULTIPLE).apply {
+                            type = printResultMime
+                            putParcelableArrayListExtra(Intent.EXTRA_STREAM, uris)
+                        }
+                    }
+                    intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    context.startActivity(Intent.createChooser(intent, "Share print file"))
+                } catch (e: Exception) {
+                    snackbar.showSnackbar("Share failed: ${e.message ?: "unknown error"}")
+                }
+            }
+            return
+        }
         val bytes = printResultBytes ?: return
         scope.launch {
             try {
@@ -1594,6 +1720,7 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
         printResultBytes = null; printResultName = ""; printResultMime = ""; printResultDims = ""
         printPdfUri = null; printPdfThumbs.clear(); printPdfPageCount = 0; printPdfTempFile?.delete(); printPdfTempFile = null; printPdfThumbQueue.clear(); printPdfThumbQueued.clear(); printPdfPickerOpen = false; printPageBitmap = null
         printSheetOn = false; printSheet = "4 × 6"; printCopyCount = 4
+        printPdfAllPages = false; printResultFiles.forEach { it.delete() }; printResultFiles.clear()
         printSaved = false; printGoSetup = false
     }
 
@@ -2644,6 +2771,14 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                                     .padding(horizontal = 14.dp),
                                 color = DeepNavy
                             )
+                        } else if (screen == Screen.PrintHome) {
+                            Text(
+                                "Reset",
+                                modifier = Modifier
+                                    .clickable { resetPrint() }
+                                    .padding(horizontal = 14.dp),
+                                color = DeepNavy
+                            )
                         } else if (screen == Screen.PrintSetup) {
                             Text(
                                 "Reset",
@@ -3210,6 +3345,7 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                 pdfPageCount = if (printPdfPickerOpen) printPdfPageCount else 0,
                 pdfThumbs = printPdfThumbs,
                 onPdfThumbNeeded = { ensurePrintPdfThumb(it) },
+                onPdfAllPages = { selectPrintPdfAllPages() },
                 onPdfPage = { selectPrintPdfPage(it) },
                 onContinue = { screen = Screen.PrintSetup }
             )
@@ -3307,6 +3443,7 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                     grid = printSheetGrid(),
                     sheetWIn = printSheetDimsIn().first,
                     sheetHIn = printSheetDimsIn().second,
+                    allPagesNote = if (printPdfAllPages && printPdfPageCount > 1) "All $printPdfPageCount pages are exported in one run with the same settings - this preview shows page 1." else null,
                     onContinue = { screen = Screen.PrintExport }
                 )
             }
@@ -3331,9 +3468,9 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                     sheetMode = printSheetOn && printMultiCopyEligible(),
                     grid = printSheetGrid(),
                     sheet = printSheet,
-                    resultReady = printResultBytes != null,
-                    resultName = printResultName,
-                    resultSize = printResultBytes?.size?.toLong() ?: -1L,
+                    resultReady = printResultBytes != null || printResultFiles.isNotEmpty(),
+                    resultName = if (printResultFiles.size > 1) "${printResultFiles.size} files · ${printResultFiles.first().name} …" else printResultName,
+                    resultSize = printResultBytes?.size?.toLong() ?: if (printResultFiles.isNotEmpty()) printResultFiles.sumOf { it.length() } else -1L,
                     resultDims = printResultDims,
                     saved = printSaved,
                     busy = busy,
@@ -5887,6 +6024,213 @@ private fun buildPrintSheetPdf(src: Bitmap, sheetWIn: Double, sheetHIn: Double, 
     return PrintOutput(baos.toByteArray(), "$filename.pdf", "application/pdf", dims)
 }
 
+data class PrintMultiOutput(val files: List<File>, val name: String, val mime: String, val dims: String)
+
+private fun renderSrcPdfPage(renderer: PdfRenderer, index: Int, maxDim: Int): Bitmap {
+    val page = renderer.openPage(index)
+    try {
+        val scale = minOf(1f, maxDim.toFloat() / maxOf(page.width, page.height).coerceAtLeast(1))
+        val w = (page.width * scale).toInt().coerceAtLeast(1)
+        val h = (page.height * scale).toInt().coerceAtLeast(1)
+        val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+        bmp.eraseColor(android.graphics.Color.WHITE)
+        page.render(bmp, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+        return bmp
+    } finally {
+        page.close()
+    }
+}
+
+/** All-pages raster: every PDF page composed with the same settings, one encoded temp file per page. */
+fun buildPrintRasterAllPages(pdfFile: File, wIn: Double, hIn: Double, bleedIn: Double, marginIn: Double, bg: Int, mode: String, ppi: Int, quality: Int, format: String, filename: String, outDir: File, onProgress: (Int, Int) -> Unit): PrintMultiOutput {
+    val totalWIn = wIn + bleedIn * 2
+    val totalHIn = hIn + bleedIn * 2
+    val req = PrintUtils.requiredPixels(totalWIn, totalHIn, ppi)
+    val capped = PrintUtils.cappedPixels(req[0], req[1])
+    val wasCapped = capped[0] != req[0] || capped[1] != req[1]
+    val marginPxX = (marginIn * capped[0] / totalWIn).toInt()
+    val marginPxY = (marginIn * capped[1] / totalHIn).toInt()
+    val areaW = (capped[0] - marginPxX * 2).coerceAtLeast(1)
+    val areaH = (capped[1] - marginPxY * 2).coerceAtLeast(1)
+    val ext = if (format == "PNG") "png" else "jpg"
+    val files = mutableListOf<File>()
+    ConvertFormats.withPdfRendererOnFile(pdfFile) { renderer ->
+        val n = renderer.pageCount
+        for (i in 0 until n) {
+            onProgress(i + 1, n)
+            val src = renderSrcPdfPage(renderer, i, 2600)
+            try {
+                val placed = PrintUtils.renderPrint(src, areaW, areaH, mode, if (format == "PNG") android.graphics.Color.TRANSPARENT else bg)
+                val out = Bitmap.createBitmap(capped[0], capped[1], Bitmap.Config.ARGB_8888)
+                val c = android.graphics.Canvas(out)
+                c.drawColor(if (format == "PNG") android.graphics.Color.TRANSPARENT else bg)
+                c.drawBitmap(placed, marginPxX.toFloat(), marginPxY.toFloat(), null)
+                val f = File(outDir, "$filename-page-${(i + 1).toString().padStart(3, '0')}.$ext")
+                FileOutputStream(f).use { fos ->
+                    if (format == "PNG") {
+                        out.compress(Bitmap.CompressFormat.PNG, 100, fos)
+                    } else {
+                        val fl = ConvertFormats.flatten(out, bg)
+                        fl.compress(Bitmap.CompressFormat.JPEG, quality.coerceIn(1, 100), fos)
+                        if (fl != out) fl.recycle()
+                    }
+                }
+                files.add(f)
+                placed.recycle()
+                out.recycle()
+            } finally {
+                src.recycle()
+            }
+        }
+    }
+    if (files.isEmpty()) throw IllegalStateException("No pages")
+    val dims = "${files.size} files · ${capped[0]} × ${capped[1]} px" + (if (wasCapped) " (scaled to fit device memory)" else "")
+    return PrintMultiOutput(files, files.first().name, if (format == "PNG") "image/png" else "image/jpeg", dims)
+}
+
+/** All-pages PDF: one multi-page print-ready PDF, every page composed with the same settings. */
+fun buildPrintPdfAllPages(pdfFile: File, wIn: Double, hIn: Double, bleedIn: Double, marginIn: Double, mode: String, ppi: Int, cropMarks: Boolean, filename: String, outFile: File, onProgress: (Int, Int) -> Unit): PrintMultiOutput {
+    val pageWIn = wIn + bleedIn * 2
+    val pageHIn = hIn + bleedIn * 2
+    val pageWPt = (pageWIn * 72).toInt().coerceAtLeast(1)
+    val pageHPt = (pageHIn * 72).toInt().coerceAtLeast(1)
+    val areaWIn = (pageWIn - marginIn * 2).coerceAtLeast(0.1)
+    val areaHIn = (pageHIn - marginIn * 2).coerceAtLeast(0.1)
+    val req0 = PrintUtils.requiredPixels(areaWIn, areaHIn, ppi)
+    val req = PrintUtils.cappedPixels(req0[0], req0[1])
+    var count = 0
+    val doc = PdfDocument()
+    ConvertFormats.withPdfRendererOnFile(pdfFile) { renderer ->
+        val n = renderer.pageCount
+        for (i in 0 until n) {
+            onProgress(i + 1, n)
+            val src = renderSrcPdfPage(renderer, i, 2600)
+            try {
+                val placed = PrintUtils.renderPrint(src, req[0], req[1], mode, android.graphics.Color.WHITE)
+                val page = doc.startPage(PdfDocument.PageInfo.Builder(pageWPt, pageHPt, i + 1).create())
+                val canvas = page.canvas
+                canvas.drawColor(android.graphics.Color.WHITE)
+                val left = (marginIn * 72).toFloat()
+                val top = (marginIn * 72).toFloat()
+                canvas.drawBitmap(placed, null, android.graphics.RectF(left, top, pageWPt - left, pageHPt - top), android.graphics.Paint(android.graphics.Paint.FILTER_BITMAP_FLAG))
+                if (cropMarks && bleedIn > 0) {
+                    val paint = android.graphics.Paint().apply { color = android.graphics.Color.BLACK; strokeWidth = 0.7f }
+                    val t = (bleedIn * 72).toFloat()
+                    val len = 12f
+                    val off = 4f
+                    canvas.drawLine(t - off - len, t, t - off, t, paint)
+                    canvas.drawLine(t, t - off - len, t, t - off, paint)
+                    canvas.drawLine(pageWPt - t + off, t, pageWPt - t + off + len, t, paint)
+                    canvas.drawLine(pageWPt - t, t - off - len, pageWPt - t, t - off, paint)
+                    canvas.drawLine(t - off - len, pageHPt - t, t - off, pageHPt - t, paint)
+                    canvas.drawLine(t, pageHPt - t + off, t, pageHPt - t + off + len, paint)
+                    canvas.drawLine(pageWPt - t + off, pageHPt - t, pageWPt - t + off + len, pageHPt - t, paint)
+                    canvas.drawLine(pageWPt - t, pageHPt - t + off, pageWPt - t, pageHPt - t + off + len, paint)
+                }
+                doc.finishPage(page)
+                placed.recycle()
+                count = n
+            } finally {
+                src.recycle()
+            }
+        }
+    }
+    if (count == 0) { doc.close(); throw IllegalStateException("No pages") }
+    FileOutputStream(outFile).use { doc.writeTo(it) }
+    doc.close()
+    val dims = "$count pages · ${PrintUtils.fmtDim(pageWIn, "in")} × ${PrintUtils.fmtDim(pageHIn, "in")} in PDF page"
+    return PrintMultiOutput(listOf(outFile), outFile.name, "application/pdf", dims)
+}
+
+/** All-pages multi-copy sheets as raster files: one sheet image per PDF page. */
+fun buildPrintSheetRasterAllPages(pdfFile: File, sheetWIn: Double, sheetHIn: Double, cellWIn: Double, cellHIn: Double, cols: Int, rows: Int, count: Int, gapIn: Double, ppi: Int, quality: Int, format: String, filename: String, outDir: File, onProgress: (Int, Int) -> Unit): PrintMultiOutput {
+    val req = PrintUtils.requiredPixels(sheetWIn, sheetHIn, ppi)
+    val capped = PrintUtils.cappedPixels(req[0], req[1])
+    val wasCapped = capped[0] != req[0] || capped[1] != req[1]
+    val cellWPx = (cellWIn * capped[0] / sheetWIn).toInt().coerceAtLeast(1)
+    val cellHPx = (cellHIn * capped[1] / sheetHIn).toInt().coerceAtLeast(1)
+    val gapPx = (gapIn * capped[0] / sheetWIn).toInt()
+    val ext = if (format == "PNG") "png" else "jpg"
+    val files = mutableListOf<File>()
+    ConvertFormats.withPdfRendererOnFile(pdfFile) { renderer ->
+        val n = renderer.pageCount
+        for (i in 0 until n) {
+            onProgress(i + 1, n)
+            val src = renderSrcPdfPage(renderer, i, 2600)
+            try {
+                val sheet = PrintUtils.renderSheet(src, capped[0], capped[1], cellWPx, cellHPx, cols, rows, gapPx, true, count)
+                val f = File(outDir, "$filename-page-${(i + 1).toString().padStart(3, '0')}.$ext")
+                FileOutputStream(f).use { fos ->
+                    if (format == "PNG") {
+                        sheet.compress(Bitmap.CompressFormat.PNG, 100, fos)
+                    } else {
+                        val fl = ConvertFormats.flatten(sheet, android.graphics.Color.WHITE)
+                        fl.compress(Bitmap.CompressFormat.JPEG, quality.coerceIn(1, 100), fos)
+                        if (fl != sheet) fl.recycle()
+                    }
+                }
+                files.add(f)
+                sheet.recycle()
+            } finally {
+                src.recycle()
+            }
+        }
+    }
+    if (files.isEmpty()) throw IllegalStateException("No pages")
+    val dims = "${files.size} files · $count ${if (count == 1) "copy" else "copies"} ($cols × $rows) each" + (if (wasCapped) " (scaled to fit device memory)" else "")
+    return PrintMultiOutput(files, files.first().name, if (format == "PNG") "image/png" else "image/jpeg", dims)
+}
+
+/** All-pages multi-copy sheets in one PDF: one sheet page per PDF page. */
+fun buildPrintSheetPdfAllPages(pdfFile: File, sheetWIn: Double, sheetHIn: Double, cellWIn: Double, cellHIn: Double, cols: Int, rows: Int, count: Int, gapIn: Double, ppi: Int, filename: String, outFile: File, onProgress: (Int, Int) -> Unit): PrintMultiOutput {
+    val cellPx0 = PrintUtils.requiredPixels(cellWIn, cellHIn, ppi)
+    val cellPx = PrintUtils.cappedPixels(cellPx0[0], cellPx0[1])
+    val pageWPt = (sheetWIn * 72).toInt().coerceAtLeast(1)
+    val pageHPt = (sheetHIn * 72).toInt().coerceAtLeast(1)
+    var srcCount = 0
+    val doc = PdfDocument()
+    ConvertFormats.withPdfRendererOnFile(pdfFile) { renderer ->
+        val n = renderer.pageCount
+        for (i in 0 until n) {
+            onProgress(i + 1, n)
+            val src = renderSrcPdfPage(renderer, i, 2600)
+            try {
+                val cell = PrintUtils.renderPrint(src, cellPx[0], cellPx[1], "Fill", android.graphics.Color.WHITE)
+                val page = doc.startPage(PdfDocument.PageInfo.Builder(pageWPt, pageHPt, i + 1).create())
+                val canvas = page.canvas
+                canvas.drawColor(android.graphics.Color.WHITE)
+                val cellWPt = (cellWIn * 72).toFloat()
+                val cellHPt = (cellHIn * 72).toFloat()
+                val gapPt = (gapIn * 72).toFloat()
+                val gridW = cols * cellWPt + (cols - 1) * gapPt
+                val gridH = rows * cellHPt + (rows - 1) * gapPt
+                val startX = (pageWPt - gridW) / 2f
+                val startY = (pageHPt - gridH) / 2f
+                val paint = android.graphics.Paint(android.graphics.Paint.FILTER_BITMAP_FLAG)
+                val guide = android.graphics.Paint().apply { color = android.graphics.Color.LTGRAY; style = android.graphics.Paint.Style.STROKE; strokeWidth = 0.5f }
+                for (k in 0 until count) {
+                    val r = k / cols
+                    val c = k % cols
+                    val x = startX + c * (cellWPt + gapPt)
+                    val y = startY + r * (cellHPt + gapPt)
+                    canvas.drawBitmap(cell, null, android.graphics.RectF(x, y, x + cellWPt, y + cellHPt), paint)
+                    canvas.drawRect(x, y, x + cellWPt, y + cellHPt, guide)
+                }
+                doc.finishPage(page)
+                cell.recycle()
+                srcCount = n
+            } finally {
+                src.recycle()
+            }
+        }
+    }
+    if (srcCount == 0) { doc.close(); throw IllegalStateException("No pages") }
+    FileOutputStream(outFile).use { doc.writeTo(it) }
+    doc.close()
+    val dims = "$srcCount pages · $count ${if (count == 1) "copy" else "copies"} ($cols × $rows) each · ${PrintUtils.fmtDim(sheetWIn, "in")} × ${PrintUtils.fmtDim(sheetHIn, "in")} in PDF page"
+    return PrintMultiOutput(listOf(outFile), outFile.name, "application/pdf", dims)
+}
+
 fun queryDisplayName(context: android.content.Context, uri: android.net.Uri): String? {
     return try {
         context.contentResolver.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)?.use { c ->
@@ -7416,6 +7760,7 @@ private fun PrintHomeScreen(
     pdfPageCount: Int,
     pdfThumbs: Map<Int, Bitmap>,
     onPdfThumbNeeded: (Int) -> Unit,
+    onPdfAllPages: () -> Unit,
     onPdfPage: (Int) -> Unit,
     onContinue: () -> Unit
 ) {
@@ -7454,6 +7799,24 @@ private fun PrintHomeScreen(
             Card(colors = CardDefaults.cardColors(containerColor = SoftGrey), shape = RoundedCornerShape(12.dp)) {
                 Column(Modifier.fillMaxWidth().padding(14.dp)) {
                     Text("Choose a page ($pdfPageCount pages)", fontWeight = FontWeight.SemiBold, color = DeepNavy, fontSize = 15.sp)
+                    Spacer(Modifier.height(8.dp))
+                    var pickAll by remember(pdfPageCount) { mutableStateOf(false) }
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        if (pickAll) {
+                            OutlinedButton(onClick = { pickAll = false }, modifier = Modifier.weight(1f)) { Text("Selected page", color = DeepNavy) }
+                            Button(onClick = {}, colors = ButtonDefaults.buttonColors(containerColor = SkyBlue), modifier = Modifier.weight(1f)) { Text("All pages", color = Color.White) }
+                        } else {
+                            Button(onClick = {}, colors = ButtonDefaults.buttonColors(containerColor = SkyBlue), modifier = Modifier.weight(1f)) { Text("Selected page", color = Color.White) }
+                            OutlinedButton(onClick = { pickAll = true }, modifier = Modifier.weight(1f)) { Text("All pages", color = DeepNavy) }
+                        }
+                    }
+                    if (pickAll) {
+                        Spacer(Modifier.height(8.dp))
+                        Button(onClick = onPdfAllPages, modifier = Modifier.fillMaxWidth().height(48.dp), colors = ButtonDefaults.buttonColors(containerColor = SkyBlue), shape = RoundedCornerShape(12.dp)) { Text("Use all $pdfPageCount pages", color = Color.White, fontWeight = FontWeight.Bold) }
+                    } else {
+                        Spacer(Modifier.height(4.dp))
+                        Text("Tap a page below to use just that page.", fontSize = 12.sp, color = Slate)
+                    }
                     Spacer(Modifier.height(8.dp))
                     LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                         items(pdfPageCount) { i ->
@@ -7772,6 +8135,7 @@ private fun PrintPreviewScreen(
     grid: IntArray,
     sheetWIn: Double,
     sheetHIn: Double,
+    allPagesNote: String?,
     onContinue: () -> Unit
 ) {
     val bleedIn = if (bleedOn && !sheetMode) PrintUtils.BLEED_IN else 0.0
@@ -7787,6 +8151,10 @@ private fun PrintPreviewScreen(
             else "$preset · ${if (landscape) "Landscape" else "Portrait"} · $ppi PPI",
             fontSize = 14.sp, color = Slate
         )
+        if (allPagesNote != null) {
+            Spacer(Modifier.height(6.dp))
+            Text(allPagesNote, fontSize = 13.sp, color = SkyBlue, fontWeight = FontWeight.SemiBold)
+        }
         Spacer(Modifier.height(10.dp))
         Card(colors = CardDefaults.cardColors(containerColor = SoftGrey), shape = RoundedCornerShape(12.dp)) {
             BoxWithConstraints(Modifier.fillMaxWidth().height(340.dp).padding(18.dp)) {

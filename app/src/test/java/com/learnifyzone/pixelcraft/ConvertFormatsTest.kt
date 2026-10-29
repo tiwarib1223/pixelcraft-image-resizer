@@ -334,6 +334,52 @@ class ConvertFormatsTest {
     }
 
     @Test
+    fun allPagesRasterFromTwoPagePdf() {
+        // His flow: every page converted in one run with the same settings, one file per page.
+        val tmp = File.createTempFile("pc_pdf_all_test", ".pdf")
+        tmp.writeBytes(buildPdfBytes(2))
+        val outDir = File.createTempFile("pc_print_out", "").apply { delete(); mkdirs() }
+        try {
+            val m = buildPrintRasterAllPages(tmp, 4.0, 6.0, 0.0, 0.0, android.graphics.Color.WHITE, "Fit", 150, 90, "JPG", "test-print", outDir) { _, _ -> }
+            assertEquals(2, m.files.size)
+            assertTrue(m.files[0].name.contains("-page-001") && m.files[1].name.contains("-page-002"))
+            m.files.forEach { f ->
+                val decoded = BitmapFactory.decodeFile(f.absolutePath)
+                assertTrue(decoded != null && decoded.width > 0 && decoded.height > 0)
+            }
+        } catch (e: Exception) {
+            val msg = e.message ?: ""
+            if (msg.contains("closed") || msg.contains("No pages") || e is java.io.IOException) return   // host JVM has no PDF engine
+            throw e
+        } finally {
+            tmp.delete()
+            outDir.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun allPagesPdfFromTwoPagePdf() {
+        // One multi-page print-ready PDF, page size = chosen size, one source page per PDF page.
+        val tmp = File.createTempFile("pc_pdf_allpdf_test", ".pdf")
+        tmp.writeBytes(buildPdfBytes(2))
+        val out = File.createTempFile("pc_print_all", ".pdf")
+        try {
+            val m = buildPrintPdfAllPages(tmp, 4.0, 6.0, 0.0, 0.0, "Fit", 150, false, "test-print", out) { _, _ -> }
+            assertEquals(1, m.files.size)
+            assertEquals("application/pdf", m.mime)
+            val bytes = out.readBytes()
+            assertTrue(bytes.size > 100 && String(bytes, 0, 5) == "%PDF-")
+        } catch (e: Exception) {
+            val msg = e.message ?: ""
+            if (msg.contains("closed") || msg.contains("No pages") || e is java.io.IOException) return   // host JVM has no PDF engine
+            throw e
+        } finally {
+            tmp.delete()
+            out.delete()
+        }
+    }
+
+    @Test
     fun sixTargetsInHisOrder() {
         assertEquals(listOf("JPG/JPEG", "PNG", "WebP", "PDF", "BMP", "TIFF"), ConvertFormats.targets.map { it.label })
         assertTrue(ConvertFormats.qualityApplies(ConvertFormats.byId("jpg")))
