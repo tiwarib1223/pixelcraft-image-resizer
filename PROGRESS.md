@@ -1,7 +1,7 @@
 # PixelCraft Image Resizer — Progress
 
 ## Current stage
-Stage 3 v0.9.2 (built on Stage 2E v0.8.1): queue overview screen, the full "Select new dimensions" Process sheet, batch processing of the whole queue with live percent progress, a result screen with savings summary, and batch save (new copies or replace originals). Stage 2C delivered: "My Photos" library screen, export format picker (JPG/PNG/WEBP/PDF), size unit picker (pixels/inch/cm/mm), queue thumbnail strip, and a persistent debug signing key. Stage 2 delivered: process-then-export workflow, aspect-ratio adaptation, camera capture, multi-select (up to 50) with one-by-one queue, recently edited photos, quality control.
+Stage 3 v0.10.0 (built on Stage 2E v0.8.1): queue overview screen, the full "Select new dimensions" Process sheet, batch processing of the whole queue with live percent progress, a result screen with savings summary, and batch save (new copies or replace originals). Stage 2C delivered: "My Photos" library screen, export format picker (JPG/PNG/WEBP/PDF), size unit picker (pixels/inch/cm/mm), queue thumbnail strip, and a persistent debug signing key. Stage 2 delivered: process-then-export workflow, aspect-ratio adaptation, camera capture, multi-select (up to 50) with one-by-one queue, recently edited photos, quality control.
 
 ## Stage 2C: implemented in source
 - New bottom-nav tab "My Photos" with three internal tabs, all zero-permission and on-device:
@@ -73,6 +73,13 @@ Stage 3 v0.9.2 (built on Stage 2E v0.8.1): queue overview screen, the full "Sele
 
 
 
+
+## v0.10.0 feature - Circle Cutter (his tab-4 request, reference screenshot provided)
+- New tool, 4th tile on the homepage (Compress moved down one row; homepage layout/style otherwise untouched).
+- Shapes: Circle, Square, Rounded (18% corner radius), Heart. Draggable 1:1 frame on the photo: drag inside to move, corner handles to resize, page scroll pauses while dragging (same fix as Crop & Rotate v0.9.2).
+- Background choice: Transparent (real PNG/WebP alpha; JPG forced to PNG) / White / Custom Color (8 swatches).
+- Output size in px/inch/cm/mm with DPI field under the units (his rule), one square size.
+- Live preview card of the cutout. Reset stays in-tool with Select Image card. Apply & Save goes to the standard result page (before/after + sizes + export). Fully on-device.
 
 ## v0.9.2 fix (his report: "when I select image it is must stay in centre. Now it is stay in one side.")
 - Crop & Rotate preview: the photo was shifted to one side because centering was applied twice (the layout centers the image AND a manual offset moved it again). The manual offset is removed - the photo and its crop frame now stay centered on select, and through rotate, mirror and adjust.

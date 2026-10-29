@@ -89,4 +89,23 @@ class MainFlowUiTest {
             waitForText("Vertical")
         }
     }
+
+    @Test
+    fun circleCutterToolShowsItsControls() {
+        val bytes = javaClass.classLoader!!.getResourceAsStream("test_photo.jpg")!!.readBytes()
+        val tmp = File.createTempFile("pc_ui_test_circle", ".jpg")
+        tmp.writeBytes(bytes)
+        tmp.deleteOnExit()
+        val intent = Intent(ApplicationProvider.getApplicationContext(), MainActivity::class.java)
+            .putExtra("pixelcraft.test.photo", tmp.absolutePath)
+            .putExtra("pixelcraft.test.tool", "circle")
+        ActivityScenario.launch<MainActivity>(intent).use {
+            waitForText("Shape")
+            waitForText("Heart")
+            waitForText("Rounded")
+            waitForText("Custom Color")
+            waitForText("Apply & Save")
+            waitForText("DPI - 300 is standard for print")
+        }
+    }
 }

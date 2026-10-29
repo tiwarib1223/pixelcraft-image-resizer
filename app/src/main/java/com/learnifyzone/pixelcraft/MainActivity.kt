@@ -121,8 +121,13 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.geometry.RoundRect
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.PathFillType
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
@@ -182,7 +187,7 @@ class MainActivity : ComponentActivity() {
 
 private enum class MainTab { Home, MyPhotos, Presets, Settings }
 private enum class Screen { Home, Editor, Export, Print, Success, QueueOverview, QueueResult }
-private enum class Tool(val label: String) { Resize("Resize"), Presets("Presets"), Crop("Crop & Rotate"), Background("Background"), Format("Format") }
+private enum class Tool(val label: String) { Resize("Resize"), Presets("Presets"), Crop("Crop & Rotate"), Background("Background"), Circle("Circle Cutter"), Format("Format") }
 
 private enum class CropTransform { LEFT, RIGHT, FLIP_H, FLIP_V }
 private enum class BgChoice(val label: String) { TRANSPARENT("Transparent"), WHITE("White"), CUSTOM("Custom Color") }
@@ -252,6 +257,16 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
     var bgHeight by remember { mutableStateOf("") }
     var bgDpi by remember { mutableStateOf("300") }
     var bgError by remember { mutableStateOf("") }
+    var pendingCircleTool by remember { mutableStateOf(false) }
+    var circleShape by rememberSaveable { mutableStateOf("Circle") }
+    var circleRect by remember { mutableStateOf(CropMath.defaultRect()) }
+    var circleChoice by remember { mutableStateOf(BgChoice.TRANSPARENT) }
+    var circleCustomColor by remember { mutableLongStateOf(0xFF42A5F5) }
+    var circleUnit by remember { mutableStateOf("px") }
+    var circleSize by remember { mutableStateOf("") }
+    var circleDpi by remember { mutableStateOf("300") }
+    var circlePreview by remember { mutableStateOf<Bitmap?>(null) }
+    fun circleDpiValue(): Double = circleDpi.trim().replace(',', '.').toDoubleOrNull()?.takeIf { it > 0 } ?: 300.0
     var exportDpi by remember { mutableIntStateOf(0) }
     fun bgDpiValue(): Double = bgDpi.trim().replace(',', '.').toDoubleOrNull()?.takeIf { it > 0 } ?: 300.0
     var pendingDraft by remember { mutableStateOf<Draft?>(null) }
@@ -397,9 +412,11 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                 straightenAngle = 0f
                 tiltHAngle = 0f
                 tiltVAngle = 0f
+                if (circleSize.isBlank()) circleSize = minOf(loaded.width, loaded.height).toString()
                 tool = when {
                     pendingBgTool -> { pendingBgTool = false; Tool.Background }
                     pendingCropTool -> { pendingCropTool = false; Tool.Crop }
+                    pendingCircleTool -> { pendingCircleTool = false; Tool.Circle }
                     else -> Tool.Resize
                 }
                 // Clear busy BEFORE the snackbar: showSnackbar suspends until dismissal,
@@ -421,7 +438,9 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
     LaunchedEffect(Unit) {
         val testPath = (context as? Activity)?.intent?.getStringExtra("pixelcraft.test.photo")
         if (!testPath.isNullOrBlank() && sourceUri == null && workingBitmap == null) {
-            if ((context as? Activity)?.intent?.getStringExtra("pixelcraft.test.tool") == "crop") pendingCropTool = true
+            val testTool = (context as? Activity)?.intent?.getStringExtra("pixelcraft.test.tool")
+            if (testTool == "crop") pendingCropTool = true
+            if (testTool == "circle") pendingCircleTool = true
             loadPhoto(Uri.fromFile(File(testPath)), isCamera = false)
         }
     }
@@ -484,6 +503,53 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                 if (bgChoice == BgChoice.TRANSPARENT && outFormat() == ExportFormat.JPEG) chosenFormat = "PNG"
                 estimatedBytes = withContext(Dispatchers.IO) { estimateBytes(out, outFormat(), quality) }
                 screen = Screen.Export
+            } finally {
+                busy = false
+                busyLabel = ""
+            }
+        }
+    }
+
+    fun convertCircleToUnit(from: String, to: String) {
+        if (from == to) return
+        val dpi = circleDpiValue()
+        val sPx = parseToPx(circleSize, from, dpi)
+        circleUnit = to
+        circleSize = sPx?.let { fmtUnit(it.toDouble(), to, dpi) } ?: ""
+    }
+
+    // Live preview of the shape cut-out (small canvas for speed; full size at export).
+    LaunchedEffect(tool, workingBitmap, circleRect, circleShape, circleChoice, circleCustomColor, circleSize, circleUnit, circleDpi) {
+        if (tool != Tool.Circle) return@LaunchedEffect
+        val src = workingBitmap
+        circlePreview = if (src == null) null else withContext(Dispatchers.Default) {
+            val s = (parseToPx(circleSize, circleUnit, circleDpiValue()) ?: minOf(src.width, src.height)).coerceIn(16, 384)
+            composeOnBackground(shapeCutout(src, circleRect, circleShape, s), s, s, circleChoice, circleCustomColor)
+        }
+    }
+
+    fun applyCircle() {
+        val src = workingBitmap ?: return
+        val dpi = circleDpiValue().coerceIn(72.0, 1200.0)
+        val s = (parseToPx(circleSize, circleUnit, dpi) ?: minOf(src.width, src.height)).coerceIn(16, 12000)
+        busy = true
+        busyLabel = "Cutting shape…"
+        scope.launch {
+            try {
+                val out = withContext(Dispatchers.Default) {
+                    composeOnBackground(shapeCutout(src, circleRect, circleShape, s), s, s, circleChoice, circleCustomColor)
+                }
+                processedBitmap = out
+                exportName = suggestBaseName(out.width, out.height)
+                exportDpi = dpi.roundToInt()
+                beforeAfter = true
+                // Transparent needs real alpha - JPG has none, so force PNG like the Background tool.
+                if (circleChoice == BgChoice.TRANSPARENT && outFormat() == ExportFormat.JPEG) chosenFormat = "PNG"
+                estimatedBytes = withContext(Dispatchers.IO) { estimateBytes(out, outFormat(), quality) }
+                screen = Screen.Export
+                snackbar.showSnackbar("$circleShape cut: ${out.width} × ${out.height} px.")
+            } catch (e: Exception) {
+                snackbar.showSnackbar("Couldn't cut this shape. Try a smaller size.")
             } finally {
                 busy = false
                 busyLabel = ""
@@ -988,6 +1054,7 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
         val uri = sourceUri
         val stayInBackground = tool == Tool.Background
         val stayInCrop = tool == Tool.Crop
+        val stayInCircle = tool == Tool.Circle
         clearProcessedResults()
         workingBitmap = null
         processedBitmap = null
@@ -1016,14 +1083,17 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
         pendingDraft = null
         pendingBgTool = stayInBackground
         pendingCropTool = stayInCrop
+        pendingCircleTool = stayInCircle
         cropRect = CropMath.defaultRect()
+        circleRect = CropMath.defaultRect()
+        circlePreview = null
         straightenAngle = 0f
         tiltHAngle = 0f
         tiltVAngle = 0f
         if (uri != null) {
             scope.launch(Dispatchers.IO) { DraftsStore.remove(context, uri.toString()) }
         }
-        tool = if (stayInBackground) Tool.Background else if (stayInCrop) Tool.Crop else Tool.Resize
+        tool = if (stayInBackground) Tool.Background else if (stayInCrop) Tool.Crop else if (stayInCircle) Tool.Circle else Tool.Resize
         screen = Screen.Editor
     }
 
@@ -1336,6 +1406,10 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                                 if (workingBitmap != null) { screen = Screen.Editor; tool = Tool.Crop; cropAspect = "Free"; cropRect = CropMath.defaultRect() }
                                 else { pendingCropTool = true; pickPhotos() }
                             }
+                            "Circle Cutter" -> {
+                                if (workingBitmap != null) { screen = Screen.Editor; tool = Tool.Circle; circleShape = "Circle"; circleRect = CropMath.defaultRect() }
+                                else { pendingCircleTool = true; pickPhotos() }
+                            }
                             else -> scope.launch { snackbar.showSnackbar("$feature is planned for a later development stage.") }
                         }
                     }
@@ -1439,6 +1513,7 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                         Tool.Presets -> { saveDraftIfNeeded(); screen = Screen.Home; tab = MainTab.Presets }
                         Tool.Background -> Unit
                         Tool.Crop -> { cropAspect = "Free"; cropRect = CropMath.defaultRect(); straightenAngle = 0f; tiltHAngle = 0f; tiltVAngle = 0f }
+                        Tool.Circle -> { circleShape = "Circle"; circleRect = CropMath.defaultRect() }
                         else -> scope.launch { snackbar.showSnackbar("${selected.label} is planned for a later stage. Resize and export are available now.") }
                     }
                 },
@@ -1542,6 +1617,22 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                 onBgDpi = { bgDpi = it.filter { c -> c.isDigit() } },
                 onRemoveBackground = { runRemoveBackground() },
                 onBgExport = { continueBgExport() },
+                circleShape = circleShape,
+                circleRect = circleRect,
+                circleChoice = circleChoice,
+                circleCustomColor = circleCustomColor,
+                circleUnit = circleUnit,
+                circleSize = circleSize,
+                circleDpi = circleDpi,
+                circlePreview = circlePreview,
+                onCircleShape = { circleShape = it; circleRect = CropMath.defaultRect() },
+                onCircleRect = { circleRect = it },
+                onCircleChoice = { circleChoice = it },
+                onCircleCustomColor = { circleCustomColor = it },
+                onCircleUnit = { convertCircleToUnit(circleUnit, it) },
+                onCircleSize = { circleSize = it.filter { c -> c.isDigit() || c == '.' || c == ',' } },
+                onCircleDpi = { circleDpi = it.filter { c -> c.isDigit() } },
+                onApplyCircle = { applyCircle() },
                 onSelectImage = { pickPhotos() }
             )
             Screen.Export -> ExportScreen(
@@ -1657,6 +1748,7 @@ private fun HomeScreen(
         Feature("Resize", "Change image dimensions", "↔", true),
         Feature("Remove Background", "Cut out a product or person", "✦"),
         Feature("Crop & Rotate", "Adjust framing and angle", "⌗"),
+        Feature("Circle Cutter", "Cut photos into shapes", "◯"),
         Feature("Compress", "Reduce file size", "↓"),
         Feature("Convert Format", "JPEG, PNG and WebP", "⇄"),
         Feature("Social & Shop Sizes", "Creator-ready dimensions", "▦"),
@@ -2319,6 +2411,22 @@ private fun EditorScreen(
     onBgDpi: (String) -> Unit,
     onRemoveBackground: () -> Unit,
     onBgExport: () -> Unit,
+    circleShape: String,
+    circleRect: FloatArray,
+    circleChoice: BgChoice,
+    circleCustomColor: Long,
+    circleUnit: String,
+    circleSize: String,
+    circleDpi: String,
+    circlePreview: Bitmap?,
+    onCircleShape: (String) -> Unit,
+    onCircleRect: (FloatArray) -> Unit,
+    onCircleChoice: (BgChoice) -> Unit,
+    onCircleCustomColor: (Long) -> Unit,
+    onCircleUnit: (String) -> Unit,
+    onCircleSize: (String) -> Unit,
+    onCircleDpi: (String) -> Unit,
+    onApplyCircle: () -> Unit,
     onSelectImage: () -> Unit
 ) {
     // While the crop frame is being dragged the page scroll is paused, otherwise
@@ -2356,7 +2464,16 @@ private fun EditorScreen(
         ) {
             val display = if (tool == Tool.Background && bgPreview != null) bgPreview else working
             val displayImage = remember(display) { display?.asImageBitmap() }
-            if (tool == Tool.Crop && working != null) {
+            if (tool == Tool.Circle && working != null) {
+                ShapePreview(
+                    bitmap = working,
+                    rect = circleRect,
+                    shape = circleShape,
+                    onRect = onCircleRect,
+                    onDraggingChange = { cropDragging = it },
+                    modifier = Modifier.fillMaxSize().padding(8.dp)
+                )
+            } else if (tool == Tool.Crop && working != null) {
                 CropPreview(
                     bitmap = working,
                     rect = cropRect,
@@ -2578,11 +2695,77 @@ private fun EditorScreen(
                     Text("Apply Crop", fontWeight = FontWeight.Bold)
                 }
             }
+        } else if (tool == Tool.Circle) {
+            Text("Shape", color = DeepNavy, fontWeight = FontWeight.SemiBold, fontSize = 14.sp, modifier = Modifier.padding(bottom = 8.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())) {
+                listOf("Circle", "Square", "Rounded", "Heart").forEach { label ->
+                    val selected = circleShape == label
+                    Surface(modifier = Modifier.clickable { onCircleShape(label) }, shape = RoundedCornerShape(9.dp), color = if (selected) SkyBlue else PaleBlue) {
+                        Text(label, modifier = Modifier.padding(horizontal = 14.dp, vertical = 9.dp), fontSize = 12.sp, color = if (selected) Color.White else DeepNavy, fontWeight = FontWeight.SemiBold, maxLines = 1, softWrap = false)
+                    }
+                }
+            }
+            Text("Background", color = DeepNavy, fontWeight = FontWeight.SemiBold, fontSize = 14.sp, modifier = Modifier.padding(top = 14.dp, bottom = 4.dp))
+            Text("Choose what to show outside the shape", color = Slate, fontSize = 11.sp, modifier = Modifier.padding(bottom = 8.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())) {
+                BgChoice.values().forEach { item ->
+                    val selected = circleChoice == item
+                    Surface(modifier = Modifier.clickable { onCircleChoice(item) }, shape = RoundedCornerShape(10.dp), color = if (selected) SkyBlue else SoftGrey) {
+                        Text(item.label, modifier = Modifier.padding(horizontal = 14.dp, vertical = 9.dp), fontSize = 12.sp, color = if (selected) Color.White else DeepNavy, fontWeight = FontWeight.SemiBold, maxLines = 1, softWrap = false)
+                    }
+                }
+            }
+            if (circleChoice == BgChoice.CUSTOM) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth().padding(top = 10.dp)) {
+                    listOf(0xFF42A5F5, 0xFFFF7043, 0xFF66BB6A, 0xFFEC407A, 0xFFAB47BC, 0xFFFFCA28, 0xFF8D6E63, 0xFF212121).forEach { colorValue ->
+                        val selected = circleCustomColor == colorValue
+                        Box(
+                            Modifier.size(34.dp).clip(CircleShape).background(Color(colorValue))
+                                .border(if (selected) 3.dp else 1.dp, if (selected) SkyBlue else BorderGrey, CircleShape)
+                                .clickable { onCircleCustomColor(colorValue) }
+                        )
+                    }
+                }
+            }
+            Text("Output size and DPI", color = DeepNavy, fontWeight = FontWeight.SemiBold, fontSize = 14.sp, modifier = Modifier.padding(top = 14.dp, bottom = 8.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())) {
+                listOf("px" to "Pixels", "in" to "Inches", "cm" to "cm", "mm" to "mm").forEach { (value, label) ->
+                    val selected = circleUnit == value
+                    Surface(modifier = Modifier.clickable { onCircleUnit(value) }, shape = RoundedCornerShape(9.dp), color = if (selected) SkyBlue else PaleBlue) {
+                        Text(label, modifier = Modifier.padding(horizontal = 12.dp, vertical = 9.dp), fontSize = 11.sp, color = if (selected) Color.White else DeepNavy, textAlign = TextAlign.Center, maxLines = 1, softWrap = false)
+                    }
+                }
+            }
+            OutlinedTextField(value = circleSize, onValueChange = onCircleSize, modifier = Modifier.fillMaxWidth().padding(top = 8.dp), label = { Text(if (circleUnit == "px") "Size (px)" else "Size ($circleUnit)") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), singleLine = true)
+            OutlinedTextField(value = circleDpi, onValueChange = onCircleDpi, modifier = Modifier.fillMaxWidth().padding(top = 8.dp), label = { Text("DPI - 300 is standard for print") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), singleLine = true)
+            Text("Transparent stays see-through in PNG and WebP. JPG and PDF put the photo on white.", color = Slate, fontSize = 11.sp, lineHeight = 15.sp, modifier = Modifier.padding(top = 8.dp))
+            if (circlePreview != null) {
+                Text("Preview", color = DeepNavy, fontWeight = FontWeight.SemiBold, fontSize = 14.sp, modifier = Modifier.padding(top = 14.dp, bottom = 8.dp))
+                Card(colors = CardDefaults.cardColors(containerColor = SoftGrey), shape = RoundedCornerShape(14.dp)) {
+                    Image(bitmap = circlePreview.asImageBitmap(), contentDescription = "Live preview of the shape cutout", modifier = Modifier.padding(14.dp).size(96.dp), contentScale = ContentScale.Fit)
+                }
+            }
+            Card(colors = CardDefaults.cardColors(containerColor = PaleBlue), shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth().padding(top = 12.dp, bottom = 10.dp)) {
+                Text("Drag inside the frame to move it. Drag a corner to resize. Everything happens on your phone, nothing is uploaded.", color = Slate, fontSize = 13.sp, lineHeight = 18.sp, modifier = Modifier.padding(16.dp))
+            }
+            Button(
+                onClick = onApplyCircle,
+                modifier = Modifier.fillMaxWidth().padding(top = 2.dp).height(52.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = Orange, contentColor = Color.White),
+                shape = RoundedCornerShape(14.dp),
+                enabled = !busy && working != null
+            ) {
+                if (busy) CircularProgressIndicator(modifier = Modifier.size(20.dp), color = Color.White, strokeWidth = 2.dp) else {
+                    Icon(Icons.Default.CheckCircle, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text("Apply & Save", fontWeight = FontWeight.Bold)
+                }
+            }
         } else {
             Text("${tool.label} controls will be added in the next development stages. Resize and export are available now.", color = DeepNavy, fontSize = 13.sp)
         }
         Spacer(Modifier.height(12.dp))
-        if (tool != Tool.Background && tool != Tool.Crop) {
+        if (tool != Tool.Background && tool != Tool.Crop && tool != Tool.Circle) {
         Button(
             onClick = onProcess,
             modifier = Modifier.fillMaxWidth().height(52.dp),
@@ -3117,6 +3300,161 @@ private fun PhotoCell(thumb: ImageBitmap?, modifier: Modifier, onClick: () -> Un
 private fun EmptyNote(text: String) {
     Card(colors = CardDefaults.cardColors(containerColor = PaleBlue), shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth().padding(top = 6.dp)) {
         Text(text, color = Slate, fontSize = 13.sp, lineHeight = 18.sp, modifier = Modifier.padding(16.dp))
+    }
+}
+
+/** The shape outline inside frame (l,t,r,b) for preview drawing. Heart is a
+ *  symmetric two-lobe curve; Rounded uses an 18% corner radius. */
+private fun Path.addShapeOutline(shape: String, l: Float, t: Float, r: Float, b: Float) {
+    val w = r - l
+    val h = b - t
+    when (shape) {
+        "Circle" -> addOval(Rect(l, t, r, b))
+        "Rounded" -> addRoundRect(RoundRect(l, t, r, b, CornerRadius(w * 0.18f)))
+        "Heart" -> {
+            moveTo(l + 0.5f * w, t + 0.28f * h)
+            cubicTo(l + 0.5f * w, t + 0.18f * h, l + 0.36f * w, t + 0.02f * h, l + 0.2f * w, t + 0.02f * h)
+            cubicTo(l + 0.02f * w, t + 0.02f * h, l, t + 0.22f * h, l, t + 0.34f * h)
+            cubicTo(l, t + 0.52f * h, l + 0.22f * w, t + 0.68f * h, l + 0.5f * w, t + 0.9f * h)
+            cubicTo(l + 0.78f * w, t + 0.68f * h, r, t + 0.52f * h, r, t + 0.34f * h)
+            cubicTo(r, t + 0.22f * h, l + 0.98f * w, t + 0.02f * h, l + 0.8f * w, t + 0.02f * h)
+            cubicTo(l + 0.64f * w, t + 0.02f * h, l + 0.5f * w, t + 0.18f * h, l + 0.5f * w, t + 0.28f * h)
+            close()
+        }
+        else -> addRect(Rect(l, t, r, b))
+    }
+}
+
+/** Android-graphics twin of addShapeOutline for the export mask (square canvas). */
+private fun androidShapePath(shape: String, size: Float): android.graphics.Path {
+    val p = android.graphics.Path()
+    val rect = android.graphics.RectF(0f, 0f, size, size)
+    when (shape) {
+        "Circle" -> p.addOval(rect, android.graphics.Path.Direction.CW)
+        "Rounded" -> p.addRoundRect(rect, size * 0.18f, size * 0.18f, android.graphics.Path.Direction.CW)
+        "Heart" -> {
+            p.moveTo(0.5f * size, 0.28f * size)
+            p.cubicTo(0.5f * size, 0.18f * size, 0.36f * size, 0.02f * size, 0.2f * size, 0.02f * size)
+            p.cubicTo(0.02f * size, 0.02f * size, 0f, 0.22f * size, 0f, 0.34f * size)
+            p.cubicTo(0f, 0.52f * size, 0.22f * size, 0.68f * size, 0.5f * size, 0.9f * size)
+            p.cubicTo(0.78f * size, 0.68f * size, size, 0.52f * size, size, 0.34f * size)
+            p.cubicTo(size, 0.22f * size, 0.98f * size, 0.02f * size, 0.8f * size, 0.02f * size)
+            p.cubicTo(0.64f * size, 0.02f * size, 0.5f * size, 0.18f * size, 0.5f * size, 0.28f * size)
+            p.close()
+        }
+        else -> p.addRect(rect, android.graphics.Path.Direction.CW)
+    }
+    return p
+}
+
+/** Crop the framed square region, scale to outSize and mask into the chosen shape
+ *  with real alpha (Square keeps the full square). */
+private fun shapeCutout(src: Bitmap, rect: FloatArray, shape: String, outSize: Int): Bitmap {
+    val cropped = Transforms.cropRegion(src, CropMath.toPixels(rect, src.width, src.height))
+    val scaled = Bitmap.createScaledBitmap(cropped, outSize, outSize, true)
+    if (shape == "Square") return scaled
+    val out = Bitmap.createBitmap(outSize, outSize, Bitmap.Config.ARGB_8888)
+    val canvas = android.graphics.Canvas(out)
+    canvas.drawBitmap(scaled, 0f, 0f, null)
+    val mask = Bitmap.createBitmap(outSize, outSize, Bitmap.Config.ALPHA_8)
+    val maskCanvas = android.graphics.Canvas(mask)
+    val maskPaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG)
+    maskCanvas.drawPath(androidShapePath(shape, outSize.toFloat()), maskPaint)
+    val erase = android.graphics.Paint().apply { xfermode = android.graphics.PorterDuffXfermode(android.graphics.PorterDuff.Mode.DST_IN) }
+    canvas.drawBitmap(mask, 0f, 0f, erase)
+    return out
+}
+
+/** Shape frame preview for Circle Cutter: the photo with a draggable 1:1 frame
+ *  (circle / square / rounded / heart). Same drag mechanics as CropPreview - drag
+ *  inside to move, corner handles to resize (aspect locked 1:1), and the page
+ *  scroll pauses while a drag is active so the frame never feels stuck. */
+@Composable
+private fun ShapePreview(
+    bitmap: Bitmap,
+    rect: FloatArray,
+    shape: String,
+    onRect: (FloatArray) -> Unit,
+    onDraggingChange: (Boolean) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    BoxWithConstraints(modifier, contentAlignment = Alignment.Center) {
+        val boxW = constraints.maxWidth.toFloat()
+        val boxH = constraints.maxHeight.toFloat()
+        val scale = minOf(boxW / bitmap.width, boxH / bitmap.height)
+        val dispW = bitmap.width * scale
+        val dispH = bitmap.height * scale
+        val offX = (boxW - dispW) / 2f
+        val offY = (boxH - dispH) / 2f
+        val density = LocalDensity.current
+        val imageBitmap = remember(bitmap) { bitmap.asImageBitmap() }
+        Image(
+            bitmap = imageBitmap,
+            contentDescription = "Shape preview - drag to position the frame",
+            modifier = Modifier.size(with(density) { dispW.toDp() }, with(density) { dispH.toDp() }),
+            contentScale = ContentScale.FillBounds
+        )
+        val hitRadius = with(density) { 34.dp.toPx() }
+        val currentRect by rememberUpdatedState(rect)
+        val currentOnRect by rememberUpdatedState(onRect)
+        val currentOnDragging by rememberUpdatedState(onDraggingChange)
+        val imgAspect = bitmap.width.toFloat() / bitmap.height.toFloat()
+        Canvas(
+            Modifier.fillMaxSize().pointerInput(bitmap) {
+                var mode = -1 // -1 none, 0..3 corner handle, 4 move frame
+                detectDragGestures(
+                    onDragStart = { p ->
+                        val r0 = currentRect
+                        val l = offX + r0[0] * dispW
+                        val t = offY + r0[1] * dispH
+                        val r = offX + r0[2] * dispW
+                        val b = offY + r0[3] * dispH
+                        val corners = listOf(l to t, r to t, l to b, r to b)
+                        mode = -1
+                        var best = Float.MAX_VALUE
+                        var bestIdx = -1
+                        corners.forEachIndexed { i, c ->
+                            val d = (p.x - c.first) * (p.x - c.first) + (p.y - c.second) * (p.y - c.second)
+                            if (d < best) { best = d; bestIdx = i }
+                        }
+                        if (bestIdx >= 0 && best <= hitRadius * hitRadius) mode = bestIdx
+                        else if (p.x in l..r && p.y in t..b) mode = 4
+                        currentOnDragging(mode != -1)
+                    },
+                    onDrag = { change, drag ->
+                        change.consume()
+                        val dx = drag.x / dispW
+                        val dy = drag.y / dispH
+                        val next = when {
+                            mode == 4 -> CropMath.move(currentRect, dx, dy)
+                            mode in 0..3 -> CropMath.dragCorner(currentRect, mode, dx, dy, 1f, imgAspect)
+                            else -> currentRect
+                        }
+                        if (next !== currentRect) currentOnRect(next)
+                    },
+                    onDragEnd = { mode = -1; currentOnDragging(false) },
+                    onDragCancel = { mode = -1; currentOnDragging(false) }
+                )
+            }
+        ) {
+            val l = offX + rect[0] * dispW
+            val t = offY + rect[1] * dispH
+            val r = offX + rect[2] * dispW
+            val b = offY + rect[3] * dispH
+            val dim = Color.Black.copy(alpha = 0.45f)
+            val dimPath = Path().apply {
+                addRect(Rect(0f, 0f, boxW, boxH))
+                addShapeOutline(shape, l, t, r, b)
+                fillType = PathFillType.EvenOdd
+            }
+            drawPath(dimPath, dim)
+            drawPath(Path().apply { addShapeOutline(shape, l, t, r, b) }, SkyBlue, style = Stroke(2.dp.toPx()))
+            val handleR = 9.dp.toPx()
+            listOf(l to t, r to t, l to b, r to b).forEach { c ->
+                drawCircle(Color.White, handleR, Offset(c.first, c.second))
+                drawCircle(SkyBlue, handleR, Offset(c.first, c.second), style = Stroke(3.dp.toPx()))
+            }
+        }
     }
 }
 
