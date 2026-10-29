@@ -340,7 +340,7 @@ class ConvertFormatsTest {
         tmp.writeBytes(buildPdfBytes(2))
         val outDir = File.createTempFile("pc_print_out", "").apply { delete(); mkdirs() }
         try {
-            val m = buildPrintRasterAllPages(tmp, 4.0, 6.0, 0.0, 0.0, android.graphics.Color.WHITE, "Fit", 150, 90, "JPG", "test-print", outDir) { _, _ -> }
+            val m = buildPrintRasterAllPages(tmp, intArrayOf(0, 1), 4.0, 6.0, 0.0, 0.0, android.graphics.Color.WHITE, "Fit", 150, 90, "JPG", "test-print", outDir) { _, _ -> }
             assertEquals(2, m.files.size)
             assertTrue(m.files[0].name.contains("-page-001") && m.files[1].name.contains("-page-002"))
             m.files.forEach { f ->
@@ -364,7 +364,7 @@ class ConvertFormatsTest {
         tmp.writeBytes(buildPdfBytes(2))
         val out = File.createTempFile("pc_print_all", ".pdf")
         try {
-            val m = buildPrintPdfAllPages(tmp, 4.0, 6.0, 0.0, 0.0, "Fit", 150, false, "test-print", out) { _, _ -> }
+            val m = buildPrintPdfAllPages(tmp, intArrayOf(0, 1), 4.0, 6.0, 0.0, 0.0, "Fit", 150, false, "test-print", out) { _, _ -> }
             assertEquals(1, m.files.size)
             assertEquals("application/pdf", m.mime)
             val bytes = out.readBytes()
@@ -376,6 +376,46 @@ class ConvertFormatsTest {
         } finally {
             tmp.delete()
             out.delete()
+        }
+    }
+
+    @Test
+    fun parsePageListBasics() {
+        val (pages, skipped) = parsePageList("3, 23, 67, 207", 300)
+        assertEquals(listOf(2, 22, 66, 206), pages)
+        assertTrue(skipped.isEmpty())
+        val (p2, s2) = parsePageList("5-12, 30", 100)
+        assertEquals((4..11).toList() + listOf(29), p2)
+        assertTrue(s2.isEmpty())
+        val (p3, s3) = parsePageList("0, 999, abc, 4-2", 50)
+        assertEquals(listOf(1, 2, 3), p3)
+        assertEquals(listOf("0", "999", "abc"), s3)
+        val (p4, s4) = parsePageList("12-20", 15)
+        assertTrue(p4.isEmpty())
+        assertEquals(listOf("12-20"), s4)
+        val (p5, s5) = parsePageList("", 50)
+        assertTrue(p5.isEmpty() && s5.isEmpty())
+    }
+
+    @Test
+    fun selectedPagesRasterFromThreePagePdf() {
+        // His flow: pick scattered pages (1 and 3 of 3), one file per selected page,
+        // named by the ACTUAL page number so they sort correctly.
+        val tmp = File.createTempFile("pc_pdf_sel_test", ".pdf")
+        tmp.writeBytes(buildPdfBytes(3))
+        val outDir = File.createTempFile("pc_print_sel", "").apply { delete(); mkdirs() }
+        try {
+            val m = buildPrintRasterAllPages(tmp, intArrayOf(0, 2), 4.0, 6.0, 0.0, 0.0, android.graphics.Color.WHITE, "Fit", 150, 90, "JPG", "test-print", outDir) { _, _ -> }
+            assertEquals(2, m.files.size)
+            assertTrue(m.files[0].name.contains("-page-001"))
+            assertTrue(m.files[1].name.contains("-page-003"))
+        } catch (e: Exception) {
+            val msg = e.message ?: ""
+            if (msg.contains("closed") || msg.contains("No pages") || e is java.io.IOException) return   // host JVM has no PDF engine
+            throw e
+        } finally {
+            tmp.delete()
+            outDir.deleteRecursively()
         }
     }
 

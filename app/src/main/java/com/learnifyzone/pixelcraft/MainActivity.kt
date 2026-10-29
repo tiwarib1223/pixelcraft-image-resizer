@@ -115,6 +115,7 @@ import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableStateSetOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.rememberCoroutineScope
@@ -385,6 +386,8 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
     var printPdfThumbWorkerRunning by remember { mutableStateOf(false) }
     var printPdfPickerOpen by remember { mutableStateOf(false) }
     var printPdfAllPages by remember { mutableStateOf(false) }
+    val printPdfSelected = remember { mutableStateSetOf<Int>() }
+    var printPdfPageList by remember { mutableStateOf<List<Int>?>(null) }
     val printResultFiles = remember { mutableStateListOf<File>() }
     var printPageBitmap by remember { mutableStateOf<Bitmap?>(null) }
     var printSheetOn by remember { mutableStateOf(false) }
@@ -1291,6 +1294,8 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
 
     fun loadPrintPhoto(uri: Uri) {
         printPdfAllPages = false
+        printPdfPageList = null
+        printPdfSelected.clear()
         scope.launch {
             busy = true
             busyLabel = "Loading photo…"
@@ -1378,6 +1383,9 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                 printPdfThumbQueue.clear()
                 printPdfThumbQueued.clear()
                 printPdfUri = uri
+                printPdfAllPages = false
+                printPdfPageList = null
+                printPdfSelected.clear()
                 printPdfPickerOpen = true
                 busy = false
                 busyLabel = ""
@@ -1392,6 +1400,7 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
     fun selectPrintPdfPage(index: Int) {
         val uri = printPdfUri ?: return
         printPdfAllPages = false
+        printPdfPageList = null
         printPdfPickerOpen = false
         busy = true
         busyLabel = "Rendering page ${index + 1}…"
@@ -1429,6 +1438,8 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
     fun selectPrintPdfAllPages() {
         val uri = printPdfUri ?: return
         val tmp = printPdfTempFile ?: return
+        printPdfPageList = null
+        printPdfSelected.clear()
         printPdfPickerOpen = false
         busy = true
         busyLabel = "Rendering page 1…"
@@ -1450,6 +1461,59 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                 printLabel = "PDF · All $printPdfPageCount pages"
                 printOrigSize = querySourceSize(context, uri)
                 printPdfAllPages = true
+                printResultBytes = null
+                printResultFiles.forEach { it.delete() }
+                printResultFiles.clear()
+                printSaved = false
+                printPdfThumbs.clear()
+                printPdfThumbQueue.clear()
+                printPdfThumbQueued.clear()
+                busy = false
+                busyLabel = ""
+            } catch (e: Exception) {
+                busy = false
+                busyLabel = ""
+                snackbar.showSnackbar("Could not render that PDF: ${e.message ?: "unknown error"}")
+            }
+        }
+    }
+
+    fun togglePrintPdfPage(index: Int) {
+        if (index < 0 || index >= printPdfPageCount) return
+        if (!printPdfSelected.remove(index)) printPdfSelected.add(index)
+    }
+
+    fun selectPrintPdfPages(indices: List<Int>) {
+        if (indices.size <= 1) {
+            val only = indices.firstOrNull() ?: return
+            selectPrintPdfPage(only)
+            return
+        }
+        val uri = printPdfUri ?: return
+        val tmp = printPdfTempFile ?: return
+        val ordered = indices.sorted()
+        printPdfPickerOpen = false
+        busy = true
+        busyLabel = "Rendering page ${ordered.first() + 1}…"
+        scope.launch {
+            try {
+                // The first selected page stands in for preview and aspect checks;
+                // every selected page is composed with the same settings at export.
+                val page = withContext(Dispatchers.IO) { ConvertFormats.renderPdfPageFromFile(tmp, ordered.first(), maxDim = 2600) }
+                printPageBitmap = page
+                printUri = uri
+                printImgW = page.width
+                printImgH = page.height
+                printThumb = thumbOf(page)
+                printPreview = if (maxOf(page.width, page.height) > 1200) {
+                    val sc = 1200f / maxOf(page.width, page.height)
+                    Bitmap.createScaledBitmap(page, (page.width * sc).toInt().coerceAtLeast(1), (page.height * sc).toInt().coerceAtLeast(1), true)
+                } else page
+                printName = queryDisplayName(context, uri) ?: "document.pdf"
+                printLabel = "PDF · ${ordered.size} selected pages"
+                printOrigSize = querySourceSize(context, uri)
+                printPdfAllPages = false
+                printPdfPageList = ordered
                 printResultBytes = null
                 printResultFiles.forEach { it.delete() }
                 printResultFiles.clear()
@@ -1548,7 +1612,12 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
         if (wIn <= 0 || hIn <= 0) { scope.launch { snackbar.showSnackbar("Enter a valid print size first.") }; return }
         val sheetMode = printSheetOn && printMultiCopyEligible()
         if (sheetMode && printSheetGrid()[2] <= 0) { scope.launch { snackbar.showSnackbar("That count does not fit on $printSheet - try fewer copies or A4.") }; return }
-        val allPagesMode = printPdfAllPages && printPdfTempFile != null
+        val batchIndices: IntArray? = when {
+            printPdfAllPages && printPdfTempFile != null -> IntArray(printPdfPageCount) { it }
+            printPdfPageList != null && printPdfTempFile != null -> printPdfPageList!!.toIntArray()
+            else -> null
+        }
+        val allPagesMode = batchIndices != null
         busy = true
         busyLabel = "Preparing print file…"
         scope.launch {
@@ -1569,12 +1638,12 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                             val (sW, sH) = printSheetDimsIn()
                             val g = printSheetGrid()
                             val gapIn = if (g[3] == 1) PrintUtils.SHEET_GAP_IN else 0.0
-                            if (printFormat == "PDF") buildPrintSheetPdfAllPages(tmpPdf, sW, sH, wIn, hIn, g[0], g[1], g[2], gapIn, printPpi, printFilename, File(outDir, "$printFilename.pdf"), onProg)
-                            else buildPrintSheetRasterAllPages(tmpPdf, sW, sH, wIn, hIn, g[0], g[1], g[2], gapIn, printPpi, printJpgQuality, printFormat, printFilename, outDir, onProg)
+                            if (printFormat == "PDF") buildPrintSheetPdfAllPages(tmpPdf, batchIndices!!, sW, sH, wIn, hIn, g[0], g[1], g[2], gapIn, printPpi, printFilename, File(outDir, "$printFilename.pdf"), onProg)
+                            else buildPrintSheetRasterAllPages(tmpPdf, batchIndices!!, sW, sH, wIn, hIn, g[0], g[1], g[2], gapIn, printPpi, printJpgQuality, printFormat, printFilename, outDir, onProg)
                         } else if (printFormat == "PDF") {
-                            buildPrintPdfAllPages(tmpPdf, wIn, hIn, bleedIn, marginIn, printFitMode, printPpi, printCropMarks, printFilename, File(outDir, "$printFilename.pdf"), onProg)
+                            buildPrintPdfAllPages(tmpPdf, batchIndices!!, wIn, hIn, bleedIn, marginIn, printFitMode, printPpi, printCropMarks, printFilename, File(outDir, "$printFilename.pdf"), onProg)
                         } else {
-                            buildPrintRasterAllPages(tmpPdf, wIn, hIn, bleedIn, marginIn, bg, printFitMode, printPpi, printJpgQuality, printFormat, printFilename, outDir, onProg)
+                            buildPrintRasterAllPages(tmpPdf, batchIndices!!, wIn, hIn, bleedIn, marginIn, bg, printFitMode, printPpi, printJpgQuality, printFormat, printFilename, outDir, onProg)
                         }
                     }
                     printResultFiles.addAll(m.files)
@@ -1720,7 +1789,7 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
         printResultBytes = null; printResultName = ""; printResultMime = ""; printResultDims = ""
         printPdfUri = null; printPdfThumbs.clear(); printPdfPageCount = 0; printPdfTempFile?.delete(); printPdfTempFile = null; printPdfThumbQueue.clear(); printPdfThumbQueued.clear(); printPdfPickerOpen = false; printPageBitmap = null
         printSheetOn = false; printSheet = "4 × 6"; printCopyCount = 4
-        printPdfAllPages = false; printResultFiles.forEach { it.delete() }; printResultFiles.clear()
+        printPdfAllPages = false; printPdfPageList = null; printPdfSelected.clear(); printResultFiles.forEach { it.delete() }; printResultFiles.clear()
         printSaved = false; printGoSetup = false
     }
 
@@ -3344,9 +3413,12 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                 onPickPdf = { printPdfPicker.launch(arrayOf("application/pdf")) },
                 pdfPageCount = if (printPdfPickerOpen) printPdfPageCount else 0,
                 pdfThumbs = printPdfThumbs,
+                pdfSelected = printPdfSelected,
+                onPdfPagesAdd = { pages -> pages.forEach { printPdfSelected.add(it) } },
                 onPdfThumbNeeded = { ensurePrintPdfThumb(it) },
                 onPdfAllPages = { selectPrintPdfAllPages() },
-                onPdfPage = { selectPrintPdfPage(it) },
+                onPdfPage = { togglePrintPdfPage(it) },
+                onPdfPages = { selectPrintPdfPages(it) },
                 onContinue = { screen = Screen.PrintSetup }
             )
             Screen.PrintSetup -> {
@@ -3443,7 +3515,11 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                     grid = printSheetGrid(),
                     sheetWIn = printSheetDimsIn().first,
                     sheetHIn = printSheetDimsIn().second,
-                    allPagesNote = if (printPdfAllPages && printPdfPageCount > 1) "All $printPdfPageCount pages are exported in one run with the same settings - this preview shows page 1." else null,
+                    allPagesNote = when {
+                        printPdfAllPages && printPdfPageCount > 1 -> "All $printPdfPageCount pages are exported in one run with the same settings - this preview shows page 1."
+                        printPdfPageList != null && printPdfPageList!!.size > 1 -> "${printPdfPageList!!.size} selected pages are exported in one run with the same settings - this preview shows the first selected page."
+                        else -> null
+                    },
                     onContinue = { screen = Screen.PrintExport }
                 )
             }
@@ -6042,7 +6118,7 @@ private fun renderSrcPdfPage(renderer: PdfRenderer, index: Int, maxDim: Int): Bi
 }
 
 /** All-pages raster: every PDF page composed with the same settings, one encoded temp file per page. */
-fun buildPrintRasterAllPages(pdfFile: File, wIn: Double, hIn: Double, bleedIn: Double, marginIn: Double, bg: Int, mode: String, ppi: Int, quality: Int, format: String, filename: String, outDir: File, onProgress: (Int, Int) -> Unit): PrintMultiOutput {
+fun buildPrintRasterAllPages(pdfFile: File, indices: IntArray, wIn: Double, hIn: Double, bleedIn: Double, marginIn: Double, bg: Int, mode: String, ppi: Int, quality: Int, format: String, filename: String, outDir: File, onProgress: (Int, Int) -> Unit): PrintMultiOutput {
     val totalWIn = wIn + bleedIn * 2
     val totalHIn = hIn + bleedIn * 2
     val req = PrintUtils.requiredPixels(totalWIn, totalHIn, ppi)
@@ -6055,9 +6131,10 @@ fun buildPrintRasterAllPages(pdfFile: File, wIn: Double, hIn: Double, bleedIn: D
     val ext = if (format == "PNG") "png" else "jpg"
     val files = mutableListOf<File>()
     ConvertFormats.withPdfRendererOnFile(pdfFile) { renderer ->
-        val n = renderer.pageCount
-        for (i in 0 until n) {
-            onProgress(i + 1, n)
+        if (renderer.pageCount == 0) throw IllegalStateException("No pages")
+        require(indices.isNotEmpty() && indices.all { it >= 0 && it < renderer.pageCount }) { "Page out of range" }
+        for ((k, i) in indices.withIndex()) {
+            onProgress(k + 1, indices.size)
             val src = renderSrcPdfPage(renderer, i, 2600)
             try {
                 val placed = PrintUtils.renderPrint(src, areaW, areaH, mode, if (format == "PNG") android.graphics.Color.TRANSPARENT else bg)
@@ -6089,7 +6166,7 @@ fun buildPrintRasterAllPages(pdfFile: File, wIn: Double, hIn: Double, bleedIn: D
 }
 
 /** All-pages PDF: one multi-page print-ready PDF, every page composed with the same settings. */
-fun buildPrintPdfAllPages(pdfFile: File, wIn: Double, hIn: Double, bleedIn: Double, marginIn: Double, mode: String, ppi: Int, cropMarks: Boolean, filename: String, outFile: File, onProgress: (Int, Int) -> Unit): PrintMultiOutput {
+fun buildPrintPdfAllPages(pdfFile: File, indices: IntArray, wIn: Double, hIn: Double, bleedIn: Double, marginIn: Double, mode: String, ppi: Int, cropMarks: Boolean, filename: String, outFile: File, onProgress: (Int, Int) -> Unit): PrintMultiOutput {
     val pageWIn = wIn + bleedIn * 2
     val pageHIn = hIn + bleedIn * 2
     val pageWPt = (pageWIn * 72).toInt().coerceAtLeast(1)
@@ -6101,9 +6178,10 @@ fun buildPrintPdfAllPages(pdfFile: File, wIn: Double, hIn: Double, bleedIn: Doub
     var count = 0
     val doc = PdfDocument()
     ConvertFormats.withPdfRendererOnFile(pdfFile) { renderer ->
-        val n = renderer.pageCount
-        for (i in 0 until n) {
-            onProgress(i + 1, n)
+        if (renderer.pageCount == 0) throw IllegalStateException("No pages")
+        require(indices.isNotEmpty() && indices.all { it >= 0 && it < renderer.pageCount }) { "Page out of range" }
+        for ((k, i) in indices.withIndex()) {
+            onProgress(k + 1, indices.size)
             val src = renderSrcPdfPage(renderer, i, 2600)
             try {
                 val placed = PrintUtils.renderPrint(src, req[0], req[1], mode, android.graphics.Color.WHITE)
@@ -6129,7 +6207,7 @@ fun buildPrintPdfAllPages(pdfFile: File, wIn: Double, hIn: Double, bleedIn: Doub
                 }
                 doc.finishPage(page)
                 placed.recycle()
-                count = n
+                count = indices.size
             } finally {
                 src.recycle()
             }
@@ -6143,7 +6221,7 @@ fun buildPrintPdfAllPages(pdfFile: File, wIn: Double, hIn: Double, bleedIn: Doub
 }
 
 /** All-pages multi-copy sheets as raster files: one sheet image per PDF page. */
-fun buildPrintSheetRasterAllPages(pdfFile: File, sheetWIn: Double, sheetHIn: Double, cellWIn: Double, cellHIn: Double, cols: Int, rows: Int, count: Int, gapIn: Double, ppi: Int, quality: Int, format: String, filename: String, outDir: File, onProgress: (Int, Int) -> Unit): PrintMultiOutput {
+fun buildPrintSheetRasterAllPages(pdfFile: File, indices: IntArray, sheetWIn: Double, sheetHIn: Double, cellWIn: Double, cellHIn: Double, cols: Int, rows: Int, count: Int, gapIn: Double, ppi: Int, quality: Int, format: String, filename: String, outDir: File, onProgress: (Int, Int) -> Unit): PrintMultiOutput {
     val req = PrintUtils.requiredPixels(sheetWIn, sheetHIn, ppi)
     val capped = PrintUtils.cappedPixels(req[0], req[1])
     val wasCapped = capped[0] != req[0] || capped[1] != req[1]
@@ -6153,9 +6231,10 @@ fun buildPrintSheetRasterAllPages(pdfFile: File, sheetWIn: Double, sheetHIn: Dou
     val ext = if (format == "PNG") "png" else "jpg"
     val files = mutableListOf<File>()
     ConvertFormats.withPdfRendererOnFile(pdfFile) { renderer ->
-        val n = renderer.pageCount
-        for (i in 0 until n) {
-            onProgress(i + 1, n)
+        if (renderer.pageCount == 0) throw IllegalStateException("No pages")
+        require(indices.isNotEmpty() && indices.all { it >= 0 && it < renderer.pageCount }) { "Page out of range" }
+        for ((k, i) in indices.withIndex()) {
+            onProgress(k + 1, indices.size)
             val src = renderSrcPdfPage(renderer, i, 2600)
             try {
                 val sheet = PrintUtils.renderSheet(src, capped[0], capped[1], cellWPx, cellHPx, cols, rows, gapPx, true, count)
@@ -6182,7 +6261,7 @@ fun buildPrintSheetRasterAllPages(pdfFile: File, sheetWIn: Double, sheetHIn: Dou
 }
 
 /** All-pages multi-copy sheets in one PDF: one sheet page per PDF page. */
-fun buildPrintSheetPdfAllPages(pdfFile: File, sheetWIn: Double, sheetHIn: Double, cellWIn: Double, cellHIn: Double, cols: Int, rows: Int, count: Int, gapIn: Double, ppi: Int, filename: String, outFile: File, onProgress: (Int, Int) -> Unit): PrintMultiOutput {
+fun buildPrintSheetPdfAllPages(pdfFile: File, indices: IntArray, sheetWIn: Double, sheetHIn: Double, cellWIn: Double, cellHIn: Double, cols: Int, rows: Int, count: Int, gapIn: Double, ppi: Int, filename: String, outFile: File, onProgress: (Int, Int) -> Unit): PrintMultiOutput {
     val cellPx0 = PrintUtils.requiredPixels(cellWIn, cellHIn, ppi)
     val cellPx = PrintUtils.cappedPixels(cellPx0[0], cellPx0[1])
     val pageWPt = (sheetWIn * 72).toInt().coerceAtLeast(1)
@@ -6190,9 +6269,10 @@ fun buildPrintSheetPdfAllPages(pdfFile: File, sheetWIn: Double, sheetHIn: Double
     var srcCount = 0
     val doc = PdfDocument()
     ConvertFormats.withPdfRendererOnFile(pdfFile) { renderer ->
-        val n = renderer.pageCount
-        for (i in 0 until n) {
-            onProgress(i + 1, n)
+        if (renderer.pageCount == 0) throw IllegalStateException("No pages")
+        require(indices.isNotEmpty() && indices.all { it >= 0 && it < renderer.pageCount }) { "Page out of range" }
+        for ((k, i) in indices.withIndex()) {
+            onProgress(k + 1, indices.size)
             val src = renderSrcPdfPage(renderer, i, 2600)
             try {
                 val cell = PrintUtils.renderPrint(src, cellPx[0], cellPx[1], "Fill", android.graphics.Color.WHITE)
@@ -6218,7 +6298,7 @@ fun buildPrintSheetPdfAllPages(pdfFile: File, sheetWIn: Double, sheetHIn: Double
                 }
                 doc.finishPage(page)
                 cell.recycle()
-                srcCount = n
+                srcCount = indices.size
             } finally {
                 src.recycle()
             }
@@ -6238,6 +6318,45 @@ fun queryDisplayName(context: android.content.Context, uri: android.net.Uri): St
             if (i >= 0 && c.moveToFirst()) c.getString(i) else null
         }
     } catch (_: Exception) { null }
+}
+
+/** Parses "3, 23, 67-70, 30" into sorted 0-based page indices; unusable tokens go to skipped. */
+fun parsePageList(text: String, pageCount: Int): Pair<List<Int>, List<String>> {
+    val ok = sortedSetOf<Int>()
+    val skipped = mutableListOf<String>()
+    text.split(',', ';', ' ').map { it.trim() }.filter { it.isNotEmpty() }.forEach { tok ->
+        val dash = tok.split('-', '–')
+        if (dash.size == 2 && dash[0].toIntOrNull() != null && dash[1].toIntOrNull() != null) {
+            val a = dash[0].toInt()
+            val b = dash[1].toInt()
+            val lo = minOf(a, b)
+            val hi = maxOf(a, b)
+            if (lo < 1 || hi > pageCount) skipped.add(tok) else for (p in lo..hi) ok.add(p - 1)
+        } else if (dash.size == 1 && tok.toIntOrNull() != null) {
+            val p = tok.toInt()
+            if (p < 1 || p > pageCount) skipped.add(tok) else ok.add(p - 1)
+        } else {
+            skipped.add(tok)
+        }
+    }
+    return ok.toList() to skipped
+}
+
+/** "Pages 5, 8, 12-20, 24" from sorted 0-based page indices (runs compress to ranges). */
+private fun formatPageRanges(zeroBasedSorted: List<Int>): String {
+    if (zeroBasedSorted.isEmpty()) return ""
+    val parts = mutableListOf<String>()
+    var start = zeroBasedSorted[0]
+    var prev = zeroBasedSorted[0]
+    for (k in 1..zeroBasedSorted.size) {
+        val cur = if (k < zeroBasedSorted.size) zeroBasedSorted[k] else -1
+        if (cur != prev + 1) {
+            parts.add(if (start == prev) "${start + 1}" else "${start + 1}-${prev + 1}")
+            start = cur
+        }
+        prev = cur
+    }
+    return parts.joinToString(", ")
 }
 
 private fun suggestBaseName(width: Int, height: Int): String = "pixelcraft-${width}x${height}"
@@ -7759,9 +7878,12 @@ private fun PrintHomeScreen(
     onPickPdf: () -> Unit,
     pdfPageCount: Int,
     pdfThumbs: Map<Int, Bitmap>,
+    pdfSelected: Set<Int>,
+    onPdfPagesAdd: (List<Int>) -> Unit,
     onPdfThumbNeeded: (Int) -> Unit,
     onPdfAllPages: () -> Unit,
     onPdfPage: (Int) -> Unit,
+    onPdfPages: (List<Int>) -> Unit,
     onContinue: () -> Unit
 ) {
     Column(modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).padding(horizontal = 16.dp).verticalScroll(rememberScrollState())) {
@@ -7814,23 +7936,72 @@ private fun PrintHomeScreen(
                         Spacer(Modifier.height(8.dp))
                         Button(onClick = onPdfAllPages, modifier = Modifier.fillMaxWidth().height(48.dp), colors = ButtonDefaults.buttonColors(containerColor = SkyBlue), shape = RoundedCornerShape(12.dp)) { Text("Use all $pdfPageCount pages", color = Color.White, fontWeight = FontWeight.Bold) }
                     } else {
-                        Spacer(Modifier.height(4.dp))
-                        Text("Tap a page below to use just that page.", fontSize = 12.sp, color = Slate)
+                        Spacer(Modifier.height(8.dp))
+                        var showAllPages by remember { mutableStateOf(false) }
+                        if (pdfSelected.isEmpty()) {
+                            Text("Tap pages below to select them - selected pages get a ✅.", fontSize = 12.sp, color = Slate)
+                        } else {
+                            Text(
+                                "${pdfSelected.size} page${if (pdfSelected.size == 1) "" else "s"} selected: ${formatPageRanges(pdfSelected.sorted())}",
+                                fontSize = 15.sp, color = DeepNavy, fontWeight = FontWeight.Bold,
+                                maxLines = if (showAllPages) 8 else 3,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.fillMaxWidth().background(PaleBlue, RoundedCornerShape(8.dp)).clickable { showAllPages = !showAllPages }.padding(horizontal = 10.dp, vertical = 6.dp)
+                            )
+                        }
+                        Spacer(Modifier.height(8.dp))
+                        var pageText by remember(pdfPageCount) { mutableStateOf("") }
+                        var pageTextNote by remember { mutableStateOf("") }
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            OutlinedTextField(
+                                value = pageText,
+                                onValueChange = { pageText = it; pageTextNote = "" },
+                                placeholder = { Text("Type pages: 3, 23, 67-70", fontSize = 13.sp) },
+                                singleLine = true,
+                                modifier = Modifier.weight(1f)
+                            )
+                            OutlinedButton(onClick = {
+                                val (pages, skipped) = parsePageList(pageText, pdfPageCount)
+                                when {
+                                    pages.isEmpty() && skipped.isEmpty() -> pageTextNote = "Type page numbers first, like 3, 23, 67-70."
+                                    skipped.isEmpty() -> { onPdfPagesAdd(pages); pageText = ""; pageTextNote = "" }
+                                    pages.isEmpty() -> pageTextNote = "Could not use: ${skipped.joinToString(", ")} - this PDF has $pdfPageCount pages."
+                                    else -> { onPdfPagesAdd(pages); pageText = ""; pageTextNote = "Added. Skipped: ${skipped.joinToString(", ")} - this PDF has $pdfPageCount pages." }
+                                }
+                            }) { Text("Add", color = DeepNavy) }
+                        }
+                        if (pageTextNote.isNotBlank()) {
+                            Spacer(Modifier.height(4.dp))
+                            Text(pageTextNote, fontSize = 12.sp, color = if (pageTextNote.startsWith("Added")) Slate else MaterialTheme.colorScheme.error)
+                        }
+                        Spacer(Modifier.height(6.dp))
+                        if (pdfSelected.isNotEmpty()) {
+                            Spacer(Modifier.height(8.dp))
+                            Button(onClick = { onPdfPages(pdfSelected.sorted()) }, modifier = Modifier.fillMaxWidth().height(48.dp), colors = ButtonDefaults.buttonColors(containerColor = SkyBlue), shape = RoundedCornerShape(12.dp)) {
+                                Text(if (pdfSelected.size == 1) "Use page ${pdfSelected.first() + 1}" else "Use ${pdfSelected.size} selected pages", color = Color.White, fontWeight = FontWeight.Bold)
+                            }
+                        }
                     }
                     Spacer(Modifier.height(8.dp))
                     LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                         items(pdfPageCount) { i ->
                             val t = pdfThumbs[i]
+                            val isSel = !pickAll && pdfSelected.contains(i)
                             LaunchedEffect(i) { if (t == null) onPdfThumbNeeded(i) }
-                            Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.clickable { onPdfPage(i) }) {
-                                if (t != null) {
-                                    Image(bitmap = t.asImageBitmap(), contentDescription = null, contentScale = ContentScale.Fit, modifier = Modifier.height(120.dp).border(1.dp, Slate))
-                                } else {
-                                    Box(Modifier.width(88.dp).height(120.dp).border(1.dp, Slate), contentAlignment = Alignment.Center) {
-                                        CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp, color = SkyBlue)
+                            Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.clickable { if (!pickAll) onPdfPage(i) }) {
+                                Box {
+                                    if (t != null) {
+                                        Image(bitmap = t.asImageBitmap(), contentDescription = null, contentScale = ContentScale.Fit, modifier = Modifier.height(120.dp).border(if (isSel) 3.dp else 1.dp, if (isSel) SkyBlue else Slate))
+                                    } else {
+                                        Box(Modifier.width(88.dp).height(120.dp).border(if (isSel) 3.dp else 1.dp, if (isSel) SkyBlue else Slate), contentAlignment = Alignment.Center) {
+                                            CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp, color = SkyBlue)
+                                        }
+                                    }
+                                    if (isSel) {
+                                        Text("✅", fontSize = 22.sp, modifier = Modifier.align(Alignment.TopEnd).padding(2.dp))
                                     }
                                 }
-                                Text("Page ${i + 1}", fontSize = 12.sp, color = DeepNavy)
+                                Text("Page ${i + 1}", fontSize = 12.sp, color = if (isSel) SkyBlue else DeepNavy, fontWeight = if (isSel) FontWeight.Bold else FontWeight.Normal)
                             }
                         }
                     }
