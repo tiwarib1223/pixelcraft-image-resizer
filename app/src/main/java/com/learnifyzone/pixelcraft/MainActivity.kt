@@ -7950,13 +7950,15 @@ private fun PrintHomeScreen(
                             )
                         }
                         Spacer(Modifier.height(8.dp))
+                        Text("Select Page", color = DeepNavy, fontSize = 15.sp)
+                        Spacer(Modifier.height(4.dp))
                         var pageText by remember(pdfPageCount) { mutableStateOf("") }
                         var pageTextNote by remember { mutableStateOf("") }
                         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             OutlinedTextField(
                                 value = pageText,
                                 onValueChange = { pageText = it; pageTextNote = "" },
-                                placeholder = { Text("Type pages: 3, 23, 67-70", fontSize = 13.sp) },
+                                placeholder = { Text("(e.g., 4, 9, 47, 83, 126, 229, …)", fontSize = 13.sp) },
                                 singleLine = true,
                                 modifier = Modifier.weight(1f)
                             )

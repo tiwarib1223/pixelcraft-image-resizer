@@ -74,6 +74,9 @@ Stage 3 v0.10.1 (built on Stage 2E v0.8.1): queue overview screen, the full "Sel
 
 
 
+## v0.15.6 text - his exact label + hint for the page-entry box (his wording, his weights)
+- The quick-entry area now reads exactly (his final wording, all regular weight - he reversed the bold): a "Select Page" label directly above the entry field, and inside the box the placeholder "(e.g., 4, 9, 47, 83, 126, 229, …)". The Add button and behavior are unchanged; the page count stays above the mode chips ("Choose a page (N pages)").
+
 ## v0.15.5 addition - multi-page selection in the PDF picker (his requests, his labels)
 - "Selected page" mode is now a real multi-select: tapping thumbnails toggles selection (tap again to un-select), each selected page gets a ✅ mark over the thumbnail plus a blue highlight border, and a line under the picker shows BOTH the count and the actual pages ("3 pages selected: 5, 8, 12-20" - long lists truncate to 2 lines and expand on tap). Selection survives scrolling.
 - For scattered pages in big documents (his example: 3, 23, 67, 207) there is a quick text entry accepting numbers and ranges ("3, 23, 67-70"); Add merges them into the same selection (thumbnails get marked too). Out-of-range or malformed entries get a gentle inline message naming the skipped tokens - no crash, valid entries still apply.
