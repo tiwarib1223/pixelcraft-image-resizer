@@ -1765,13 +1765,10 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
             )
             Screen.SocialHome -> SocialHomeScreen(
                 modifier = Modifier.padding(padding),
-                hasPhoto = workingBitmap != null,
+                photo = workingBitmap,
                 photoLabel = workingBitmap?.let { "${it.width} × ${it.height} px" },
                 onSelectImage = { pendingSocialTool = true; pickPhotos() },
-                onPlatform = { name ->
-                    if (name == "More") scope.launch { snackbar.showSnackbar("Tell me which platform you need - I'll add it.") }
-                    else { socialPlatform = name; screen = Screen.SocialPlatform }
-                }
+                onPlatform = { name -> socialPlatform = name; screen = Screen.SocialPlatform }
             )
             Screen.SocialPlatform -> SocialPlatformScreen(
                 modifier = Modifier.padding(padding),
@@ -1889,9 +1886,9 @@ private fun HomeScreen(
         Feature("Remove Background", "Cut out a product or person", "✦"),
         Feature("Crop & Rotate", "Adjust framing and angle", "⌗"),
         Feature("Circle Cutter", "Cut photos into shapes", "◯"),
-        Feature("Compress", "Reduce file size", "↓"),
-        Feature("Convert Format", "JPEG, PNG and WebP", "⇄"),
         Feature("Social & Shop Sizes", "Creator-ready dimensions", "▦"),
+        Feature("Convert Format", "JPEG, PNG and WebP", "⇄"),
+        Feature("Compress", "Reduce file size", "↓"),
         Feature("Batch Resize", "Process many photos", "▤"),
         Feature("Print Size & DPI", "Calculate print dimensions", "◉")
     )
@@ -4387,7 +4384,7 @@ private fun fitToFileSize(src: Bitmap, format: ExportFormat, quality: Int, targe
 @Composable
 private fun SocialHomeScreen(
     modifier: Modifier = Modifier,
-    hasPhoto: Boolean,
+    photo: Bitmap?,
     photoLabel: String?,
     onSelectImage: () -> Unit,
     onPlatform: (String) -> Unit
@@ -4400,18 +4397,27 @@ private fun SocialHomeScreen(
         Spacer(Modifier.height(14.dp))
         Card(colors = CardDefaults.cardColors(containerColor = PaleBlue), shape = RoundedCornerShape(16.dp)) {
             Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                if (photo != null) {
+                    Image(
+                        bitmap = photo.asImageBitmap(),
+                        contentDescription = "Selected photo",
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.size(64.dp)
+                    )
+                    Spacer(Modifier.width(12.dp))
+                }
                 Column(Modifier.weight(1f)) {
                     Text("Select Your Image", fontWeight = FontWeight.SemiBold, color = DeepNavy)
                     Spacer(Modifier.height(2.dp))
-                    Text(if (hasPhoto) "Current photo: ${photoLabel ?: ""}" else "No photo selected yet", fontSize = 13.sp, color = Slate)
+                    Text(if (photo != null) "Current photo: ${photoLabel ?: ""}" else "No photo selected yet", fontSize = 13.sp, color = Slate)
                 }
                 Button(onClick = onSelectImage, colors = ButtonDefaults.buttonColors(containerColor = Orange, contentColor = Color.White), shape = RoundedCornerShape(12.dp)) {
-                    Text(if (hasPhoto) "Change" else "Select Image")
+                    Text(if (photo != null) "Change" else "Select Image")
                 }
             }
         }
         Spacer(Modifier.height(16.dp))
-        val names = SocialSizes.platforms.map { it.name } + "More"
+        val names = SocialSizes.platforms.map { it.name }
         names.chunked(2).forEach { rowNames ->
             Row(Modifier.fillMaxWidth()) {
                 rowNames.forEach { name ->
@@ -4421,8 +4427,8 @@ private fun SocialHomeScreen(
                         shape = RoundedCornerShape(14.dp)
                     ) {
                         Row(Modifier.fillMaxWidth().padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
-                            Box(Modifier.size(40.dp).background(if (name == "More") BorderGrey else SkyBlue, CircleShape), contentAlignment = Alignment.Center) {
-                                Text(name.take(1), fontWeight = FontWeight.Bold, color = if (name == "More") Slate else Color.White, fontSize = 18.sp)
+                            Box(Modifier.size(40.dp).background(SkyBlue, CircleShape), contentAlignment = Alignment.Center) {
+                                Text(name.take(1), fontWeight = FontWeight.Bold, color = Color.White, fontSize = 18.sp)
                             }
                             Spacer(Modifier.width(12.dp))
                             Text(name, fontWeight = FontWeight.SemiBold, color = DeepNavy, fontSize = 15.sp)

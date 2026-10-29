@@ -70,6 +70,8 @@ object SocialSizes {
         SocialPlatform("Pinterest", listOf(
             SocialCategory("Profile Picture", "Avatar and account photo", listOf(
                 SocialSize("Profile Picture", "165 x 165 px", 165, 165, "Shown as a circle"))),
+            SocialCategory("Cover Photo", "Profile cover banner", listOf(
+                SocialSize("Profile Cover", "800 x 450 px (16:9)", 800, 450, "Business accounts; Pinterest crops to 16:9 - larger 16:9 sizes also work"))),
             SocialCategory("Post", "Pins", listOf(
                 SocialSize("Standard Pin", "1000 x 1500 px (2:3)", 1000, 1500, "Taller than 2:3 gets cut off in feeds"),
                 SocialSize("Square Pin", "1000 x 1000 px (1:1)", 1000, 1000),

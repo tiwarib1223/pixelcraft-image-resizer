@@ -54,6 +54,7 @@ established design-tool references. Encoded in
 | Use | Size | Source |
 | --- | --- | --- |
 | Profile picture | 165 x 165 px (shown as circle) | help.pinterest.com |
+| Profile cover | 800 x 450 px min (16:9; larger 16:9 ok; business accounts) | help.pinterest.com/en/business/article/personalize-your-profile |
 | Pin | 1000 x 1500 px (2:3, taller gets cut) | create.pinterest.com |
 | Square pin | 1000 x 1000 px (1:1) | same |
 | Idea pin | 1080 x 1920 px (9:16) | same |

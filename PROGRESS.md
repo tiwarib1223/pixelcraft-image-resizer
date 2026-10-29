@@ -74,6 +74,12 @@ Stage 3 v0.10.1 (built on Stage 2E v0.8.1): queue overview screen, the full "Sel
 
 
 
+## v0.11.1 fix (his feedback: "when we select image it must show here")
+- Social Media Sizes home: the "Select Your Image" card now shows the selected photo as a visible thumbnail next to the text (the size text stays).
+- Removed the "More" tile from the platform grid (his request).
+- Added the missing Pinterest Profile Cover: 800 x 450 px minimum, 16:9 (official: help.pinterest.com "Personalize your profile"; business accounts, Pinterest crops to 16:9). Documented in docs/social-media-sizes.md.
+- Homepage: "Social & Shop Sizes" moved into the Compress tile slot; Compress moved down to its old slot (his request).
+
 ## v0.11.0 feature - Social Media Sizes (his GO: "Research deeply and add official size")
 - New tool, opened from the homepage "Social & Shop Sizes" tile (the tile now opens this tool instead of the Presets shortcut; the Presets bottom tab itself is unchanged). Homepage layout otherwise untouched.
 - Three pages: a platform picker ("Social Media Sizes / Every platform. Every image size." + Select Your Image card + a grid of Instagram, Facebook, YouTube, TikTok, LinkedIn, Pinterest, X, WhatsApp, plus More), a category list per platform (Profile Picture / Post / Story / Cover Photo-Banner / Video Thumbnail / Ad Creative / Custom Size), and an editing page ("Instagram - Post" style) with live preview, the target size label, Crop / Position / Background buttons and an orange Export Image button.

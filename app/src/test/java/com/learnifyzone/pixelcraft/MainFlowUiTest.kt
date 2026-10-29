@@ -125,7 +125,6 @@ class MainFlowUiTest {
             waitForText("Instagram")
             waitForText("YouTube")
             waitForText("WhatsApp")
-            waitForText("More")
         }
     }
 }
