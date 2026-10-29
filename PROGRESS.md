@@ -74,6 +74,16 @@ Stage 3 v0.10.1 (built on Stage 2E v0.8.1): queue overview screen, the full "Sel
 
 
 
+## v0.16.2 - Text on Photo fixes from his phone testing (Oct 29, 2026)
+
+He tested v0.16.1 on his phone and sent screenshots. Three fixes:
+
+- Image layer gestures FIXED (his "I can't edit and move layer image"): the preview's gesture handler only re-reads its captured inputs when the photo or crop mode changes, so the image-layer selection was invisible to it - drags fell through to the text path, and with no text layer selected nothing moved. Preview transforms now route through the app, which reads the CURRENT selection at gesture time: image layers drag, pinch-resize and twist-rotate exactly like text layers. Double-tap on an image layer selects it without opening the text editor.
+- Clean photo open FIXED (his "When I open image already 'your text' coming over image. No need to come."): opening a photo no longer drops a default "Your text" layer on it. The photo starts with zero layers; a text layer is created only when he taps + Text (or when a saved style is applied and needs one).
+- Curve Text control FIXED (his "Curve text button fix all text in one line... Arc in second line... It takes more space"): the long two-line pill button is gone - Curve Text is now a compact one-line toggle row (same Switch style as Shadow), and the Arc slider sits on its own line below when ON.
+- Squished "More" buttons FIXED (his screenshots): the font, image-size, text-colour and background-colour rows squeezed the More button into a one-letter-per-line vertical strip. All four rows now scroll horizontally, so quick choices keep their natural size and the More button stays a normal readable button.
+- Text background gap FIXED (his "I can't find background colour"): that squeezed More colours card was silently inflating the row height, leaving the chips floating in the middle with big empty space above and below. With the row scrolling, the chips (None/White/Black/Blue/Gold + More colours) sit directly under the label again.
+
 ## v0.16.1 - Image-size cutter inside Text on Photo (his spec)
 - New "Image Size" section right after Image Preview (before Add Text, so the canvas shape is set before styling): 4 common sizes up front - Square 1:1, Portrait 4:5, Story 9:16, Wide 16:9 - each labelled with name AND ratio like the app's other pickers, plus a 5th "More sizes" button revealing the full list (adds Classic 3:2, Tall 2:3, Screen 5:4, Standard 4:3, Upright 3:4, A4 210:297, plus an "Original - no crop" chip) and a Custom size entry (two whole-number fields W:H, 1..99, with a gentle inline error - "Enter whole numbers from 1 to 99, like 5 and 7.").
 - Choosing a size shows the crop frame over the WHOLE photo (darkened outside, sky-blue frame - the app's Crop & Rotate look) and opens the POSITION step (his follow-up: same as the Social Media Sizes Position button - the button is even named "Position"): drag pans FREELY in any direction (no snapping, clamped only at the photo edges), pinch zooms the frame in/out around its centre (5% min-size guard, never leaves the photo), "Done" confirms, "Position" reopens, "Original size" clears. While adjusting, text gestures are paused so the two never fight; the scroll-lock covers frame drags too.

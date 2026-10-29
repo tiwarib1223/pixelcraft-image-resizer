@@ -666,7 +666,7 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
             if (testTool == "compresssettings") { pendingCompressTool = true; compressGoSettings = true }
             if (testTool == "print") pendingPrintTool = true
             if (testTool == "printsetup") { pendingPrintTool = true; printGoSetup = true }
-            loadPhoto(Uri.fromFile(File(testPath)), isCamera = false)
+            if (testTool != "textphoto") loadPhoto(Uri.fromFile(File(testPath)), isCamera = false)
         }
     }
 
@@ -2735,11 +2735,8 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                 textPhotoBytes = querySourceSize(context, uri)
                 textResultBytes = null
                 textSaved = false
-                if (textLayers.isEmpty()) {
-                    val layer = TextOverlayUtils.TextLayer(id = System.currentTimeMillis())
-                    textLayers.add(layer)
-                    textSelectedId = layer.id
-                }
+                // His v0.16.2 rule: the photo opens CLEAN - no default "Your text" layer.
+                // A text layer appears only when he taps + Text (or a saved style needs one).
                 refreshTextStylePresets()
                 pendingTextStyle?.let { p -> pendingTextStyle = null; applyTextStylePreset(p) }
                 textTick++
@@ -2751,6 +2748,24 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
         }
     }
 
+
+    // Test hook (JVM UI tests): open Text on Photo directly with a pre-loaded photo, an optional
+    // sample text layer and an optional overlay image - the pickers cannot run under Robolectric.
+    LaunchedEffect(Unit) {
+        val act = context as? Activity
+        if (act?.intent?.getStringExtra("pixelcraft.test.tool") == "textphoto") {
+            act.intent.getStringExtra("pixelcraft.test.photo")?.let { p ->
+                screen = Screen.TextPhoto
+                loadTextPhoto(Uri.fromFile(File(p)))
+            }
+            if (act.intent.getStringExtra("pixelcraft.test.textlayer") == "1") {
+                addTextLayer()
+                selectedTextLayer()?.text = "Hello"
+                textTick++
+            }
+            act.intent.getStringExtra("pixelcraft.test.overlay")?.let { addTextImageLayer(Uri.fromFile(File(it))) }
+        }
+    }
 
     /** Tap-to-select: topmost layer whose measured block contains the point (in EFFECTIVE canvas pixels; rotation-agnostic, generous pad). */
     fun textLayerAt(xEff: Float, yEff: Float): TextOverlayUtils.TextLayer? {
@@ -3860,6 +3875,33 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                 onAddImageLayer = { textImagePicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
                 onSelectImageLayer = { textImageSelectedId = it; textSelectedId = null; textTick++ },
                 onMutateImageLayer = { block -> mutateSelectedImageLayer(block) },
+                onTransform = { dx, dy, z, r ->
+                    if (textImageSelectedId != null && selectedImageLayer() != null) {
+                        mutateSelectedImageLayer { im ->
+                            im.cx = (im.cx + dx).coerceIn(0f, 1f)
+                            im.cy = (im.cy + dy).coerceIn(0f, 1f)
+                            im.widthFrac = (im.widthFrac * z).coerceIn(0.02f, 2f)
+                            im.rotation = (im.rotation + r) % 360f
+                        }
+                    } else {
+                        mutateSelectedLayer(1000L) { l ->
+                            l.cx = (l.cx + dx).coerceIn(0f, 1f)
+                            l.cy = (l.cy + dy).coerceIn(0f, 1f)
+                            l.scale = (l.scale * z).coerceIn(0.2f, 10f)
+                            l.rotation = (l.rotation + r) % 360f
+                        }
+                    }
+                },
+                onDoubleTapAt = { x, y ->
+                    val hit = textLayerAt(x, y)
+                    if (hit != null) { textSelectedId = hit.id; textImageSelectedId = null; textTick++; textEditOpen = true }
+                    else {
+                        val eff2 = textEffectiveSize()
+                        val im2 = textImageLayers.lastOrNull { TextOverlayUtils.imageLayerHit(it, x, y, eff2[0], eff2[1]) }
+                        if (im2 != null) { textImageSelectedId = im2.id; textSelectedId = null; textTick++ }
+                        else textEditOpen = true
+                    }
+                },
                 onDeleteImageLayer = { deleteImageLayer(it) },
                 onMoveImageLayer = { id, dir -> moveImageLayer(id, dir) },
                 onTapAt = { x, y ->
@@ -9085,6 +9127,8 @@ private fun TextOnPhotoScreen(
     onAddImageLayer: () -> Unit,
     onSelectImageLayer: (Long) -> Unit,
     onMutateImageLayer: ((TextOverlayUtils.ImageLayer) -> Unit) -> Unit,
+    onTransform: (Float, Float, Float, Float) -> Unit,
+    onDoubleTapAt: (Float, Float) -> Unit,
     onDeleteImageLayer: (Long) -> Unit,
     onMoveImageLayer: (Long, Int) -> Unit,
     onTapAt: (Float, Float) -> Unit,
@@ -9182,7 +9226,7 @@ private fun TextOnPhotoScreen(
                         if (!cropAdjust) {
                             detectTapGestures(
                                 onTap = { off -> onTapAt(off.x / sPx, off.y / sPx) },
-                                onDoubleTap = { off -> onTapAt(off.x / sPx, off.y / sPx); onEditOpen(true) }
+                                onDoubleTap = { off -> onDoubleTapAt(off.x / sPx, off.y / sPx) }
                             )
                         }
                     }
@@ -9191,20 +9235,11 @@ private fun TextOnPhotoScreen(
                             if (cropAdjust) {
                                 onCropNudge(pan.x / sPx / bmp.width, pan.y / sPx / bmp.height)
                                 if (zoom != 1f) onCropZoom(zoom)
-                            } else if (selectedImageId != null) {
-                                onMutateImageLayer { im ->
-                                    im.cx = (im.cx + pan.x / sPx / effW).coerceIn(0f, 1f)
-                                    im.cy = (im.cy + pan.y / sPx / effH).coerceIn(0f, 1f)
-                                    im.widthFrac = (im.widthFrac * zoom).coerceIn(0.02f, 2f)
-                                    im.rotation = (im.rotation + rot) % 360f
-                                }
                             } else {
-                                onMutate(1000L) { l ->
-                                    l.cx = (l.cx + pan.x / sPx / effW).coerceIn(0f, 1f)
-                                    l.cy = (l.cy + pan.y / sPx / effH).coerceIn(0f, 1f)
-                                    l.scale = (l.scale * zoom).coerceIn(0.2f, 10f)
-                                    l.rotation = (l.rotation + rot) % 360f
-                                }
+                                // Routed through the App so the CURRENT selection (text vs image layer) is read at
+                                // gesture time: pointerInput only restarts when bmp/cropAdjust change, so a captured
+                                // selectedImageId here goes stale and the image layer would never move (v0.16.2 fix).
+                                onTransform(pan.x / sPx / effW, pan.y / sPx / effH, zoom, rot)
                             }
                         }
                     }
@@ -9317,12 +9352,9 @@ private fun TextOnPhotoScreen(
                         Text("A+", color = DeepNavy, fontSize = 15.sp, fontWeight = FontWeight.Bold)
                     }
 
-                    OutlinedButton(
-                        onClick = { onMutate(0L) { l -> l.curved = !l.curved } },
-                        modifier = Modifier.fillMaxWidth(),
-                        colors = ButtonDefaults.outlinedButtonColors(containerColor = if (selected.curved) PaleBlue else Color.Transparent)
-                    ) {
-                        Text(if (selected.curved) "Curve Text: ON - text follows a real arc" else "Curve Text: bend the text along an arc", color = DeepNavy, fontWeight = FontWeight.SemiBold)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("Curve Text", color = Slate, fontSize = 13.sp, modifier = Modifier.weight(1f))
+                        Switch(checked = selected.curved, onCheckedChange = { onMutate(0L) { l -> l.curved = it } })
                     }
                     if (selected.curved) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -9341,7 +9373,7 @@ private fun TextOnPhotoScreen(
                     Text("Text background", color = Slate, fontSize = 12.sp)
                     run {
                         var bgColoursOpen by remember { mutableStateOf(false) }
-                        Row(Modifier.padding(top = 4.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Row(Modifier.padding(top = 4.dp, bottom = 8.dp).horizontalScroll(rememberScrollState()), verticalAlignment = Alignment.CenterVertically) {
                             listOf(0 to "None", 0xFFFFFFFF.toInt() to "White", 0xFF000000.toInt() to "Black", 0xFF42BFEF.toInt() to "Blue", 0xFFF5B942.toInt() to "Gold").forEach { (c, lbl) ->
                                 val sel = selected.bgColorArgb == c
                                 Card(
@@ -9426,14 +9458,14 @@ private fun TextOnPhotoScreen(
             Text("Image Size", color = DeepNavy, fontWeight = FontWeight.Bold, fontSize = 16.sp)
             Text("Pick the canvas shape first, then add your words.", color = Slate, fontSize = 11.sp)
             Spacer(Modifier.height(6.dp))
-            Row {
+            Row(Modifier.horizontalScroll(rememberScrollState())) {
                 TextOverlayUtils.ASPECT_OPTIONS.filter { it.common }.forEach { opt ->
                     PrintPresetChip(opt.label, "${opt.rw}:${opt.rh}", cropLabel == "${opt.label} ${opt.rw}:${opt.rh}") { onSetCrop(opt.label, opt.rw, opt.rh) }
                 }
                 PrintPresetChip("More sizes", "all + custom", moreOpen) { moreOpen = !moreOpen }
             }
             if (moreOpen) {
-                Row {
+                Row(Modifier.horizontalScroll(rememberScrollState())) {
                     PrintPresetChip("Original", "no crop", cropRect == null && cropLabel.isEmpty()) { onClearCrop() }
                     TextOverlayUtils.ASPECT_OPTIONS.filter { !it.common }.take(3).forEach { opt ->
                         PrintPresetChip(opt.label, "${opt.rw}:${opt.rh}", cropLabel == "${opt.label} ${opt.rw}:${opt.rh}") { onSetCrop(opt.label, opt.rw, opt.rh) }
@@ -9583,7 +9615,7 @@ private fun TextOnPhotoScreen(
             Text("Font", color = Slate, fontSize = 12.sp)
             run {
                 var fontsOpen by remember { mutableStateOf(false) }
-                Row(Modifier.padding(top = 4.dp)) {
+                Row(Modifier.padding(top = 4.dp).horizontalScroll(rememberScrollState())) {
                     TextOverlayUtils.FontChoice.values().filter { it.common }.forEach { f ->
                         val sel = selected.font == f
                         Card(
@@ -9641,7 +9673,7 @@ private fun TextOnPhotoScreen(
             Text("Text colour", color = Slate, fontSize = 12.sp)
             run {
                 var coloursOpen by remember { mutableStateOf(false) }
-                Row(Modifier.padding(top = 6.dp, bottom = 8.dp), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                Row(Modifier.padding(top = 6.dp, bottom = 8.dp).horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
                     TextOverlayUtils.QUICK_COLORS.forEach { c ->
                         val sel = selected.colorArgb == c
                         Box(
