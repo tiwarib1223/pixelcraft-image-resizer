@@ -183,4 +183,40 @@ class MainFlowUiTest {
             waitForText("Convert Image")
         }
     }
+
+    @Test
+    fun compressHomeShowsModes() {
+        val bytes = javaClass.classLoader!!.getResourceAsStream("test_photo.jpg")!!.readBytes()
+        val tmp = File.createTempFile("pc_ui_test_compress", ".jpg")
+        tmp.writeBytes(bytes)
+        tmp.deleteOnExit()
+        val intent = Intent(ApplicationProvider.getApplicationContext(), MainActivity::class.java)
+            .putExtra("pixelcraft.test.photo", tmp.absolutePath)
+            .putExtra("pixelcraft.test.tool", "compress")
+        ActivityScenario.launch<MainActivity>(intent).use {
+            waitForText("Reduce file size. Keep image quality.")
+            waitForText("Select Images")
+            waitForText("Quality Compression")
+            waitForText("Target File Size")
+        }
+    }
+
+    @Test
+    fun compressSettingsShowsFileAndControls() {
+        val bytes = javaClass.classLoader!!.getResourceAsStream("test_photo.jpg")!!.readBytes()
+        val tmp = File.createTempFile("pc_ui_test_compress2", ".jpg")
+        tmp.writeBytes(bytes)
+        tmp.deleteOnExit()
+        val intent = Intent(ApplicationProvider.getApplicationContext(), MainActivity::class.java)
+            .putExtra("pixelcraft.test.photo", tmp.absolutePath)
+            .putExtra("pixelcraft.test.tool", "compresssettings")
+        ActivityScenario.launch<MainActivity>(intent).use {
+            waitForText("Compression mode")
+            waitForText("Image quality")
+            waitForText("80%")
+            waitForText("Optional resize")
+            waitForText("Compress Image")
+            waitForText("Smaller file")
+        }
+    }
 }

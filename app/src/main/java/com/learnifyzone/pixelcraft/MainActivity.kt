@@ -96,6 +96,8 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
@@ -159,6 +161,7 @@ import com.learnifyzone.pixelcraft.image.Transforms
 import com.learnifyzone.pixelcraft.image.CropMath
 import com.learnifyzone.pixelcraft.image.SocialPlatform
 import com.learnifyzone.pixelcraft.image.SocialSize
+import com.learnifyzone.pixelcraft.image.CompressUtils
 import com.learnifyzone.pixelcraft.image.ConvertFormats
 import com.learnifyzone.pixelcraft.image.ShopSizes
 import com.learnifyzone.pixelcraft.image.SocialSizes
@@ -194,7 +197,7 @@ class MainActivity : ComponentActivity() {
 }
 
 private enum class MainTab { Home, MyPhotos, Presets, Settings }
-private enum class Screen { Home, Editor, Export, Print, Success, QueueOverview, QueueResult, SocialHome, SocialPlatform, SocialEdit, ShopHome, ShopOther, ShopPlatform, ShopEdit, ShopCollage, ConvertHome, ConvertEdit, ConvertResult }
+private enum class Screen { Home, Editor, Export, Print, Success, QueueOverview, QueueResult, SocialHome, SocialPlatform, SocialEdit, ShopHome, ShopOther, ShopPlatform, ShopEdit, ShopCollage, ConvertHome, ConvertEdit, ConvertResult, CompressHome, CompressSettings, CompressResult }
 private enum class Tool(val label: String) { Resize("Resize"), Presets("Presets"), Crop("Crop & Rotate"), Background("Background"), Circle("Circle Cutter"), Format("Format") }
 
 private enum class CropTransform { LEFT, RIGHT, FLIP_H, FLIP_V }
@@ -318,6 +321,29 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
     var convertBatchResults by remember { mutableStateOf<List<Pair<String, ByteArray>>?>(null) }
     var convertBatchOutTotal by remember { mutableLongStateOf(-1L) }
     var convertBatchIsPdf by remember { mutableStateOf(false) }
+    var pendingCompressTool by remember { mutableStateOf(false) }
+    var compressGoSettings by remember { mutableStateOf(false) }
+    val compressUris = remember { mutableStateListOf<Uri>() }
+    val compressThumbs = remember { mutableStateListOf<Bitmap>() }
+    val compressLabels = remember { mutableStateListOf<String>() }
+    val compressNames = remember { mutableStateListOf<String>() }
+    val compressOrigSizes = remember { mutableStateListOf<Long>() }
+    var compressIsPdf by remember { mutableStateOf(false) }
+    var compressPdfPages by remember { mutableStateOf<List<Bitmap>?>(null) }
+    var compressMode by rememberSaveable { mutableStateOf("Quality") }
+    var compressQuality by rememberSaveable { mutableIntStateOf(80) }
+    var compressTargetKb by rememberSaveable { mutableStateOf("500") }
+    var compressResizeOn by rememberSaveable { mutableStateOf(false) }
+    var compressResizePct by rememberSaveable { mutableIntStateOf(75) }
+    var compressResultBytes by remember { mutableStateOf<ByteArray?>(null) }
+    var compressResultName by remember { mutableStateOf("") }
+    var compressResultMime by remember { mutableStateOf("") }
+    var compressResultOrig by remember { mutableLongStateOf(-1L) }
+    var compressBefore by remember { mutableStateOf<Bitmap?>(null) }
+    var compressAfter by remember { mutableStateOf<Bitmap?>(null) }
+    var compressBatchFiles by remember { mutableStateOf<List<Pair<String, ByteArray>>?>(null) }
+    var compressBatchOrig by remember { mutableStateOf<List<Long>?>(null) }
+    var compressSaved by remember { mutableStateOf(false) }
     var convertPdfPages by remember { mutableStateOf<List<Bitmap>?>(null) }
     val convertPdfChecked = remember { mutableStateListOf<Boolean>() }
     var circleShape by rememberSaveable { mutableStateOf("Circle") }
@@ -500,6 +526,17 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                     convertReadyBitmaps.add(null)
                     screen = if (convertGoEdit) { convertGoEdit = false; Screen.ConvertEdit } else Screen.ConvertHome
                 }
+                if (pendingCompressTool) {
+                    pendingCompressTool = false
+                    compressUris.clear(); compressThumbs.clear(); compressLabels.clear(); compressNames.clear(); compressOrigSizes.clear()
+                    compressIsPdf = false; compressPdfPages = null
+                    compressUris.add(uri)
+                    compressThumbs.add(thumbOf(loaded))
+                    compressLabels.add(ConvertFormats.detectFormat(context, uri))
+                    compressNames.add(queryDisplayName(context, uri) ?: "image")
+                    compressOrigSizes.add(querySourceSize(context, uri))
+                    screen = if (compressGoSettings) { compressGoSettings = false; Screen.CompressSettings } else Screen.CompressHome
+                }
                 // Clear busy BEFORE the snackbar: showSnackbar suspends until dismissal,
                 // so gating busy on it left the Process button spinning for ~4s after every load.
                 busy = false
@@ -529,6 +566,8 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
             (context as? Activity)?.intent?.getStringExtra("pixelcraft.test.pdf")?.let { pdfPath ->
                 pendingPdfTestPath = pdfPath
             }
+            if (testTool == "compress") pendingCompressTool = true
+            if (testTool == "compresssettings") { pendingCompressTool = true; compressGoSettings = true }
             loadPhoto(Uri.fromFile(File(testPath)), isCamera = false)
         }
     }
@@ -969,6 +1008,227 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                 }
             }
         }
+    }
+
+    fun loadCompressPhotos(uris: List<Uri>) {
+        busy = true
+        busyLabel = "Loading photos…"
+        scope.launch {
+            try {
+                val newUris = mutableListOf<Uri>()
+                val newThumbs = mutableListOf<Bitmap>()
+                val newLabels = mutableListOf<String>()
+                val newNames = mutableListOf<String>()
+                val newSizes = mutableListOf<Long>()
+                uris.take(20).forEach { u ->
+                    withContext(Dispatchers.IO) { decodeOrientedBitmap(context, u) }?.let { bmp ->
+                        newUris.add(u)
+                        newThumbs.add(thumbOf(bmp))
+                        newLabels.add(ConvertFormats.detectFormat(context, u))
+                        newNames.add(queryDisplayName(context, u) ?: "image")
+                        newSizes.add(querySourceSize(context, u))
+                    }
+                }
+                compressUris.clear(); compressUris.addAll(newUris)
+                compressThumbs.clear(); compressThumbs.addAll(newThumbs)
+                compressLabels.clear(); compressLabels.addAll(newLabels)
+                compressNames.clear(); compressNames.addAll(newNames)
+                compressOrigSizes.clear(); compressOrigSizes.addAll(newSizes)
+                compressIsPdf = false; compressPdfPages = null
+                screen = if (compressGoSettings && compressUris.isNotEmpty()) { compressGoSettings = false; Screen.CompressSettings } else Screen.CompressHome
+            } finally {
+                busy = false
+                busyLabel = ""
+            }
+        }
+    }
+
+    fun loadCompressPdf(uri: Uri) {
+        busy = true
+        busyLabel = "Reading PDF…"
+        scope.launch {
+            try {
+                val pages = withContext(Dispatchers.IO) {
+                    val pfd = context.contentResolver.openFileDescriptor(uri, "r")
+                        ?: throw IllegalStateException("Could not open the PDF")
+                    pfd.use { ConvertFormats.renderPdfPages(it, maxPages = 40) }
+                }
+                if (pages.isEmpty()) throw IllegalStateException("No pages")
+                compressUris.clear(); compressThumbs.clear(); compressLabels.clear(); compressNames.clear(); compressOrigSizes.clear()
+                compressUris.add(uri)
+                compressThumbs.add(thumbOf(pages.first()))
+                compressLabels.add("PDF")
+                compressNames.add(queryDisplayName(context, uri) ?: "document.pdf")
+                compressOrigSizes.add(querySourceSize(context, uri))
+                compressIsPdf = true
+                compressPdfPages = pages
+                screen = Screen.CompressSettings
+                busy = false
+                busyLabel = ""
+            } catch (e: Exception) {
+                busy = false
+                busyLabel = ""
+                snackbar.showSnackbar("Couldn't read this PDF. Try another file.")
+            }
+        }
+    }
+
+    fun compressTargetBytes(): Long {
+        val kb = compressTargetKb.filter { it.isDigit() }.toLongOrNull() ?: 500L
+        return (kb.coerceIn(20L, 20_000L)) * 1024L
+    }
+
+    fun outputFormatFor(label: String): Triple<Bitmap.CompressFormat, String, String> = when (label) {
+        "PNG" -> Triple(Bitmap.CompressFormat.PNG, "png", "image/png")
+        "WEBP" -> Triple(Bitmap.CompressFormat.WEBP, "webp", "image/webp")
+        "JPG" -> Triple(Bitmap.CompressFormat.JPEG, "jpg", "image/jpeg")
+        else -> Triple(Bitmap.CompressFormat.JPEG, "jpg", "image/jpeg")
+    }
+
+    fun compressOne(src: Bitmap, label: String): Pair<ByteArray, Triple<Bitmap.CompressFormat, String, String>> {
+        val fmt = outputFormatFor(label)
+        val resized = if (compressResizeOn && !compressIsPdf) {
+            Bitmap.createScaledBitmap(
+                src,
+                (src.width * compressResizePct / 100f).toInt().coerceAtLeast(1),
+                (src.height * compressResizePct / 100f).toInt().coerceAtLeast(1),
+                true
+            )
+        } else src
+        val bytes = if (compressMode == "Target" && fmt.first != Bitmap.CompressFormat.PNG) {
+            CompressUtils.compressImage(resized, fmt.first, compressTargetBytes())
+        } else {
+            val flat = if (fmt.first == Bitmap.CompressFormat.JPEG) ConvertFormats.flatten(resized, android.graphics.Color.WHITE) else resized
+            val baos = java.io.ByteArrayOutputStream()
+            flat.compress(fmt.first, if (fmt.first == Bitmap.CompressFormat.PNG) 100 else compressQuality, baos)
+            baos.toByteArray()
+        }
+        return bytes to fmt
+    }
+
+    fun applyCompress() {
+        if (compressUris.isEmpty()) {
+            scope.launch { snackbar.showSnackbar("Select at least one image to compress.") }
+            return
+        }
+        busy = true
+        busyLabel = "Compressing…"
+        scope.launch {
+            try {
+                if (compressIsPdf) {
+                    val pages = compressPdfPages ?: throw IllegalStateException("No pages")
+                    val bytes = withContext(Dispatchers.Default) {
+                        if (compressMode == "Target") CompressUtils.compressPdfPages(pages, compressTargetBytes())
+                        else {
+                            val scale = (compressQuality / 100f).coerceIn(0.3f, 1f)
+                            val scaled = if (scale >= 1f) pages else pages.map {
+                                Bitmap.createScaledBitmap(it, (it.width * scale).toInt().coerceAtLeast(1), (it.height * scale).toInt().coerceAtLeast(1), true)
+                            }
+                            ConvertFormats.encodePdf(scaled, android.graphics.Color.WHITE)
+                        }
+                    }
+                    compressResultBytes = bytes
+                    compressResultName = "pixelcraft_compressed.pdf"
+                    compressResultMime = "application/pdf"
+                    compressResultOrig = compressOrigSizes.firstOrNull() ?: -1L
+                    compressBefore = null
+                    compressAfter = null
+                    compressBatchFiles = null
+                    compressSaved = false
+                    busy = false
+                    busyLabel = ""
+                    screen = Screen.CompressResult
+                } else if (compressUris.size == 1) {
+                    val src = withContext(Dispatchers.IO) { decodeOrientedBitmap(context, compressUris.first()) }
+                        ?: throw IllegalStateException("decode failed")
+                    val (bytes, fmt) = withContext(Dispatchers.Default) { compressOne(src, compressLabels.firstOrNull() ?: "JPG") }
+                    compressResultBytes = bytes
+                    compressResultName = "pixelcraft_compressed.${fmt.second}"
+                    compressResultMime = fmt.third
+                    compressResultOrig = compressOrigSizes.firstOrNull() ?: -1L
+                    compressBefore = src
+                    compressAfter = android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                    compressBatchFiles = null
+                    compressSaved = false
+                    busy = false
+                    busyLabel = ""
+                    screen = Screen.CompressResult
+                } else {
+                    val files = mutableListOf<Pair<String, ByteArray>>()
+                    val origs = mutableListOf<Long>()
+                    compressUris.forEachIndexed { i, u ->
+                        busyLabel = "Compressing ${i + 1} of ${compressUris.size}…"
+                        val src = withContext(Dispatchers.IO) { decodeOrientedBitmap(context, u) } ?: return@forEachIndexed
+                        val (bytes, fmt) = withContext(Dispatchers.Default) { compressOne(src, compressLabels.getOrNull(i) ?: "JPG") }
+                        files.add("pixelcraft_compressed_${i + 1}.${fmt.second}" to bytes)
+                        origs.add(compressOrigSizes.getOrNull(i) ?: -1L)
+                        src.recycle()
+                    }
+                    compressBatchFiles = files
+                    compressBatchOrig = origs
+                    compressResultBytes = null
+                    compressBefore = null
+                    compressAfter = null
+                    compressSaved = false
+                    busy = false
+                    busyLabel = ""
+                    screen = Screen.CompressResult
+                }
+            } catch (e: Exception) {
+                busy = false
+                busyLabel = ""
+                snackbar.showSnackbar("Couldn't compress. Try fewer or smaller photos.")
+            }
+        }
+    }
+
+    fun saveCompressResult() {
+        val batch = compressBatchFiles
+        if (batch != null) {
+            busy = true
+            busyLabel = "Saving…"
+            scope.launch {
+                try {
+                    batch.forEachIndexed { i, (name, bytes) ->
+                        busyLabel = "Saving ${i + 1} of ${batch.size}…"
+                        val mime = when {
+                            name.endsWith(".png") -> "image/png"
+                            name.endsWith(".webp") -> "image/webp"
+                            else -> "image/jpeg"
+                        }
+                        saveToGallery(context, name, mime, bytes)
+                    }
+                    compressSaved = true
+                    busy = false
+                    busyLabel = ""
+                    snackbar.showSnackbar("Saved to Pictures/PixelCraft.")
+                } catch (e: Exception) {
+                    busy = false
+                    busyLabel = ""
+                    snackbar.showSnackbar("Couldn't save. Try again.")
+                }
+            }
+            return
+        }
+        val bytes = compressResultBytes ?: return
+        scope.launch {
+            try {
+                if (compressResultMime == "application/pdf") saveToDownloads(context, compressResultName, compressResultMime, bytes)
+                else saveToGallery(context, compressResultName, compressResultMime, bytes)
+                compressSaved = true
+                snackbar.showSnackbar(if (compressResultMime == "application/pdf") "Saved to Downloads/PixelCraft." else "Saved to Pictures/PixelCraft (originals untouched).")
+            } catch (e: Exception) {
+                snackbar.showSnackbar("Couldn't save. Try again.")
+            }
+        }
+    }
+
+    fun resetCompress() {
+        compressUris.clear(); compressThumbs.clear(); compressLabels.clear(); compressNames.clear(); compressOrigSizes.clear()
+        compressIsPdf = false; compressPdfPages = null
+        compressResultBytes = null; compressBefore = null; compressAfter = null
+        compressBatchFiles = null; compressBatchOrig = null; compressSaved = false
+        compressGoSettings = false
     }
 
     fun saveConvertResult() {
@@ -1610,6 +1870,12 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
     val convertPdfPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         uri?.let { loadPdfInput(it) }
     }
+    val compressPicker = rememberLauncherForActivityResult(ActivityResultContracts.PickMultipleVisualMedia(20)) { uris ->
+        if (uris.isNotEmpty()) loadCompressPhotos(uris)
+    }
+    val compressPdfPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        uri?.let { loadCompressPdf(it) }
+    }
 
     val multiPicker = rememberLauncherForActivityResult(ActivityResultContracts.PickMultipleVisualMedia(50)) { uris ->
         if (uris.size == 1) {
@@ -1797,6 +2063,9 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
             Screen.ConvertResult -> screen = Screen.ConvertEdit
             Screen.ConvertEdit -> screen = Screen.ConvertHome
             Screen.ConvertHome -> { resetConvert(); screen = Screen.Home }
+            Screen.CompressResult -> screen = Screen.CompressSettings
+            Screen.CompressSettings -> screen = Screen.CompressHome
+            Screen.CompressHome -> { resetCompress(); screen = Screen.Home }
             else -> screen = Screen.Home
         }
     }
@@ -1891,7 +2160,7 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
         containerColor = MaterialTheme.colorScheme.background,
         snackbarHost = { SnackbarHost(snackbar) },
         topBar = {
-            if (screen == Screen.Editor || screen == Screen.Export || screen == Screen.Print || screen == Screen.QueueOverview || screen == Screen.QueueResult || screen == Screen.Success || screen == Screen.SocialHome || screen == Screen.SocialPlatform || screen == Screen.SocialEdit || screen == Screen.ShopHome || screen == Screen.ShopOther || screen == Screen.ShopPlatform || screen == Screen.ShopEdit || screen == Screen.ShopCollage || screen == Screen.ConvertHome || screen == Screen.ConvertEdit || screen == Screen.ConvertResult) {
+            if (screen == Screen.Editor || screen == Screen.Export || screen == Screen.Print || screen == Screen.QueueOverview || screen == Screen.QueueResult || screen == Screen.Success || screen == Screen.SocialHome || screen == Screen.SocialPlatform || screen == Screen.SocialEdit || screen == Screen.ShopHome || screen == Screen.ShopOther || screen == Screen.ShopPlatform || screen == Screen.ShopEdit || screen == Screen.ShopCollage || screen == Screen.ConvertHome || screen == Screen.ConvertEdit || screen == Screen.ConvertResult || screen == Screen.CompressHome || screen == Screen.CompressSettings || screen == Screen.CompressResult) {
                 TopAppBar(
                     title = {
                         Text(
@@ -1912,6 +2181,9 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                                 Screen.ConvertHome -> "Format Converter"
                                 Screen.ConvertEdit -> "Format Converter · ${convertTarget.label}"
                                 Screen.ConvertResult -> "Conversion Result"
+                                Screen.CompressHome -> "Image Compressor"
+                                Screen.CompressSettings -> "Compression Settings"
+                                Screen.CompressResult -> "Compression Results"
                                 else -> "Print Size & DPI"
                             },
                             fontWeight = FontWeight.SemiBold
@@ -1937,6 +2209,9 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                                 Screen.ConvertResult -> screen = Screen.ConvertEdit
                                 Screen.ConvertEdit -> screen = Screen.ConvertHome
                                 Screen.ConvertHome -> { resetConvert(); screen = Screen.Home }
+                                Screen.CompressResult -> screen = Screen.CompressSettings
+                                Screen.CompressSettings -> screen = Screen.CompressHome
+                                Screen.CompressHome -> { resetCompress(); screen = Screen.Home }
                                 else -> screen = Screen.Home
                             }
                         }) {
@@ -1974,6 +2249,14 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                                 "Reset",
                                 modifier = Modifier
                                     .clickable { resetConvert(); screen = Screen.ConvertHome }
+                                    .padding(horizontal = 14.dp),
+                                color = DeepNavy
+                            )
+                        } else if (screen == Screen.CompressSettings) {
+                            Text(
+                                "Reset",
+                                modifier = Modifier
+                                    .clickable { resetCompress(); screen = Screen.CompressHome }
                                     .padding(horizontal = 14.dp),
                                 color = DeepNavy
                             )
@@ -2026,6 +2309,7 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                             "Social Media Sizes" -> screen = Screen.SocialHome
                             "Online Shop Sizes" -> screen = Screen.ShopHome
                             "Format Converter" -> screen = Screen.ConvertHome
+                            "Compress" -> screen = Screen.CompressHome
                             "Remove Background" -> {
                                 if (workingBitmap != null) { screen = Screen.Editor; tool = Tool.Background }
                                 else { pendingBgTool = true; pickPhotos() }
@@ -2469,6 +2753,57 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                 batchIsPdf = convertBatchIsPdf,
                 onSave = { saveConvertResult() },
                 onConvertAnother = { resetConvert(); screen = Screen.ConvertHome }
+            )
+            Screen.CompressHome -> CompressHomeScreen(
+                modifier = Modifier.padding(padding),
+                thumbs = compressThumbs,
+                labels = compressLabels,
+                onSelectImages = { compressPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
+                onSelectPdf = { compressPdfPicker.launch(arrayOf("application/pdf")) },
+                onMode = { m ->
+                    compressMode = m
+                    if (compressUris.isEmpty()) {
+                        compressGoSettings = true
+                        compressPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+                    } else {
+                        screen = Screen.CompressSettings
+                    }
+                }
+            )
+            Screen.CompressSettings -> CompressSettingsScreen(
+                modifier = Modifier.padding(padding),
+                thumbs = compressThumbs,
+                labels = compressLabels,
+                names = compressNames,
+                origSizes = compressOrigSizes,
+                isPdf = compressIsPdf,
+                mode = compressMode,
+                onMode = { compressMode = it },
+                quality = compressQuality,
+                onQuality = { compressQuality = it },
+                targetKb = compressTargetKb,
+                onTargetKb = { compressTargetKb = it },
+                resizeOn = compressResizeOn,
+                onResizeOn = { compressResizeOn = it },
+                resizePct = compressResizePct,
+                onResizePct = { compressResizePct = it },
+                busy = busy,
+                onCompress = { applyCompress() }
+            )
+            Screen.CompressResult -> CompressResultScreen(
+                modifier = Modifier.padding(padding),
+                isPdf = compressIsPdf,
+                batchFiles = compressBatchFiles,
+                batchOrig = compressBatchOrig,
+                origSize = compressResultOrig,
+                newBytes = compressResultBytes,
+                resultName = compressNames.firstOrNull() ?: "image",
+                pdfPages = compressPdfPages?.size ?: 0,
+                before = compressBefore,
+                after = compressAfter,
+                saved = compressSaved,
+                onSave = { saveCompressResult() },
+                onAgain = { resetCompress(); screen = Screen.CompressHome }
             )
             Screen.Print -> PrintCalculator(
                 modifier = Modifier.padding(padding),
@@ -4944,6 +5279,15 @@ private fun querySourceSize(context: Context, uri: Uri): Long {
     }
 }
 
+fun queryDisplayName(context: android.content.Context, uri: android.net.Uri): String? {
+    return try {
+        context.contentResolver.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)?.use { c ->
+            val i = c.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
+            if (i >= 0 && c.moveToFirst()) c.getString(i) else null
+        }
+    } catch (_: Exception) { null }
+}
+
 private fun suggestBaseName(width: Int, height: Int): String = "pixelcraft-${width}x${height}"
 
 private fun buildFileName(requestedName: String, format: ExportFormat): String {
@@ -6062,6 +6406,383 @@ private fun ConvertResultScreen(
         Spacer(Modifier.height(10.dp))
         OutlinedButton(onClick = onConvertAnother, modifier = Modifier.fillMaxWidth().height(48.dp), shape = RoundedCornerShape(14.dp)) {
             Text("Convert Another Image", color = DeepNavy)
+        }
+        Spacer(Modifier.height(24.dp))
+    }
+}
+
+@Composable
+private fun CompressHomeScreen(
+    modifier: Modifier = Modifier,
+    thumbs: List<Bitmap>,
+    labels: List<String>,
+    onSelectImages: () -> Unit,
+    onSelectPdf: () -> Unit,
+    onMode: (String) -> Unit
+) {
+    Column(modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).padding(horizontal = 16.dp).verticalScroll(rememberScrollState())) {
+        Spacer(Modifier.height(10.dp))
+        Text("Reduce file size. Keep image quality.", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onBackground)
+        Spacer(Modifier.height(14.dp))
+        Card(colors = CardDefaults.cardColors(containerColor = SoftGrey), shape = RoundedCornerShape(18.dp)) {
+            Column(Modifier.fillMaxWidth().padding(22.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                if (thumbs.isNotEmpty()) {
+                    Row(Modifier.padding(bottom = 10.dp).horizontalScroll(rememberScrollState())) {
+                        thumbs.forEachIndexed { i, t ->
+                            Box(Modifier.padding(end = 6.dp)) {
+                                Image(bitmap = t.asImageBitmap(), contentDescription = "Selected image ${i + 1}", contentScale = ContentScale.Crop, modifier = Modifier.size(64.dp))
+                                Text(
+                                    labels.getOrNull(i) ?: "",
+                                    fontSize = 9.sp, fontWeight = FontWeight.Bold, color = Color.White,
+                                    modifier = Modifier.align(Alignment.BottomStart).background(DeepNavy).padding(horizontal = 4.dp, vertical = 2.dp)
+                                )
+                            }
+                        }
+                    }
+                } else {
+                    Icon(Icons.Default.Image, contentDescription = null, tint = SkyBlue, modifier = Modifier.size(44.dp))
+                    Spacer(Modifier.height(8.dp))
+                }
+                Text("Select Images", fontWeight = FontWeight.Bold, fontSize = 19.sp, color = DeepNavy)
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    if (thumbs.isNotEmpty()) "${thumbs.size} image${if (thumbs.size == 1) "" else "s"} selected" else "Choose one image or multiple images",
+                    fontSize = 13.sp, color = Slate
+                )
+                Spacer(Modifier.height(2.dp))
+                Text("JPG · PNG · WebP", fontSize = 12.sp, color = Slate)
+                Spacer(Modifier.height(12.dp))
+                Button(onClick = onSelectImages, colors = ButtonDefaults.buttonColors(containerColor = Orange, contentColor = Color.White), shape = RoundedCornerShape(12.dp)) {
+                    Text(if (thumbs.isNotEmpty()) "Change" else "Select Images")
+                }
+                Spacer(Modifier.height(8.dp))
+                OutlinedButton(onClick = onSelectPdf, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(12.dp)) {
+                    Text("Select PDF to compress", color = DeepNavy, fontSize = 13.sp)
+                }
+            }
+        }
+        Spacer(Modifier.height(16.dp))
+        Row(Modifier.fillMaxWidth()) {
+            Card(
+                modifier = Modifier.weight(1f).padding(4.dp).clickable { onMode("Quality") },
+                colors = CardDefaults.cardColors(containerColor = PaleBlue),
+                shape = RoundedCornerShape(14.dp)
+            ) {
+                Column(Modifier.fillMaxWidth().padding(16.dp)) {
+                    Icon(Icons.Default.Tune, contentDescription = null, tint = SkyBlue, modifier = Modifier.size(26.dp))
+                    Spacer(Modifier.height(8.dp))
+                    Text("Quality Compression", fontWeight = FontWeight.Bold, color = DeepNavy, fontSize = 15.sp)
+                    Spacer(Modifier.height(2.dp))
+                    Text("Adjust image quality", fontSize = 12.sp, color = Slate)
+                }
+            }
+            Card(
+                modifier = Modifier.weight(1f).padding(4.dp).clickable { onMode("Target") },
+                colors = CardDefaults.cardColors(containerColor = PaleBlue),
+                shape = RoundedCornerShape(14.dp)
+            ) {
+                Column(Modifier.fillMaxWidth().padding(16.dp)) {
+                    Icon(Icons.Default.CheckCircle, contentDescription = null, tint = SkyBlue, modifier = Modifier.size(26.dp))
+                    Spacer(Modifier.height(8.dp))
+                    Text("Target File Size", fontWeight = FontWeight.Bold, color = DeepNavy, fontSize = 15.sp)
+                    Spacer(Modifier.height(2.dp))
+                    Text("Aim for a chosen size", fontSize = 12.sp, color = Slate)
+                }
+            }
+        }
+        Spacer(Modifier.height(16.dp))
+        Card(colors = CardDefaults.cardColors(containerColor = SoftGrey), shape = RoundedCornerShape(14.dp)) {
+            Text(
+                "Everything happens on your phone. Compressed copies are saved as new files - your originals are never touched.",
+                modifier = Modifier.padding(14.dp), fontSize = 13.sp, color = Slate
+            )
+        }
+        Spacer(Modifier.height(24.dp))
+    }
+}
+
+@Composable
+private fun CompressSettingsScreen(
+    modifier: Modifier = Modifier,
+    thumbs: List<Bitmap>,
+    labels: List<String>,
+    names: List<String>,
+    origSizes: List<Long>,
+    isPdf: Boolean,
+    mode: String,
+    onMode: (String) -> Unit,
+    quality: Int,
+    onQuality: (Int) -> Unit,
+    targetKb: String,
+    onTargetKb: (String) -> Unit,
+    resizeOn: Boolean,
+    onResizeOn: (Boolean) -> Unit,
+    resizePct: Int,
+    onResizePct: (Int) -> Unit,
+    busy: Boolean,
+    onCompress: () -> Unit
+) {
+    val totalOrig = origSizes.filter { it > 0 }.sum()
+    val title = if (thumbs.size > 1) "${thumbs.size} images selected" else names.firstOrNull() ?: "image"
+    Column(modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).padding(horizontal = 16.dp).verticalScroll(rememberScrollState())) {
+        Spacer(Modifier.height(10.dp))
+        Card(colors = CardDefaults.cardColors(containerColor = PaleBlue), shape = RoundedCornerShape(14.dp)) {
+            Row(Modifier.fillMaxWidth().padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
+                if (thumbs.isNotEmpty()) {
+                    Row(Modifier.horizontalScroll(rememberScrollState())) {
+                        thumbs.forEachIndexed { i, t ->
+                            Box(Modifier.padding(end = 6.dp)) {
+                                Image(bitmap = t.asImageBitmap(), contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.size(52.dp))
+                                Text(
+                                    labels.getOrNull(i) ?: "",
+                                    fontSize = 9.sp, fontWeight = FontWeight.Bold, color = Color.White,
+                                    modifier = Modifier.align(Alignment.BottomStart).background(DeepNavy).padding(horizontal = 4.dp, vertical = 2.dp)
+                                )
+                            }
+                        }
+                    }
+                    Spacer(Modifier.width(10.dp))
+                }
+                Column {
+                    Text(title, fontWeight = FontWeight.SemiBold, color = DeepNavy, fontSize = 15.sp)
+                    if (totalOrig > 0) Text("Original size: ${formatBytes(totalOrig)}", fontSize = 13.sp, color = Slate)
+                }
+            }
+            if (thumbs.size > 1) {
+                Spacer(Modifier.height(8.dp))
+                names.forEachIndexed { i, name ->
+                    val sz = origSizes.getOrNull(i) ?: -1L
+                    Row(Modifier.fillMaxWidth().padding(vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Text(name, fontSize = 12.sp, color = DeepNavy, modifier = Modifier.weight(1f), maxLines = 1)
+                        Text(if (sz > 0) formatBytes(sz) else "-", fontSize = 12.sp, color = Slate)
+                    }
+                }
+            }
+        }
+        Spacer(Modifier.height(14.dp))
+        Text("Compression mode", fontWeight = FontWeight.Bold, color = DeepNavy, fontSize = 15.sp)
+        Spacer(Modifier.height(8.dp))
+        Row(Modifier.fillMaxWidth()) {
+            listOf("Quality" to "Choose compression level", "Target" to "Set desired file size").forEach { (m, desc) ->
+                val selected = mode == m
+                Card(
+                    modifier = Modifier.weight(1f).padding(4.dp).clickable { onMode(m) },
+                    colors = CardDefaults.cardColors(containerColor = if (selected) SkyBlue else SoftGrey),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Column(Modifier.fillMaxWidth().padding(12.dp)) {
+                        Text(if (m == "Target") "Target Size" else m, fontWeight = FontWeight.Bold, color = if (selected) Color.White else DeepNavy, fontSize = 15.sp)
+                        Text(desc, fontSize = 11.sp, color = if (selected) Color.White else Slate)
+                    }
+                }
+            }
+        }
+        Spacer(Modifier.height(12.dp))
+        if (mode == "Quality") {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Text("Image quality", fontWeight = FontWeight.Bold, color = DeepNavy, fontSize = 15.sp, modifier = Modifier.weight(1f))
+                Text("$quality%", fontWeight = FontWeight.Bold, color = SkyBlue, fontSize = 16.sp)
+            }
+            Slider(value = quality.toFloat(), onValueChange = { onQuality(it.toInt().coerceIn(1, 100)) }, valueRange = 1f..100f)
+            Row(Modifier.fillMaxWidth()) {
+                Text("Smaller file", fontSize = 12.sp, color = Slate, modifier = Modifier.weight(1f))
+                Text("Higher quality", fontSize = 12.sp, color = Slate)
+            }
+        } else {
+            Text("Target file size", fontWeight = FontWeight.Bold, color = DeepNavy, fontSize = 15.sp)
+            Spacer(Modifier.height(6.dp))
+            OutlinedTextField(
+                value = targetKb,
+                onValueChange = { onTargetKb(it.filter { c -> c.isDigit() }.take(5)) },
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text("Size in KB (e.g. 500)") },
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                singleLine = true
+            )
+            Spacer(Modifier.height(4.dp))
+            Text("The compressor gets as close as it can - very small targets may lower dimensions too.", fontSize = 12.sp, color = Slate)
+        }
+        if (!isPdf) {
+            Spacer(Modifier.height(14.dp))
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("Optional resize", fontWeight = FontWeight.Bold, color = DeepNavy, fontSize = 15.sp)
+                    Text("Resize image dimensions", fontSize = 12.sp, color = Slate)
+                }
+                Switch(checked = resizeOn, onCheckedChange = { onResizeOn(it) }, colors = SwitchDefaults.colors(checkedTrackColor = SkyBlue))
+            }
+            if (resizeOn) {
+                Spacer(Modifier.height(6.dp))
+                Row {
+                    listOf(90, 75, 50, 25).forEach { p ->
+                        val selected = resizePct == p
+                        OutlinedButton(
+                            onClick = { onResizePct(p) },
+                            modifier = Modifier.padding(end = 8.dp),
+                            colors = ButtonDefaults.outlinedButtonColors(containerColor = if (selected) SkyBlue else Color.Transparent, contentColor = if (selected) DeepNavy else Slate)
+                        ) { Text("$p%", fontSize = 12.sp) }
+                    }
+                }
+            }
+        }
+        Spacer(Modifier.height(16.dp))
+        Button(
+            onClick = onCompress,
+            enabled = !busy && thumbs.isNotEmpty(),
+            modifier = Modifier.fillMaxWidth().height(52.dp),
+            colors = ButtonDefaults.buttonColors(containerColor = SkyBlue, contentColor = Color.White),
+            shape = RoundedCornerShape(14.dp)
+        ) {
+            Text(if (busy) "Compressing…" else if (isPdf) "Compress PDF" else if (thumbs.size > 1) "Compress ${thumbs.size} Images" else "Compress Image", fontWeight = FontWeight.Bold)
+        }
+        Spacer(Modifier.height(10.dp))
+        Card(colors = CardDefaults.cardColors(containerColor = SoftGrey), shape = RoundedCornerShape(14.dp)) {
+            Text(
+                when {
+                    isPdf -> "PDF pages are re-rendered at a lower resolution to shrink the file. Already well-compressed PDFs may shrink only a little."
+                    labels.distinct() == listOf("PNG") -> "PNG is lossless - use Optional resize or Target mode to shrink PNG files. Transparency is always kept."
+                    else -> "JPG and WebP use your quality setting. Transparency is preserved for PNG and WebP. Originals stay untouched."
+                },
+                modifier = Modifier.padding(14.dp), fontSize = 13.sp, color = Slate
+            )
+        }
+        Spacer(Modifier.height(24.dp))
+    }
+}
+
+@Composable
+private fun CompressResultScreen(
+    modifier: Modifier = Modifier,
+    isPdf: Boolean,
+    batchFiles: List<Pair<String, ByteArray>>?,
+    batchOrig: List<Long>?,
+    origSize: Long,
+    newBytes: ByteArray?,
+    resultName: String,
+    pdfPages: Int,
+    before: Bitmap?,
+    after: Bitmap?,
+    saved: Boolean,
+    onSave: () -> Unit,
+    onAgain: () -> Unit
+) {
+    Column(modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).padding(horizontal = 16.dp).verticalScroll(rememberScrollState())) {
+        Spacer(Modifier.height(10.dp))
+        if (batchFiles != null) {
+            val totalNew = batchFiles.sumOf { it.second.size.toLong() }
+            val totalOrig = (batchOrig ?: emptyList()).filter { it > 0 }.sum()
+            Card(colors = CardDefaults.cardColors(containerColor = PaleBlue), shape = RoundedCornerShape(16.dp)) {
+                Column(Modifier.fillMaxWidth().padding(16.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Default.CheckCircle, contentDescription = null, tint = SuccessGreen, modifier = Modifier.size(22.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Text("Compressed ${batchFiles.size} images", fontWeight = FontWeight.Bold, color = DeepNavy, fontSize = 17.sp)
+                    }
+                    if (totalOrig > 0) {
+                        Spacer(Modifier.height(6.dp))
+                        Text("${formatBytes(totalOrig)} → ${formatBytes(totalNew)} · ${CompressUtils.percentSaved(totalOrig, totalNew)}% smaller", fontSize = 14.sp, color = DeepNavy, fontWeight = FontWeight.SemiBold)
+                    }
+                    Spacer(Modifier.height(10.dp))
+                    batchFiles.forEachIndexed { i, (name, bytes) ->
+                        val o = batchOrig?.getOrNull(i) ?: -1L
+                        Row(Modifier.fillMaxWidth().padding(vertical = 3.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Text(name, fontSize = 12.sp, color = Slate, modifier = Modifier.weight(1f), maxLines = 1)
+                            Text(
+                                if (o > 0) "${formatBytes(o)} → ${formatBytes(bytes.size.toLong())} (-${CompressUtils.percentSaved(o, bytes.size.toLong())}%)"
+                                else formatBytes(bytes.size.toLong()),
+                                fontSize = 12.sp, color = DeepNavy, fontWeight = FontWeight.SemiBold
+                            )
+                        }
+                    }
+                }
+            }
+        } else {
+            val newSize = newBytes?.size?.toLong() ?: -1L
+            Card(colors = CardDefaults.cardColors(containerColor = PaleBlue), shape = RoundedCornerShape(16.dp)) {
+                Column(Modifier.fillMaxWidth().padding(16.dp)) {
+                    Text("Compression Results", fontWeight = FontWeight.Bold, color = DeepNavy, fontSize = 17.sp)
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        resultName + if (isPdf && pdfPages > 0) " · $pdfPages page${if (pdfPages == 1) "" else "s"}" else "",
+                        fontSize = 13.sp, color = Slate, maxLines = 1
+                    )
+                    Spacer(Modifier.height(10.dp))
+                    Row(Modifier.fillMaxWidth()) {
+                        Card(Modifier.weight(1f).padding(4.dp), colors = CardDefaults.cardColors(containerColor = SoftGrey), shape = RoundedCornerShape(12.dp)) {
+                            Column(Modifier.padding(12.dp)) {
+                                Text("Original", fontSize = 12.sp, color = Slate)
+                                Text(if (origSize > 0) formatBytes(origSize) else "-", fontWeight = FontWeight.Bold, color = DeepNavy, fontSize = 17.sp)
+                            }
+                        }
+                        Card(Modifier.weight(1f).padding(4.dp), colors = CardDefaults.cardColors(containerColor = SoftGrey), shape = RoundedCornerShape(12.dp)) {
+                            Column(Modifier.padding(12.dp)) {
+                                Text("Compressed", fontSize = 12.sp, color = Slate)
+                                Text(if (newSize > 0) formatBytes(newSize) else "-", fontWeight = FontWeight.Bold, color = SkyBlue, fontSize = 17.sp)
+                            }
+                        }
+                    }
+                    if (origSize > 0 && newSize > 0) {
+                        Spacer(Modifier.height(8.dp))
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Default.CheckCircle, contentDescription = null, tint = SuccessGreen, modifier = Modifier.size(20.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text("${CompressUtils.percentSaved(origSize, newSize)}% smaller", fontWeight = FontWeight.Bold, color = DeepNavy, fontSize = 15.sp)
+                        }
+                        if (isPdf && CompressUtils.percentSaved(origSize, newSize) < 5) {
+                            Spacer(Modifier.height(4.dp))
+                            Text("This PDF was already well-compressed, so savings are small.", fontSize = 12.sp, color = Slate)
+                        }
+                    }
+                }
+            }
+            if (before != null && after != null) {
+                Spacer(Modifier.height(14.dp))
+                Text("Compare image quality", fontWeight = FontWeight.Bold, color = DeepNavy, fontSize = 15.sp)
+                Spacer(Modifier.height(6.dp))
+                var showAfter by remember { mutableStateOf(true) }
+                Card(colors = CardDefaults.cardColors(containerColor = SoftGrey), shape = RoundedCornerShape(14.dp)) {
+                    Column(Modifier.fillMaxWidth().padding(10.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                        Image(
+                            bitmap = (if (showAfter) after else before).asImageBitmap(),
+                            contentDescription = if (showAfter) "Compressed preview" else "Original preview",
+                            contentScale = ContentScale.Fit,
+                            modifier = Modifier.fillMaxWidth().height(220.dp).clickable { showAfter = !showAfter }
+                        )
+                        Spacer(Modifier.height(6.dp))
+                        Row {
+                            listOf(false to "Before", true to "After").forEach { (a, label) ->
+                                val selected = showAfter == a
+                                OutlinedButton(
+                                    onClick = { showAfter = a },
+                                    modifier = Modifier.padding(end = 8.dp),
+                                    colors = ButtonDefaults.outlinedButtonColors(containerColor = if (selected) SkyBlue else Color.Transparent, contentColor = if (selected) Color.White else DeepNavy)
+                                ) { Text(label, fontSize = 12.sp) }
+                            }
+                        }
+                        Text("Tap the image to toggle", fontSize = 11.sp, color = Slate)
+                    }
+                }
+            }
+        }
+        Spacer(Modifier.height(16.dp))
+        Button(
+            onClick = onSave,
+            enabled = !saved,
+            modifier = Modifier.fillMaxWidth().height(52.dp),
+            colors = ButtonDefaults.buttonColors(containerColor = SkyBlue, contentColor = Color.White),
+            shape = RoundedCornerShape(14.dp)
+        ) {
+            Text(
+                if (saved) "Saved ✓"
+                else if (isPdf) "Save Compressed PDF"
+                else if (batchFiles != null) "Save ${batchFiles.size} Compressed Images"
+                else "Save Compressed Image",
+                fontWeight = FontWeight.Bold
+            )
+        }
+        Spacer(Modifier.height(10.dp))
+        OutlinedButton(onClick = onAgain, modifier = Modifier.fillMaxWidth().height(48.dp), shape = RoundedCornerShape(14.dp)) {
+            Text("Compress Another", color = DeepNavy)
         }
         Spacer(Modifier.height(24.dp))
     }
