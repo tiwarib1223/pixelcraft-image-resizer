@@ -1803,7 +1803,10 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                 onMode = { socialMode = it },
                 onRect = { socialRect = it },
                 onZoom = { socialZoom = it },
-                onPan = { x, y -> socialPanX = x; socialPanY = y },
+                onPanDelta = { dx, dy ->
+                    socialPanX = (socialPanX + dx).coerceIn(-1f, 1f)
+                    socialPanY = (socialPanY + dy).coerceIn(-1f, 1f)
+                },
                 onFill = { socialFill = it },
                 onCustomColor = { socialCustomColor = it },
                 onSelectImage = { pendingSocialTool = true; pickPhotos() },
@@ -4521,7 +4524,7 @@ private fun SocialEditScreen(
     onMode: (String) -> Unit,
     onRect: (FloatArray) -> Unit,
     onZoom: (Float) -> Unit,
-    onPan: (Float, Float) -> Unit,
+    onPanDelta: (Float, Float) -> Unit,
     onFill: (String) -> Unit,
     onCustomColor: (Long) -> Unit,
     onSelectImage: () -> Unit,
@@ -4548,7 +4551,7 @@ private fun SocialEditScreen(
         val tw = target.w
         val th = target.h
         Card(colors = CardDefaults.cardColors(containerColor = SoftGrey), shape = RoundedCornerShape(16.dp)) {
-            Box(Modifier.fillMaxWidth().height(320.dp).padding(8.dp), contentAlignment = Alignment.Center) {
+            BoxWithConstraints(Modifier.fillMaxWidth().height(320.dp).padding(8.dp), contentAlignment = Alignment.Center) {
                 when (mode) {
                     "Position" -> {
                         val pScale = 420f / maxOf(tw, th)
@@ -4557,23 +4560,28 @@ private fun SocialEditScreen(
                         val preview = remember(working, tw, th, zoom, panX, panY) {
                             Transforms.socialPosition(working, pw, ph, zoom, panX, panY)
                         }
+                        // screen px per target px: the finger maps 1:1 onto the photo at any zoom
+                        val dispScale = minOf(constraints.maxWidth.toFloat() / tw, constraints.maxHeight.toFloat() / th)
+                        val density = LocalDensity.current
+                        val frameW = with(density) { (tw * dispScale).toDp() }
+                        val frameH = with(density) { (th * dispScale).toDp() }
+                        val base = maxOf(tw.toFloat() / working.width, th.toFloat() / working.height) * zoom
+                        val maxOffX = (working.width * base - tw) / 2f
+                        val maxOffY = (working.height * base - th) / 2f
                         Image(
                             bitmap = preview.asImageBitmap(),
                             contentDescription = null,
-                            contentScale = ContentScale.Fit,
-                            modifier = Modifier.fillMaxSize().pointerInput(working, tw, th) {
+                            modifier = Modifier.size(frameW, frameH).pointerInput(working, tw, th, zoom) {
                                 detectDragGestures(
                                     onDragStart = { dragging = true },
                                     onDragEnd = { dragging = false },
                                     onDragCancel = { dragging = false }
                                 ) { change, dragAmount ->
                                     change.consume()
-                                    val sc = maxOf(pw.toFloat() / working.width, ph.toFloat() / working.height) * zoom
-                                    val maxOffX = (working.width * sc - pw) / 2f
-                                    val maxOffY = (working.height * sc - ph) / 2f
-                                    val nx = if (maxOffX > 1f) (panX + dragAmount.x / maxOffX).coerceIn(-1f, 1f) else panX
-                                    val ny = if (maxOffY > 1f) (panY + dragAmount.y / maxOffY).coerceIn(-1f, 1f) else panY
-                                    onPan(nx, ny)
+                                    // finger right = photo right = viewport left: pan decreases. Delta-based so every drag event counts.
+                                    val dx = if (maxOffX > 0.5f) -dragAmount.x / (maxOffX * dispScale) else 0f
+                                    val dy = if (maxOffY > 0.5f) -dragAmount.y / (maxOffY * dispScale) else 0f
+                                    onPanDelta(dx, dy)
                                 }
                             }
                         )
@@ -4616,8 +4624,9 @@ private fun SocialEditScreen(
                     onClick = { onMode(m) },
                     modifier = Modifier.weight(1f).padding(horizontal = 3.dp),
                     shape = RoundedCornerShape(12.dp),
+                    contentPadding = PaddingValues(horizontal = 4.dp),
                     colors = ButtonDefaults.outlinedButtonColors(containerColor = if (selected) SkyBlue else Color.Transparent, contentColor = if (selected) DeepNavy else Slate)
-                ) { Text(m, fontSize = 13.sp) }
+                ) { Text(m, fontSize = 12.sp, maxLines = 1, softWrap = false) }
             }
         }
         if (mode == "Position") {
@@ -4634,8 +4643,9 @@ private fun SocialEditScreen(
                         onClick = { onFill(f) },
                         modifier = Modifier.weight(1f).padding(horizontal = 2.dp),
                         shape = RoundedCornerShape(12.dp),
+                        contentPadding = PaddingValues(horizontal = 2.dp),
                         colors = ButtonDefaults.outlinedButtonColors(containerColor = if (selected) SkyBlue else Color.Transparent, contentColor = if (selected) DeepNavy else Slate)
-                    ) { Text(f, fontSize = 11.sp, maxLines = 1) }
+                    ) { Text(f, fontSize = 11.sp, maxLines = 1, softWrap = false) }
                 }
             }
             if (fill == "Custom Color") {

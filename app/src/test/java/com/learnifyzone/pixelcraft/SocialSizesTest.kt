@@ -104,6 +104,27 @@ class SocialSizesTest {
     }
 
     @Test
+    fun socialPositionReachesFarCornersWhenZoomed() {
+        // Quadrants: TL red, TR blue, BL green, BR yellow
+        val src = Bitmap.createBitmap(200, 100, Bitmap.Config.ARGB_8888)
+        val c = Canvas(src)
+        val p = android.graphics.Paint()
+        p.color = Color.RED; c.drawRect(0f, 0f, 100f, 50f, p)
+        p.color = Color.BLUE; c.drawRect(100f, 0f, 200f, 50f, p)
+        p.color = Color.GREEN; c.drawRect(0f, 50f, 100f, 100f, p)
+        p.color = Color.YELLOW; c.drawRect(100f, 50f, 200f, 100f, p)
+        // zoom 2 on a 50x50 target: pan must reach ALL four corners
+        val tl = Transforms.socialPosition(src, 50, 50, 2f, -1f, -1f)
+        assertEquals(255, Color.red(tl.getPixel(25, 25))); assertEquals(0, Color.green(tl.getPixel(25, 25))); assertEquals(0, Color.blue(tl.getPixel(25, 25)))
+        val tr = Transforms.socialPosition(src, 50, 50, 2f, 1f, -1f)
+        assertEquals(0, Color.red(tr.getPixel(25, 25))); assertEquals(255, Color.blue(tr.getPixel(25, 25)))
+        val bl = Transforms.socialPosition(src, 50, 50, 2f, -1f, 1f)
+        assertEquals(255, Color.green(bl.getPixel(25, 25))); assertEquals(0, Color.blue(bl.getPixel(25, 25)))
+        val br = Transforms.socialPosition(src, 50, 50, 2f, 1f, 1f)
+        assertEquals(255, Color.red(br.getPixel(25, 25))); assertEquals(255, Color.green(br.getPixel(25, 25)))
+    }
+
+    @Test
     fun officialTableHasEightPlatformsAndKeySizes() {
         assertEquals(8, SocialSizes.platforms.size)
         val ig = SocialSizes.platforms.first { it.name == "Instagram" }

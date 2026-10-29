@@ -74,6 +74,10 @@ Stage 3 v0.10.1 (built on Stage 2E v0.8.1): queue overview screen, the full "Sel
 
 
 
+## v0.11.2 fix (his report: "when I tried to zoom i can't select fix part. It should freely move and select any part")
+- Social Position mode pan fixed: drag deltas were measured in screen pixels but converted with preview-bitmap math (pan moved far too little), the pan direction was inverted against the finger, and stale captured pan values swallowed most drag events. Now the preview frame is rendered at its exact on-screen size, finger movement maps 1:1 onto the photo at any zoom, dragging right moves the photo right, and every drag event accumulates on fresh state. Verified with a REAL PIXEL test: zoom 2x pan reaches all four quadrants (red/blue/green/yellow corners).
+- "Background" mode button label wrapped to two lines - mode buttons and fill chips now stay on one line.
+
 ## v0.11.1 fix (his feedback: "when we select image it must show here")
 - Social Media Sizes home: the "Select Your Image" card now shows the selected photo as a visible thumbnail next to the text (the size text stays).
 - Removed the "More" tile from the platform grid (his request).
