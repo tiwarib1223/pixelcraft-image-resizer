@@ -74,6 +74,9 @@ Stage 3 v0.10.1 (built on Stage 2E v0.8.1): queue overview screen, the full "Sel
 
 
 
+## v0.14.1 fix - Compressor settings page with many images
+- Layout bug he caught with 9 images selected: the header text ("9 images selected / Original size") had zero width beside the scrolling thumbnail strip, so it wrapped one character per line and inflated the card. Fixed: the selected-files card is now a simple top-to-bottom layout - summary line ("9 images selected" + total original size) on top, then one row per file with its thumbnail, name and size. Single-file behavior unchanged (name, original size, one thumbnail).
+
 ## v0.14.0 feature - Image & PDF Compressor (his GO "Make perfect" + his 4-page design spec)
 - The "Compress" homepage tile is now a real tool. HIS design, three pages:
   1. Landing "Image Compressor" - subtitle "Reduce file size. Keep image quality.", big Select Images card ("Choose one image or multiple images", "JPG · PNG · WebP", thumbnails with content-sniffed format badges), "Select PDF to compress" button, and his two mode cards: Quality Compression / Target File Size.

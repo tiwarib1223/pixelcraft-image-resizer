@@ -6527,34 +6527,37 @@ private fun CompressSettingsScreen(
     Column(modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).padding(horizontal = 16.dp).verticalScroll(rememberScrollState())) {
         Spacer(Modifier.height(10.dp))
         Card(colors = CardDefaults.cardColors(containerColor = PaleBlue), shape = RoundedCornerShape(14.dp)) {
-            Row(Modifier.fillMaxWidth().padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
-                if (thumbs.isNotEmpty()) {
-                    Row(Modifier.horizontalScroll(rememberScrollState())) {
-                        thumbs.forEachIndexed { i, t ->
-                            Box(Modifier.padding(end = 6.dp)) {
-                                Image(bitmap = t.asImageBitmap(), contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.size(52.dp))
+            Column(Modifier.fillMaxWidth().padding(14.dp)) {
+                Text(title, fontWeight = FontWeight.SemiBold, color = DeepNavy, fontSize = 15.sp)
+                if (totalOrig > 0) Text("Original size: ${formatBytes(totalOrig)}", fontSize = 13.sp, color = Slate)
+                if (thumbs.isNotEmpty() && thumbs.size <= 1) {
+                    Spacer(Modifier.height(10.dp))
+                    Box {
+                        Image(bitmap = thumbs[0].asImageBitmap(), contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.size(52.dp))
+                        Text(
+                            labels.getOrNull(0) ?: "",
+                            fontSize = 9.sp, fontWeight = FontWeight.Bold, color = Color.White,
+                            modifier = Modifier.align(Alignment.BottomStart).background(DeepNavy).padding(horizontal = 4.dp, vertical = 2.dp)
+                        )
+                    }
+                }
+                if (thumbs.size > 1) {
+                    Spacer(Modifier.height(10.dp))
+                    names.forEachIndexed { i, name ->
+                        val sz = origSizes.getOrNull(i) ?: -1L
+                        Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Box {
+                                Image(bitmap = thumbs[i].asImageBitmap(), contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.size(40.dp))
                                 Text(
                                     labels.getOrNull(i) ?: "",
-                                    fontSize = 9.sp, fontWeight = FontWeight.Bold, color = Color.White,
-                                    modifier = Modifier.align(Alignment.BottomStart).background(DeepNavy).padding(horizontal = 4.dp, vertical = 2.dp)
+                                    fontSize = 8.sp, fontWeight = FontWeight.Bold, color = Color.White,
+                                    modifier = Modifier.align(Alignment.BottomStart).background(DeepNavy).padding(horizontal = 3.dp, vertical = 1.dp)
                                 )
                             }
+                            Spacer(Modifier.width(10.dp))
+                            Text(name, fontSize = 12.sp, color = DeepNavy, modifier = Modifier.weight(1f), maxLines = 1)
+                            Text(if (sz > 0) formatBytes(sz) else "-", fontSize = 12.sp, color = Slate)
                         }
-                    }
-                    Spacer(Modifier.width(10.dp))
-                }
-                Column {
-                    Text(title, fontWeight = FontWeight.SemiBold, color = DeepNavy, fontSize = 15.sp)
-                    if (totalOrig > 0) Text("Original size: ${formatBytes(totalOrig)}", fontSize = 13.sp, color = Slate)
-                }
-            }
-            if (thumbs.size > 1) {
-                Spacer(Modifier.height(8.dp))
-                names.forEachIndexed { i, name ->
-                    val sz = origSizes.getOrNull(i) ?: -1L
-                    Row(Modifier.fillMaxWidth().padding(vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Text(name, fontSize = 12.sp, color = DeepNavy, modifier = Modifier.weight(1f), maxLines = 1)
-                        Text(if (sz > 0) formatBytes(sz) else "-", fontSize = 12.sp, color = Slate)
                     }
                 }
             }
