@@ -103,6 +103,8 @@ import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextField
+import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.darkColorScheme
@@ -7950,16 +7952,23 @@ private fun PrintHomeScreen(
                             )
                         }
                         Spacer(Modifier.height(8.dp))
-                        Text("Select Page", color = DeepNavy, fontSize = 15.sp)
-                        Spacer(Modifier.height(4.dp))
+                        Text("Select pages", color = DeepNavy, fontSize = 15.sp)
+                        Spacer(Modifier.height(2.dp))
                         var pageText by remember(pdfPageCount) { mutableStateOf("") }
                         var pageTextNote by remember { mutableStateOf("") }
                         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            OutlinedTextField(
+                            TextField(
                                 value = pageText,
                                 onValueChange = { pageText = it; pageTextNote = "" },
-                                placeholder = { Text("(e.g., 4, 9, 47, 83, 126, 229, …)", fontSize = 13.sp) },
+                                placeholder = { Text("(e.g., 4, 9, 47, 83, 126, 229, …)", fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, softWrap = false) },
                                 singleLine = true,
+                                colors = TextFieldDefaults.colors(
+                                    focusedContainerColor = Color.Transparent,
+                                    unfocusedContainerColor = Color.Transparent,
+                                    disabledContainerColor = Color.Transparent,
+                                    focusedIndicatorColor = SkyBlue,
+                                    unfocusedIndicatorColor = Slate
+                                ),
                                 modifier = Modifier.weight(1f)
                             )
                             OutlinedButton(onClick = {

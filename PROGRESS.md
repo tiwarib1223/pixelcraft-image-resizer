@@ -74,6 +74,12 @@ Stage 3 v0.10.1 (built on Stage 2E v0.8.1): queue overview screen, the full "Sel
 
 
 
+## v0.15.8 text - final label casing (his pick)
+- The entry label is "Select pages" (lowercase p), matching "Choose a page" above it.
+
+## v0.15.7 layout - borderless one-line page entry (his spec)
+- "Brother remove box": the page-entry field lost its rectangle outline - it is now a plain underline-style field. The label reads "Select Pages" (his latest wording), and the typing line with the "(e.g., 4, 9, 47, 83, 126, 229, …)" hint sits in ONE row with the Add button on the right; the hint never wraps (truncates with ellipsis instead). Add behavior, the selected-pages banner, the ✅ marks and everything else unchanged.
+
 ## v0.15.6 text - his exact label + hint for the page-entry box (his wording, his weights)
 - The quick-entry area now reads exactly (his final wording, all regular weight - he reversed the bold): a "Select Page" label directly above the entry field, and inside the box the placeholder "(e.g., 4, 9, 47, 83, 126, 229, …)". The Add button and behavior are unchanged; the page count stays above the mode chips ("Choose a page (N pages)").
 
