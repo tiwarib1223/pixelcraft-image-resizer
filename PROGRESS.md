@@ -1,7 +1,7 @@
 # PixelCraft Image Resizer — Progress
 
 ## Current stage
-Stage 3 v0.10.0 (built on Stage 2E v0.8.1): queue overview screen, the full "Select new dimensions" Process sheet, batch processing of the whole queue with live percent progress, a result screen with savings summary, and batch save (new copies or replace originals). Stage 2C delivered: "My Photos" library screen, export format picker (JPG/PNG/WEBP/PDF), size unit picker (pixels/inch/cm/mm), queue thumbnail strip, and a persistent debug signing key. Stage 2 delivered: process-then-export workflow, aspect-ratio adaptation, camera capture, multi-select (up to 50) with one-by-one queue, recently edited photos, quality control.
+Stage 3 v0.10.1 (built on Stage 2E v0.8.1): queue overview screen, the full "Select new dimensions" Process sheet, batch processing of the whole queue with live percent progress, a result screen with savings summary, and batch save (new copies or replace originals). Stage 2C delivered: "My Photos" library screen, export format picker (JPG/PNG/WEBP/PDF), size unit picker (pixels/inch/cm/mm), queue thumbnail strip, and a persistent debug signing key. Stage 2 delivered: process-then-export workflow, aspect-ratio adaptation, camera capture, multi-select (up to 50) with one-by-one queue, recently edited photos, quality control.
 
 ## Stage 2C: implemented in source
 - New bottom-nav tab "My Photos" with three internal tabs, all zero-permission and on-device:
@@ -73,6 +73,11 @@ Stage 3 v0.10.0 (built on Stage 2E v0.8.1): queue overview screen, the full "Sel
 
 
 
+
+## v0.10.1 fix (his report: "it should crop in selected area. Now it not crop")
+- Circle Cutter output: the shape mask silently did nothing - the mask never erased anything: a DST_IN path draw only touches pixels the path covers, so everything outside the shape stayed opaque, and the "cutout" was the plain square region. Now the inverse frame-minus-shape path is drawn with DST_OUT (anti-aliased edges). Verified with REAL PIXEL tests on Robolectric native graphics (corner alpha = 0, centre = 255 for Circle/Heart/Rounded; Square untouched) - same pipeline as his phone.
+- Default frame is now the largest centered 1:1 square (was a non-square default on non-square photos, which squashed the output).
+- Button renamed "Apply & Save" -> "Crop" (his words).
 
 ## v0.10.0 feature - Circle Cutter (his tab-4 request, reference screenshot provided)
 - New tool, 4th tile on the homepage (Compress moved down one row; homepage layout/style otherwise untouched).

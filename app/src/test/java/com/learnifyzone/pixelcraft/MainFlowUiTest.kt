@@ -104,7 +104,7 @@ class MainFlowUiTest {
             waitForText("Heart")
             waitForText("Rounded")
             waitForText("Custom Color")
-            waitForText("Apply & Save")
+            waitForText("Crop")
             waitForText("DPI - 300 is standard for print")
         }
     }

@@ -416,7 +416,7 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                 tool = when {
                     pendingBgTool -> { pendingBgTool = false; Tool.Background }
                     pendingCropTool -> { pendingCropTool = false; Tool.Crop }
-                    pendingCircleTool -> { pendingCircleTool = false; Tool.Circle }
+                    pendingCircleTool -> { pendingCircleTool = false; circleRect = CropMath.maxRectForAspect("1:1", loaded.width, loaded.height); Tool.Circle }
                     else -> Tool.Resize
                 }
                 // Clear busy BEFORE the snackbar: showSnackbar suspends until dismissal,
@@ -1407,7 +1407,8 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                                 else { pendingCropTool = true; pickPhotos() }
                             }
                             "Circle Cutter" -> {
-                                if (workingBitmap != null) { screen = Screen.Editor; tool = Tool.Circle; circleShape = "Circle"; circleRect = CropMath.defaultRect() }
+                                val src = workingBitmap
+                                if (src != null) { screen = Screen.Editor; tool = Tool.Circle; circleShape = "Circle"; circleRect = CropMath.maxRectForAspect("1:1", src.width, src.height) }
                                 else { pendingCircleTool = true; pickPhotos() }
                             }
                             else -> scope.launch { snackbar.showSnackbar("$feature is planned for a later development stage.") }
@@ -1513,7 +1514,7 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                         Tool.Presets -> { saveDraftIfNeeded(); screen = Screen.Home; tab = MainTab.Presets }
                         Tool.Background -> Unit
                         Tool.Crop -> { cropAspect = "Free"; cropRect = CropMath.defaultRect(); straightenAngle = 0f; tiltHAngle = 0f; tiltVAngle = 0f }
-                        Tool.Circle -> { circleShape = "Circle"; circleRect = CropMath.defaultRect() }
+                        Tool.Circle -> { circleShape = "Circle"; val src = workingBitmap; circleRect = if (src != null) CropMath.maxRectForAspect("1:1", src.width, src.height) else CropMath.defaultRect() }
                         else -> scope.launch { snackbar.showSnackbar("${selected.label} is planned for a later stage. Resize and export are available now.") }
                     }
                 },
@@ -2758,7 +2759,7 @@ private fun EditorScreen(
                 if (busy) CircularProgressIndicator(modifier = Modifier.size(20.dp), color = Color.White, strokeWidth = 2.dp) else {
                     Icon(Icons.Default.CheckCircle, contentDescription = null, modifier = Modifier.size(18.dp))
                     Spacer(Modifier.width(8.dp))
-                    Text("Apply & Save", fontWeight = FontWeight.Bold)
+                    Text("Crop", fontWeight = FontWeight.Bold)
                 }
             }
         } else {
@@ -3356,12 +3357,20 @@ private fun shapeCutout(src: Bitmap, rect: FloatArray, shape: String, outSize: I
     val out = Bitmap.createBitmap(outSize, outSize, Bitmap.Config.ARGB_8888)
     val canvas = android.graphics.Canvas(out)
     canvas.drawBitmap(scaled, 0f, 0f, null)
-    val mask = Bitmap.createBitmap(outSize, outSize, Bitmap.Config.ALPHA_8)
-    val maskCanvas = android.graphics.Canvas(mask)
-    val maskPaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG)
-    maskCanvas.drawPath(androidShapePath(shape, outSize.toFloat()), maskPaint)
-    val erase = android.graphics.Paint().apply { xfermode = android.graphics.PorterDuffXfermode(android.graphics.PorterDuff.Mode.DST_IN) }
-    canvas.drawBitmap(mask, 0f, 0f, erase)
+    // Erase everything OUTSIDE the shape: draw the inverse (frame minus shape,
+    // even-odd) with DST_OUT. A DST_IN draw of the shape itself can never work -
+    // a path draw only touches the pixels it covers, so outside pixels stay
+    // opaque (that is the v0.10.0 bug he reported as "not crop"). ShapeCutoutTest
+    // verifies real output pixels on native graphics, the same Skia his phone runs.
+    val inverse = android.graphics.Path().apply {
+        addRect(android.graphics.RectF(0f, 0f, outSize.toFloat(), outSize.toFloat()), android.graphics.Path.Direction.CW)
+        addPath(androidShapePath(shape, outSize.toFloat()))
+        fillType = android.graphics.Path.FillType.EVEN_ODD
+    }
+    val erase = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+        xfermode = android.graphics.PorterDuffXfermode(android.graphics.PorterDuff.Mode.DST_OUT)
+    }
+    canvas.drawPath(inverse, erase)
     return out
 }
 
