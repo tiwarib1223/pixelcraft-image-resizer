@@ -11,6 +11,7 @@ import android.graphics.pdf.PdfDocument
 import android.graphics.pdf.PdfRenderer
 import android.os.ParcelFileDescriptor
 import android.net.Uri
+import android.graphics.ImageDecoder
 import android.os.Build
 import android.os.Bundle
 import android.os.Environment
@@ -148,6 +149,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.input.KeyboardType
@@ -2500,6 +2502,22 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
         textTick++
     }
 
+    /** His v0.16.3 "Add reset button": start over on the SAME photo - clears layers, crop, undo and results. */
+    fun resetTextEdits() {
+        textLayers.clear()
+        textSelectedId = null
+        textImageLayers.clear()
+        textImageSelectedId = null
+        textUndo.clear()
+        textCropRect = null
+        textCropLabel = ""
+        textCropAdjust = false
+        textResultBytes = null
+        textSaved = false
+        textEditOpen = false
+        textTick++
+    }
+
     /** One undo entry per change; gesture drags and typing coalesce into 1-1.5s windows so the stack stays meaningful. */
     fun recordTextUndo(coalesceMs: Long = 0L) {
         val now = System.currentTimeMillis()
@@ -2557,25 +2575,29 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
             busy = true
             busyLabel = "Adding image…"
             try {
-                val loaded = withContext(Dispatchers.IO) { decodeOrientedBitmap(context, uri) }
-                if (loaded != null) {
-                    val capped = if (maxOf(loaded.width, loaded.height) > 2048) {
-                        val fct = 2048f / maxOf(loaded.width, loaded.height)
-                        Bitmap.createScaledBitmap(loaded, (loaded.width * fct).roundToInt(), (loaded.height * fct).roundToInt(), true)
-                    } else loaded
-                    val layer = TextOverlayUtils.ImageLayer(System.currentTimeMillis() + 1L, capped, cx = 0.5f, cy = 0.4f)
-                    textImageLayers.add(layer)
-                    textImageSelectedId = layer.id
-                    textSelectedId = null
-                    textResultBytes = null
-                    textSaved = false
-                    textTick++
-                }
+                // decodeAnyImage: standard decode first, ImageDecoder fallback for formats
+                // BitmapFactory can't read on his phone (his "logo not added" report).
+                val loaded = withContext(Dispatchers.IO) { decodeAnyImage(context, uri) }
+                val capped = if (maxOf(loaded.width, loaded.height) > 2048) {
+                    val fct = 2048f / maxOf(loaded.width, loaded.height)
+                    Bitmap.createScaledBitmap(loaded, (loaded.width * fct).roundToInt(), (loaded.height * fct).roundToInt(), true)
+                } else loaded
+                val layer = TextOverlayUtils.ImageLayer(System.currentTimeMillis() + 1L, capped, cx = 0.5f, cy = 0.4f)
+                textImageLayers.add(layer)
+                textImageSelectedId = layer.id
+                textSelectedId = null
+                textResultBytes = null
+                textSaved = false
+                textTick++
             } catch (e: Exception) {
-                snackbar.showSnackbar("Could not add that image.")
+                busy = false
+                busyLabel = ""
+                snackbar.showSnackbar("Could not add that image - try a JPG or PNG.")
+                return@launch
             }
             busy = false
             busyLabel = ""
+            scope.launch { snackbar.showSnackbar("Image layer added - drag it on the photo.") }
         }
     }
 
@@ -2741,7 +2763,10 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                 pendingTextStyle?.let { p -> pendingTextStyle = null; applyTextStylePreset(p) }
                 textTick++
             } catch (e: Exception) {
+                busy = false
+                busyLabel = ""
                 snackbar.showSnackbar("Could not open that image.")
+                return@launch
             }
             busy = false
             busyLabel = ""
@@ -3865,6 +3890,7 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                 editOpen = textEditOpen,
                 busy = busy,
                 onSelectPhoto = { textPhotoPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
+                onResetEdits = { resetTextEdits() },
                 onSelectLayer = { textSelectedId = it; textImageSelectedId = null; textTick++ },
                 onAddLayer = { textImageSelectedId = null; addTextLayer() },
                 onDeleteLayer = { deleteTextLayer(it) },
@@ -3925,7 +3951,21 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                 canvasDims = textEffectiveSize().let { "${it[0]} × ${it[1]} px" },
                 onSetCrop = { label, rw, rh -> setTextCrop(label, rw, rh) },
                 onClearCrop = { clearTextCrop() },
-                onCropAdjust = { textCropAdjust = it; textTick++ },
+                onCropAdjust = { on ->
+                    if (on && textCropRect == null) {
+                        // His "I want to zoom and crop" - Position must work WITHOUT picking a size first:
+                        // start from the full-photo frame; pinch zooms in, drag pans, Done keeps the region.
+                        textCropRect = floatArrayOf(0f, 0f, 1f, 1f)
+                        textCropLabel = "Custom"
+                    }
+                    if (!on && textCropLabel == "Custom" && textCropRect != null) {
+                        val r = textCropRect!!
+                        val untouched = kotlin.math.abs(r[0]) < 0.001f && kotlin.math.abs(r[1]) < 0.001f && kotlin.math.abs(r[2] - 1f) < 0.001f && kotlin.math.abs(r[3] - 1f) < 0.001f
+                        if (untouched) { textCropRect = null; textCropLabel = "" }
+                    }
+                    textCropAdjust = on
+                    textTick++
+                },
                 onCropNudge = { dx, dy -> nudgeTextCrop(dx, dy) },
                 onCropZoom = { z -> zoomTextCrop(z) },
                 stylePresets = textStylePresets,
@@ -6347,6 +6387,22 @@ private fun decodeOrientedBitmap(context: Context, uri: Uri): Bitmap {
     }
     return if (orientation == ExifInterface.ORIENTATION_NORMAL || orientation == ExifInterface.ORIENTATION_UNDEFINED) bitmap
     else Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true).also { if (it !== bitmap) bitmap.recycle() }
+}
+
+/** Decode any gallery image: EXIF-corrected BitmapFactory first, ImageDecoder fallback (HEIC/AVIF/WebP sources). */
+private fun decodeAnyImage(context: Context, uri: Uri): Bitmap {
+    try {
+        return decodeOrientedBitmap(context, uri)
+    } catch (e: Exception) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            try {
+                return ImageDecoder.decodeBitmap(ImageDecoder.createSource(context.contentResolver, uri))
+            } catch (e2: Exception) {
+                // fall through to the original error
+            }
+        }
+        throw e
+    }
 }
 
 /**
@@ -9117,6 +9173,7 @@ private fun TextOnPhotoScreen(
     editOpen: Boolean,
     busy: Boolean,
     onSelectPhoto: () -> Unit,
+    onResetEdits: () -> Unit,
     onSelectLayer: (Long) -> Unit,
     onAddLayer: () -> Unit,
     onDeleteLayer: (Long) -> Unit,
@@ -9188,6 +9245,8 @@ private fun TextOnPhotoScreen(
                     Text("${bitmap.width} × ${bitmap.height} px" + (if (sizeBytes >= 0) " · ${formatBytes(sizeBytes)}" else ""), color = Slate, fontSize = 11.sp)
                 }
                 OutlinedButton(onClick = onSelectPhoto) { Text("Change", color = DeepNavy) }
+                Spacer(Modifier.width(8.dp))
+                OutlinedButton(onClick = onResetEdits) { Text("Reset", color = DeepNavy) }
             }
         }
         Spacer(Modifier.height(12.dp))
@@ -9282,6 +9341,20 @@ private fun TextOnPhotoScreen(
             else "Drag to move · pinch to resize · twist to rotate · double-tap to edit text",
             color = Slate, fontSize = 11.sp
         )
+        Spacer(Modifier.height(6.dp))
+        // His "I want to zoom and crop": Position lives right under the preview and ALWAYS works,
+        // even before picking a size (starts from the full photo, zoom + pan, Done keeps the region).
+        Row {
+            Button(
+                onClick = { onCropAdjust(!cropAdjust) },
+                colors = ButtonDefaults.buttonColors(containerColor = if (cropAdjust) Orange else SkyBlue, contentColor = Color.White),
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier.padding(end = 8.dp)
+            ) { Text(if (cropAdjust) "Done" else "Position", fontWeight = FontWeight.Bold) }
+            if (cropRect != null) {
+                OutlinedButton(onClick = onClearCrop) { Text("Original size", color = DeepNavy) }
+            }
+        }
         Spacer(Modifier.height(14.dp))
 
         // ---- Image layer quick edits (his "Add image" spec: stays editable until export) ----
@@ -9504,12 +9577,6 @@ private fun TextOnPhotoScreen(
             if (cropRect != null) {
                 Spacer(Modifier.height(4.dp))
                 Text("Canvas: $cropLabel · $canvasDims", color = SkyBlue, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
-                Row {
-                    OutlinedButton(onClick = { onCropAdjust(!cropAdjust) }, modifier = Modifier.padding(end = 8.dp)) {
-                        Text(if (cropAdjust) "Done" else "Position", color = DeepNavy)
-                    }
-                    OutlinedButton(onClick = onClearCrop) { Text("Original size", color = DeepNavy) }
-                }
             }
         }
         Spacer(Modifier.height(14.dp))
@@ -9622,7 +9689,7 @@ private fun TextOnPhotoScreen(
                             colors = CardDefaults.cardColors(containerColor = if (sel) PaleBlue else SoftGrey),
                             shape = RoundedCornerShape(10.dp),
                             modifier = Modifier.padding(end = 8.dp, bottom = 8.dp).border(if (sel) 2.dp else 0.dp, if (sel) SkyBlue else Color.Transparent, RoundedCornerShape(10.dp)).clickable { onMutate(0L) { l -> l.font = f } }
-                        ) { Text(f.label, modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp), fontSize = 13.sp, color = DeepNavy, fontWeight = if (sel) FontWeight.Bold else FontWeight.Normal) }
+                        ) { Text(f.label, modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp), fontSize = 13.sp, color = DeepNavy, fontFamily = FontFamily(android.graphics.Typeface.create(f.family, android.graphics.Typeface.NORMAL)), fontWeight = if (sel) FontWeight.Bold else FontWeight.Normal) }
                     }
                     Card(
                         colors = CardDefaults.cardColors(containerColor = if (fontsOpen) PaleBlue else SoftGrey),
@@ -9639,7 +9706,7 @@ private fun TextOnPhotoScreen(
                                     colors = CardDefaults.cardColors(containerColor = if (sel) PaleBlue else SoftGrey),
                                     shape = RoundedCornerShape(10.dp),
                                     modifier = Modifier.padding(end = 8.dp, bottom = 8.dp).border(if (sel) 2.dp else 0.dp, if (sel) SkyBlue else Color.Transparent, RoundedCornerShape(10.dp)).clickable { onMutate(0L) { l -> l.font = f } }
-                                ) { Text(f.label, modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp), fontSize = 13.sp, color = DeepNavy, fontWeight = if (sel) FontWeight.Bold else FontWeight.Normal) }
+                                ) { Text(f.label, modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp), fontSize = 13.sp, color = DeepNavy, fontFamily = FontFamily(android.graphics.Typeface.create(f.family, android.graphics.Typeface.NORMAL)), fontWeight = if (sel) FontWeight.Bold else FontWeight.Normal) }
                             }
                         }
                     }

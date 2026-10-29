@@ -115,6 +115,9 @@ class TextPhotoUiTest {
                 "Text Styling must stay hidden until he adds a layer (clean-open design)",
                 composeRule.onAllNodesWithText("Text Styling", substring = true).fetchSemanticsNodes().isEmpty()
             )
+            // v0.16.3: Position (zoom+crop the main photo) and Reset must be visible WITHOUT picking a size first
+            waitForText("Position")
+            waitForText("Reset")
             shot(sc, "v0162_clean_open")
             sc.close()
         }
@@ -150,6 +153,20 @@ class TextPhotoUiTest {
             val curve = composeRule.onNodeWithText("Curve Text").getBoundsInRoot()
             assertTrue("Curve Text must be one compact line, height ${curve.bottom - curve.top}", curve.bottom - curve.top <= 48.dp)
             shot(sc, "v0162_text_selected")
+            sc.close()
+        }
+    }
+
+    @Test
+    fun pngOverlayAddsAndShowsQuickCard() {
+        val png = Bitmap.createBitmap(60, 40, Bitmap.Config.ARGB_8888).apply { eraseColor(0xFF2255CC.toInt()) }
+        val overlay = File.createTempFile("pc_tp_overlay_png", ".png")
+        overlay.outputStream().use { png.compress(Bitmap.CompressFormat.PNG, 100, it) }
+        overlay.deleteOnExit()
+        launch("pixelcraft.test.overlay" to overlay.absolutePath).use { sc ->
+            waitForText("Image layer")
+            waitForText("Delete image layer")
+            waitForText("Image 1")
             sc.close()
         }
     }

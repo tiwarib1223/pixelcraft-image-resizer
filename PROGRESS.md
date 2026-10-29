@@ -74,6 +74,13 @@ Stage 3 v0.10.1 (built on Stage 2E v0.8.1): queue overview screen, the full "Sel
 
 
 
+## v0.16.3 - Text on Photo: Position always available, Reset button, add-image hardening (his feedback)
+
+- Position for everyone (his "I cant zoom main image. I want to zoom and crop."): the Position button only appeared AFTER picking a size, so on an untouched photo there was no way to zoom/crop. Now a sky-blue Position button sits directly under the preview and works immediately - it starts from the full photo frame, drag pans freely, pinch zooms, Done keeps the region (label "Custom"; tapping Done without moving anything clears back to Original). Picking a ratio first still works as before. Free-form (non-uniform) crop shapes are NOT in this version - the frame keeps the current canvas aspect (vetoable).
+- Reset button (his "Add reset button."): next to Change in the photo card - clears all text + image layers, crop, undo stack and results while KEEPING the loaded photo. The original photo on his phone is never touched.
+- Font picker shows the real thing (his design screenshots): every font tile now renders its name in that font's actual typeface, so he can see what each font looks like before tapping.
+- Add image layer hardened (his "tried to add image through layer for logo not added", on v0.16.2): the overlay decoder now falls back to Android's ImageDecoder when the standard decoder can't read the picked file (HEIC/WebP/AVIF sources), a failure says "Could not add that image - try a JPG or PNG." instead of failing quietly, a success snackbar confirms "Image layer added - drag it on the photo.", and the busy overlay can no longer stick behind a snackbar on either the photo-open or image-add path.
+
 ## v0.16.2 - Text on Photo fixes from his phone testing (Oct 29, 2026)
 
 He tested v0.16.1 on his phone and sent screenshots. Three fixes:
