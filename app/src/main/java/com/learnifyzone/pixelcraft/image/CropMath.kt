@@ -100,6 +100,18 @@ object CropMath {
         return floatArrayOf(l, t, r, b)
     }
 
+    /** Largest centered normalized frame with the given width/height ratio. */
+    fun maxRectForRatio(ratio: Float, bmpW: Int, bmpH: Int): FloatArray {
+        val img = bmpW.toFloat() / bmpH.toFloat()
+        return if (img > ratio) {
+            val w = ratio / img
+            floatArrayOf((1f - w) / 2f, 0f, (1f + w) / 2f, 1f)
+        } else {
+            val h = img / ratio
+            floatArrayOf(0f, (1f - h) / 2f, 1f, (1f + h) / 2f)
+        }
+    }
+
     /** Convert the normalized frame to clamped pixel bounds (l, t, r, b). */
     fun toPixels(rect: FloatArray, bmpW: Int, bmpH: Int): IntArray {
         val l = (rect[0] * bmpW).roundToInt().coerceIn(0, bmpW - 1)

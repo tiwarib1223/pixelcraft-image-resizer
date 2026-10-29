@@ -3,6 +3,8 @@ package com.learnifyzone.pixelcraft.image
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.Paint
+import android.graphics.RectF
 import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
@@ -132,6 +134,50 @@ object Transforms {
     }
 
     /** Crop a pixel rectangle (left, top, right, bottom) out of the photo. */
+
+    // ---- Social Media Sizes bakes (v0.11.0) ----
+
+    /** Social "Crop" mode: crop the framed region, scale to the exact target. */
+    fun socialCrop(src: Bitmap, rectPx: IntArray, tw: Int, th: Int): Bitmap =
+        Bitmap.createScaledBitmap(cropRegion(src, rectPx), tw, th, true)
+
+    /** Social "Position" mode: cover-fill the target frame. panX/panY are -1..1
+     *  fractions of the spare slack, zoom >= 1. The frame is always fully covered. */
+    fun socialPosition(src: Bitmap, tw: Int, th: Int, zoom: Float, panX: Float, panY: Float): Bitmap {
+        val out = Bitmap.createBitmap(tw, th, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(out)
+        val base = max(tw.toFloat() / src.width, th.toFloat() / src.height) * zoom.coerceIn(1f, 5f)
+        val dw = src.width * base
+        val dh = src.height * base
+        val left = (tw - dw) / 2f - panX.coerceIn(-1f, 1f) * ((dw - tw) / 2f)
+        val top = (th - dh) / 2f - panY.coerceIn(-1f, 1f) * ((dh - th) / 2f)
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
+        canvas.drawBitmap(src, null, RectF(left, top, left + dw, top + dh), paint)
+        return out
+    }
+
+    enum class SocialFill { BLUR, WHITE, CUSTOM, TRANSPARENT }
+
+    /** Social "Background" (fit) mode: the whole photo inside the target frame.
+     *  BLUR pads with a blurred fill, WHITE/CUSTOM fill solid, TRANSPARENT keeps
+     *  real alpha for PNG/WebP. */
+    fun socialFit(src: Bitmap, tw: Int, th: Int, fill: SocialFill, customColor: Int): Bitmap {
+        val out = Bitmap.createBitmap(tw, th, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(out)
+        when (fill) {
+            SocialFill.BLUR -> canvas.drawBitmap(stretch(blurred(src), tw, th), 0f, 0f, null)
+            SocialFill.WHITE -> canvas.drawColor(Color.WHITE)
+            SocialFill.CUSTOM -> canvas.drawColor(customColor)
+            SocialFill.TRANSPARENT -> {}
+        }
+        val scale = min(tw.toFloat() / src.width, th.toFloat() / src.height)
+        val w = (src.width * scale).coerceAtLeast(1f)
+        val h = (src.height * scale).coerceAtLeast(1f)
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
+        canvas.drawBitmap(src, null, RectF((tw - w) / 2f, (th - h) / 2f, (tw + w) / 2f, (th + h) / 2f), paint)
+        return out
+    }
+
     fun cropRegion(src: Bitmap, rectPx: IntArray): Bitmap =
         Bitmap.createBitmap(src, rectPx[0], rectPx[1], rectPx[2] - rectPx[0], rectPx[3] - rectPx[1])
 

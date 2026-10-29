@@ -74,6 +74,15 @@ Stage 3 v0.10.1 (built on Stage 2E v0.8.1): queue overview screen, the full "Sel
 
 
 
+## v0.11.0 feature - Social Media Sizes (his GO: "Research deeply and add official size")
+- New tool, opened from the homepage "Social & Shop Sizes" tile (the tile now opens this tool instead of the Presets shortcut; the Presets bottom tab itself is unchanged). Homepage layout otherwise untouched.
+- Three pages: a platform picker ("Social Media Sizes / Every platform. Every image size." + Select Your Image card + a grid of Instagram, Facebook, YouTube, TikTok, LinkedIn, Pinterest, X, WhatsApp, plus More), a category list per platform (Profile Picture / Post / Story / Cover Photo-Banner / Video Thumbnail / Ad Creative / Custom Size), and an editing page ("Instagram - Post" style) with live preview, the target size label, Crop / Position / Background buttons and an orange Export Image button.
+- OFFICIAL sizes, researched Oct 29, 2026 against official platform help pages where they exist (YouTube, LinkedIn, Pinterest) and established design references elsewhere. The full sourced table is documented in docs/social-media-sizes.md and encoded in SocialSizes.kt. Safe-area notes (YouTube banner 1546x423, Facebook cover center-safe) are shown on the cards.
+- Custom Size accepts any width/height from 16 to 12000 px.
+- Editing reuses the existing engine: Crop = free-drag frame locked to the target ratio (same CropPreview as Crop & Rotate), Position = cover-fill with drag-to-pan and a zoom slider (WYSIWYG preview), Background = whole photo fitted inside the target with Blur / White / Custom Color / Transparent fill (Transparent forces PNG export for real alpha).
+- Export lands on the standard result page (before/after + sizes + save/share) and back from it returns to the Social editing page. Reset stays in-tool with a Select Image card. Fully on-device, no new permissions.
+- Verified with REAL PIXEL tests on Robolectric native graphics (SocialSizesTest): exact target dimensions out of every bake, crop content correctness, position full-frame coverage and real panning, white/transparent/blur fill corner pixels, plus the official-table sanity checks. UI render test covers the platform picker.
+
 ## v0.10.1 fix (his report: "it should crop in selected area. Now it not crop")
 - Circle Cutter output: the shape mask silently did nothing - the mask never erased anything: a DST_IN path draw only touches pixels the path covers, so everything outside the shape stayed opaque, and the "cutout" was the plain square region. Now the inverse frame-minus-shape path is drawn with DST_OUT (anti-aliased edges). Verified with REAL PIXEL tests on Robolectric native graphics (corner alpha = 0, centre = 255 for Circle/Heart/Rounded; Square untouched) - same pipeline as his phone.
 - Default frame is now the largest centered 1:1 square (was a non-square default on non-square photos, which squashed the output).

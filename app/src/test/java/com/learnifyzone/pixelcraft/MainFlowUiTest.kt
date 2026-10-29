@@ -108,4 +108,24 @@ class MainFlowUiTest {
             waitForText("DPI - 300 is standard for print")
         }
     }
+
+    @Test
+    fun socialSizesHomeShowsPlatforms() {
+        val bytes = javaClass.classLoader!!.getResourceAsStream("test_photo.jpg")!!.readBytes()
+        val tmp = File.createTempFile("pc_ui_test_social", ".jpg")
+        tmp.writeBytes(bytes)
+        tmp.deleteOnExit()
+        val intent = Intent(ApplicationProvider.getApplicationContext(), MainActivity::class.java)
+            .putExtra("pixelcraft.test.photo", tmp.absolutePath)
+            .putExtra("pixelcraft.test.tool", "social")
+        ActivityScenario.launch<MainActivity>(intent).use {
+            waitForText("Social Media Sizes")
+            waitForText("Every platform. Every image size.")
+            waitForText("Select Your Image")
+            waitForText("Instagram")
+            waitForText("YouTube")
+            waitForText("WhatsApp")
+            waitForText("More")
+        }
+    }
 }

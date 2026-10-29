@@ -154,6 +154,9 @@ import com.learnifyzone.pixelcraft.image.ExportFormat
 import com.learnifyzone.pixelcraft.image.SaveUtils
 import com.learnifyzone.pixelcraft.image.Transforms
 import com.learnifyzone.pixelcraft.image.CropMath
+import com.learnifyzone.pixelcraft.image.SocialPlatform
+import com.learnifyzone.pixelcraft.image.SocialSize
+import com.learnifyzone.pixelcraft.image.SocialSizes
 import com.learnifyzone.pixelcraft.image.Transforms.CropAnchor
 import com.learnifyzone.pixelcraft.image.Transforms.FitPad
 import kotlinx.coroutines.Dispatchers
@@ -186,7 +189,7 @@ class MainActivity : ComponentActivity() {
 }
 
 private enum class MainTab { Home, MyPhotos, Presets, Settings }
-private enum class Screen { Home, Editor, Export, Print, Success, QueueOverview, QueueResult }
+private enum class Screen { Home, Editor, Export, Print, Success, QueueOverview, QueueResult, SocialHome, SocialPlatform, SocialEdit }
 private enum class Tool(val label: String) { Resize("Resize"), Presets("Presets"), Crop("Crop & Rotate"), Background("Background"), Circle("Circle Cutter"), Format("Format") }
 
 private enum class CropTransform { LEFT, RIGHT, FLIP_H, FLIP_V }
@@ -258,6 +261,19 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
     var bgDpi by remember { mutableStateOf("300") }
     var bgError by remember { mutableStateOf("") }
     var pendingCircleTool by remember { mutableStateOf(false) }
+    var pendingSocialTool by remember { mutableStateOf(false) }
+    var exportReturnToSocial by remember { mutableStateOf(false) }
+    var socialPlatform by rememberSaveable { mutableStateOf("") }
+    var socialTarget by remember { mutableStateOf<SocialSize?>(null) }
+    var socialCustomW by rememberSaveable { mutableStateOf("") }
+    var socialCustomH by rememberSaveable { mutableStateOf("") }
+    var socialMode by rememberSaveable { mutableStateOf("Crop") }
+    var socialRect by remember { mutableStateOf(CropMath.defaultRect()) }
+    var socialZoom by remember { mutableStateOf(1f) }
+    var socialPanX by remember { mutableStateOf(0f) }
+    var socialPanY by remember { mutableStateOf(0f) }
+    var socialFill by rememberSaveable { mutableStateOf("Blur") }
+    var socialCustomColor by remember { mutableLongStateOf(0xFF42A5F5) }
     var circleShape by rememberSaveable { mutableStateOf("Circle") }
     var circleRect by remember { mutableStateOf(CropMath.defaultRect()) }
     var circleChoice by remember { mutableStateOf(BgChoice.TRANSPARENT) }
@@ -419,6 +435,11 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                     pendingCircleTool -> { pendingCircleTool = false; circleRect = CropMath.maxRectForAspect("1:1", loaded.width, loaded.height); Tool.Circle }
                     else -> Tool.Resize
                 }
+                if (pendingSocialTool) {
+                    pendingSocialTool = false
+                    socialTarget?.let { t -> socialRect = CropMath.maxRectForRatio(t.w.toFloat() / t.h.toFloat(), loaded.width, loaded.height) }
+                    screen = if (socialTarget != null) Screen.SocialEdit else Screen.SocialHome
+                }
                 // Clear busy BEFORE the snackbar: showSnackbar suspends until dismissal,
                 // so gating busy on it left the Process button spinning for ~4s after every load.
                 busy = false
@@ -441,6 +462,7 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
             val testTool = (context as? Activity)?.intent?.getStringExtra("pixelcraft.test.tool")
             if (testTool == "crop") pendingCropTool = true
             if (testTool == "circle") pendingCircleTool = true
+            if (testTool == "social") pendingSocialTool = true
             loadPhoto(Uri.fromFile(File(testPath)), isCamera = false)
         }
     }
@@ -502,6 +524,7 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                 exportDpi = dpi.roundToInt()
                 if (bgChoice == BgChoice.TRANSPARENT && outFormat() == ExportFormat.JPEG) chosenFormat = "PNG"
                 estimatedBytes = withContext(Dispatchers.IO) { estimateBytes(out, outFormat(), quality) }
+                exportReturnToSocial = false
                 screen = Screen.Export
             } finally {
                 busy = false
@@ -546,10 +569,59 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                 // Transparent needs real alpha - JPG has none, so force PNG like the Background tool.
                 if (circleChoice == BgChoice.TRANSPARENT && outFormat() == ExportFormat.JPEG) chosenFormat = "PNG"
                 estimatedBytes = withContext(Dispatchers.IO) { estimateBytes(out, outFormat(), quality) }
+                exportReturnToSocial = false
                 screen = Screen.Export
                 snackbar.showSnackbar("$circleShape cut: ${out.width} × ${out.height} px.")
             } catch (e: Exception) {
                 snackbar.showSnackbar("Couldn't cut this shape. Try a smaller size.")
+            } finally {
+                busy = false
+                busyLabel = ""
+            }
+        }
+    }
+
+    fun selectSocialTarget(t: SocialSize) {
+        socialTarget = t
+        socialMode = "Crop"
+        socialZoom = 1f
+        socialPanX = 0f
+        socialPanY = 0f
+        val src = workingBitmap
+        socialRect = if (src != null) CropMath.maxRectForRatio(t.w.toFloat() / t.h.toFloat(), src.width, src.height) else CropMath.defaultRect()
+        screen = Screen.SocialEdit
+    }
+
+    fun applySocial() {
+        val src = workingBitmap ?: return
+        val t = socialTarget ?: return
+        busy = true
+        busyLabel = "Exporting…"
+        scope.launch {
+            try {
+                val out = withContext(Dispatchers.Default) {
+                    when (socialMode) {
+                        "Position" -> Transforms.socialPosition(src, t.w, t.h, socialZoom, socialPanX, socialPanY)
+                        "Background" -> Transforms.socialFit(src, t.w, t.h, when (socialFill) {
+                            "White" -> Transforms.SocialFill.WHITE
+                            "Custom Color" -> Transforms.SocialFill.CUSTOM
+                            "Transparent" -> Transforms.SocialFill.TRANSPARENT
+                            else -> Transforms.SocialFill.BLUR
+                        }, socialCustomColor.toInt())
+                        else -> Transforms.socialCrop(src, CropMath.toPixels(socialRect, src.width, src.height), t.w, t.h)
+                    }
+                }
+                processedBitmap = out
+                exportName = suggestBaseName(t.w, t.h)
+                exportDpi = 0
+                beforeAfter = true
+                if (socialMode == "Background" && socialFill == "Transparent" && outFormat() == ExportFormat.JPEG) chosenFormat = "PNG"
+                estimatedBytes = withContext(Dispatchers.IO) { estimateBytes(out, outFormat(), quality) }
+                exportReturnToSocial = true
+                screen = Screen.Export
+                snackbar.showSnackbar("Ready: ${t.w} × ${t.h} px for $socialPlatform.")
+            } catch (e: Exception) {
+                snackbar.showSnackbar("Couldn't export. Try a smaller target size.")
             } finally {
                 busy = false
                 busyLabel = ""
@@ -588,6 +660,7 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                 estimatedBytes = withContext(Dispatchers.IO) { estimateBytes(result, outFormat(), quality) }
                 // Straight to the result page (preview, before/after sizes, export options) -
                 // closing the size sheet must not drop the user back on the editor.
+                exportReturnToSocial = false
                 screen = Screen.Export
                 snackbar.showSnackbar("Processed: $targetW × $targetH px.")
             } catch (e: Exception) {
@@ -619,6 +692,7 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                 beforeAfter = true
                 lastUsedTarget = fit.first.width to fit.first.height
                 saveLastUsedTarget(context, fit.first.width, fit.first.height)
+                exportReturnToSocial = false
                 screen = Screen.Export
                 snackbar.showSnackbar("Processed: ${fit.first.width} × ${fit.first.height} px · ${formatBytes(fit.second)}.")
             } catch (e: Exception) {
@@ -1264,9 +1338,11 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
 
     BackHandler(enabled = screen != Screen.Home) {
         when (screen) {
-            Screen.Export -> screen = Screen.Editor
+            Screen.Export -> screen = if (exportReturnToSocial) Screen.SocialEdit else Screen.Editor
             Screen.QueueResult -> { screen = Screen.Home; tab = MainTab.Home }
             Screen.Editor -> leaveEditorToHome()
+            Screen.SocialEdit -> screen = Screen.SocialPlatform
+            Screen.SocialPlatform -> screen = Screen.SocialHome
             else -> screen = Screen.Home
         }
     }
@@ -1322,7 +1398,7 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
         containerColor = MaterialTheme.colorScheme.background,
         snackbarHost = { SnackbarHost(snackbar) },
         topBar = {
-            if (screen == Screen.Editor || screen == Screen.Export || screen == Screen.Print || screen == Screen.QueueOverview || screen == Screen.QueueResult || screen == Screen.Success) {
+            if (screen == Screen.Editor || screen == Screen.Export || screen == Screen.Print || screen == Screen.QueueOverview || screen == Screen.QueueResult || screen == Screen.Success || screen == Screen.SocialHome || screen == Screen.SocialPlatform || screen == Screen.SocialEdit) {
                 TopAppBar(
                     title = {
                         Text(
@@ -1332,6 +1408,9 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                                 Screen.QueueOverview -> "Photos to resize"
                                 Screen.QueueResult -> "Resized photos"
                                 Screen.Success -> "Saved"
+                                Screen.SocialHome -> "Social Media Sizes"
+                                Screen.SocialPlatform -> socialPlatform
+                                Screen.SocialEdit -> "$socialPlatform · ${socialTarget?.label ?: "Custom"}"
                                 else -> "Print Size & DPI"
                             },
                             fontWeight = FontWeight.SemiBold
@@ -1340,9 +1419,11 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                     navigationIcon = {
                         IconButton(onClick = {
                             when (screen) {
-                                Screen.Export -> screen = Screen.Editor
+                                Screen.Export -> screen = if (exportReturnToSocial) Screen.SocialEdit else Screen.Editor
                                 Screen.QueueResult -> { screen = Screen.Home; tab = MainTab.Home }
                                 Screen.Editor -> leaveEditorToHome()
+                                Screen.SocialEdit -> screen = Screen.SocialPlatform
+                                Screen.SocialPlatform -> screen = Screen.SocialHome
                                 else -> screen = Screen.Home
                             }
                         }) {
@@ -1358,6 +1439,14 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                                     .padding(horizontal = 14.dp),
                                 color = DeepNavy,
                                 fontWeight = FontWeight.Bold
+                            )
+                        } else if (screen == Screen.SocialEdit) {
+                            Text(
+                                "Reset",
+                                modifier = Modifier
+                                    .clickable { resetEditor(); pendingSocialTool = true; screen = Screen.SocialEdit }
+                                    .padding(horizontal = 14.dp),
+                                color = DeepNavy
                             )
                         } else if (screen == Screen.Editor) {
                             Text(
@@ -1397,7 +1486,7 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                         when (feature) {
                             "Resize" -> pickPhotos()
                             "Print Size & DPI" -> screen = Screen.Print
-                            "Social & Shop Sizes" -> tab = MainTab.Presets
+                            "Social & Shop Sizes" -> screen = Screen.SocialHome
                             "Remove Background" -> {
                                 if (workingBitmap != null) { screen = Screen.Editor; tool = Tool.Background }
                                 else { pendingBgTool = true; pickPhotos() }
@@ -1588,6 +1677,7 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                                 straightenAngle = 0f
                                 tiltHAngle = 0f
                                 tiltVAngle = 0f
+                                exportReturnToSocial = false
                                 screen = Screen.Export
                                 snackbar.showSnackbar("Cropped: ${result.width} × ${result.height} px.")
                             } catch (e: Exception) {
@@ -1672,6 +1762,55 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                 onReplace = { requestReplaceOriginal() },
                 onSaveToFolder = { launchSaveToFolder() },
                 onShare = { shareProcessed() }
+            )
+            Screen.SocialHome -> SocialHomeScreen(
+                modifier = Modifier.padding(padding),
+                hasPhoto = workingBitmap != null,
+                photoLabel = workingBitmap?.let { "${it.width} × ${it.height} px" },
+                onSelectImage = { pendingSocialTool = true; pickPhotos() },
+                onPlatform = { name ->
+                    if (name == "More") scope.launch { snackbar.showSnackbar("Tell me which platform you need - I'll add it.") }
+                    else { socialPlatform = name; screen = Screen.SocialPlatform }
+                }
+            )
+            Screen.SocialPlatform -> SocialPlatformScreen(
+                modifier = Modifier.padding(padding),
+                platform = SocialSizes.platforms.firstOrNull { it.name == socialPlatform },
+                customW = socialCustomW,
+                customH = socialCustomH,
+                onCustomW = { socialCustomW = it.filter { c -> c.isDigit() } },
+                onCustomH = { socialCustomH = it.filter { c -> c.isDigit() } },
+                onTarget = { selectSocialTarget(it) },
+                onCustom = {
+                    val w = socialCustomW.toIntOrNull()
+                    val h = socialCustomH.toIntOrNull()
+                    if (w == null || h == null || w < 16 || h < 16 || w > 12000 || h > 12000) {
+                        scope.launch { snackbar.showSnackbar("Enter width and height between 16 and 12000 px.") }
+                    } else {
+                        selectSocialTarget(SocialSize("Custom", "$w x $h px", w, h))
+                    }
+                }
+            )
+            Screen.SocialEdit -> SocialEditScreen(
+                modifier = Modifier.padding(padding),
+                working = workingBitmap,
+                target = socialTarget,
+                mode = socialMode,
+                rect = socialRect,
+                zoom = socialZoom,
+                panX = socialPanX,
+                panY = socialPanY,
+                fill = socialFill,
+                customColor = socialCustomColor,
+                busy = busy,
+                onMode = { socialMode = it },
+                onRect = { socialRect = it },
+                onZoom = { socialZoom = it },
+                onPan = { x, y -> socialPanX = x; socialPanY = y },
+                onFill = { socialFill = it },
+                onCustomColor = { socialCustomColor = it },
+                onSelectImage = { pendingSocialTool = true; pickPhotos() },
+                onExport = { applySocial() }
             )
             Screen.Print -> PrintCalculator(
                 modifier = Modifier.padding(padding),
@@ -4242,4 +4381,288 @@ private fun fitToFileSize(src: Bitmap, format: ExportFormat, quality: Int, targe
     }
     val finalSize = probe(bmp, ladder.last())
     return bmp to finalSize
+}
+
+
+@Composable
+private fun SocialHomeScreen(
+    modifier: Modifier = Modifier,
+    hasPhoto: Boolean,
+    photoLabel: String?,
+    onSelectImage: () -> Unit,
+    onPlatform: (String) -> Unit
+) {
+    Column(modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).padding(horizontal = 16.dp).verticalScroll(rememberScrollState())) {
+        Spacer(Modifier.height(10.dp))
+        Text("Every platform. Every image size.", fontSize = 22.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onBackground)
+        Spacer(Modifier.height(4.dp))
+        Text("Pick a platform, choose the official size, and export your photo ready to upload.", fontSize = 14.sp, color = Slate)
+        Spacer(Modifier.height(14.dp))
+        Card(colors = CardDefaults.cardColors(containerColor = PaleBlue), shape = RoundedCornerShape(16.dp)) {
+            Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("Select Your Image", fontWeight = FontWeight.SemiBold, color = DeepNavy)
+                    Spacer(Modifier.height(2.dp))
+                    Text(if (hasPhoto) "Current photo: ${photoLabel ?: ""}" else "No photo selected yet", fontSize = 13.sp, color = Slate)
+                }
+                Button(onClick = onSelectImage, colors = ButtonDefaults.buttonColors(containerColor = Orange, contentColor = Color.White), shape = RoundedCornerShape(12.dp)) {
+                    Text(if (hasPhoto) "Change" else "Select Image")
+                }
+            }
+        }
+        Spacer(Modifier.height(16.dp))
+        val names = SocialSizes.platforms.map { it.name } + "More"
+        names.chunked(2).forEach { rowNames ->
+            Row(Modifier.fillMaxWidth()) {
+                rowNames.forEach { name ->
+                    Card(
+                        modifier = Modifier.weight(1f).padding(4.dp).clickable { onPlatform(name) },
+                        colors = CardDefaults.cardColors(containerColor = SoftGrey),
+                        shape = RoundedCornerShape(14.dp)
+                    ) {
+                        Row(Modifier.fillMaxWidth().padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Box(Modifier.size(40.dp).background(if (name == "More") BorderGrey else SkyBlue, CircleShape), contentAlignment = Alignment.Center) {
+                                Text(name.take(1), fontWeight = FontWeight.Bold, color = if (name == "More") Slate else Color.White, fontSize = 18.sp)
+                            }
+                            Spacer(Modifier.width(12.dp))
+                            Text(name, fontWeight = FontWeight.SemiBold, color = DeepNavy, fontSize = 15.sp)
+                        }
+                    }
+                }
+                if (rowNames.size == 1) Spacer(Modifier.weight(1f))
+            }
+        }
+        Spacer(Modifier.height(16.dp))
+        Card(colors = CardDefaults.cardColors(containerColor = SoftGrey), shape = RoundedCornerShape(14.dp)) {
+            Text(
+                "All sizes follow the official recommendations from each platform. The full sourced table is in the app documentation.",
+                modifier = Modifier.padding(14.dp), fontSize = 13.sp, color = Slate
+            )
+        }
+        Spacer(Modifier.height(24.dp))
+    }
+}
+
+@Composable
+private fun SocialPlatformScreen(
+    modifier: Modifier = Modifier,
+    platform: SocialPlatform?,
+    customW: String,
+    customH: String,
+    onCustomW: (String) -> Unit,
+    onCustomH: (String) -> Unit,
+    onTarget: (SocialSize) -> Unit,
+    onCustom: () -> Unit
+) {
+    Column(modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).padding(horizontal = 16.dp).verticalScroll(rememberScrollState())) {
+        Spacer(Modifier.height(10.dp))
+        if (platform == null) {
+            Text("Platform not found.", color = Slate)
+        } else {
+            platform.categories.forEach { cat ->
+                Text(cat.label, fontSize = 17.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onBackground)
+                Text(cat.sub, fontSize = 13.sp, color = Slate)
+                Spacer(Modifier.height(6.dp))
+                cat.sizes.forEach { size ->
+                    Card(
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp).clickable { onTarget(size) },
+                        colors = CardDefaults.cardColors(containerColor = SoftGrey),
+                        shape = RoundedCornerShape(14.dp)
+                    ) {
+                        Column(Modifier.fillMaxWidth().padding(14.dp)) {
+                            Text(size.label, fontWeight = FontWeight.SemiBold, color = DeepNavy, fontSize = 15.sp)
+                            Text(size.sub, fontSize = 13.sp, color = Slate)
+                            if (size.note.isNotEmpty()) Text(size.note, fontSize = 12.sp, color = Slate)
+                        }
+                    }
+                }
+                Spacer(Modifier.height(12.dp))
+            }
+        }
+        Text("Custom Size", fontSize = 17.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onBackground)
+        Text("Any width and height, from 16 to 12000 px", fontSize = 13.sp, color = Slate)
+        Spacer(Modifier.height(6.dp))
+        Card(colors = CardDefaults.cardColors(containerColor = SoftGrey), shape = RoundedCornerShape(14.dp)) {
+            Column(Modifier.fillMaxWidth().padding(14.dp)) {
+                Row(Modifier.fillMaxWidth()) {
+                    OutlinedTextField(value = customW, onValueChange = onCustomW, label = { Text("Width (px)") }, singleLine = true, modifier = Modifier.weight(1f))
+                    Spacer(Modifier.width(10.dp))
+                    OutlinedTextField(value = customH, onValueChange = onCustomH, label = { Text("Height (px)") }, singleLine = true, modifier = Modifier.weight(1f))
+                }
+                Spacer(Modifier.height(10.dp))
+                Button(onClick = onCustom, modifier = Modifier.fillMaxWidth().height(48.dp), colors = ButtonDefaults.buttonColors(containerColor = SkyBlue, contentColor = DeepNavy), shape = RoundedCornerShape(12.dp)) {
+                    Text("Use Custom Size", fontWeight = FontWeight.SemiBold)
+                }
+            }
+        }
+        Spacer(Modifier.height(24.dp))
+    }
+}
+
+@Composable
+private fun SocialEditScreen(
+    modifier: Modifier = Modifier,
+    working: Bitmap?,
+    target: SocialSize?,
+    mode: String,
+    rect: FloatArray,
+    zoom: Float,
+    panX: Float,
+    panY: Float,
+    fill: String,
+    customColor: Long,
+    busy: Boolean,
+    onMode: (String) -> Unit,
+    onRect: (FloatArray) -> Unit,
+    onZoom: (Float) -> Unit,
+    onPan: (Float, Float) -> Unit,
+    onFill: (String) -> Unit,
+    onCustomColor: (Long) -> Unit,
+    onSelectImage: () -> Unit,
+    onExport: () -> Unit
+) {
+    var dragging by remember { mutableStateOf(false) }
+    Column(modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).padding(horizontal = 16.dp).verticalScroll(rememberScrollState(), enabled = !dragging)) {
+        Spacer(Modifier.height(10.dp))
+        if (working == null || target == null) {
+            Card(colors = CardDefaults.cardColors(containerColor = PaleBlue), shape = RoundedCornerShape(16.dp)) {
+                Column(Modifier.fillMaxWidth().padding(18.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text("Select Image", fontWeight = FontWeight.Bold, fontSize = 17.sp, color = DeepNavy)
+                    Spacer(Modifier.height(4.dp))
+                    Text("Choose a photo from your gallery to start.", fontSize = 13.sp, color = Slate)
+                    Spacer(Modifier.height(12.dp))
+                    Button(onClick = onSelectImage, modifier = Modifier.fillMaxWidth().height(52.dp), colors = ButtonDefaults.buttonColors(containerColor = Orange, contentColor = Color.White), shape = RoundedCornerShape(14.dp)) {
+                        Text("Select Image")
+                    }
+                }
+            }
+            Spacer(Modifier.height(24.dp))
+            return@Column
+        }
+        val tw = target.w
+        val th = target.h
+        Card(colors = CardDefaults.cardColors(containerColor = SoftGrey), shape = RoundedCornerShape(16.dp)) {
+            Box(Modifier.fillMaxWidth().height(320.dp).padding(8.dp), contentAlignment = Alignment.Center) {
+                when (mode) {
+                    "Position" -> {
+                        val pScale = 420f / maxOf(tw, th)
+                        val pw = (tw * pScale).toInt().coerceAtLeast(1)
+                        val ph = (th * pScale).toInt().coerceAtLeast(1)
+                        val preview = remember(working, tw, th, zoom, panX, panY) {
+                            Transforms.socialPosition(working, pw, ph, zoom, panX, panY)
+                        }
+                        Image(
+                            bitmap = preview.asImageBitmap(),
+                            contentDescription = null,
+                            contentScale = ContentScale.Fit,
+                            modifier = Modifier.fillMaxSize().pointerInput(working, tw, th) {
+                                detectDragGestures(
+                                    onDragStart = { dragging = true },
+                                    onDragEnd = { dragging = false },
+                                    onDragCancel = { dragging = false }
+                                ) { change, dragAmount ->
+                                    change.consume()
+                                    val sc = maxOf(pw.toFloat() / working.width, ph.toFloat() / working.height) * zoom
+                                    val maxOffX = (working.width * sc - pw) / 2f
+                                    val maxOffY = (working.height * sc - ph) / 2f
+                                    val nx = if (maxOffX > 1f) (panX + dragAmount.x / maxOffX).coerceIn(-1f, 1f) else panX
+                                    val ny = if (maxOffY > 1f) (panY + dragAmount.y / maxOffY).coerceIn(-1f, 1f) else panY
+                                    onPan(nx, ny)
+                                }
+                            }
+                        )
+                    }
+                    "Background" -> {
+                        val pScale = 420f / maxOf(tw, th)
+                        val pw = (tw * pScale).toInt().coerceAtLeast(1)
+                        val ph = (th * pScale).toInt().coerceAtLeast(1)
+                        val preview = remember(working, tw, th, fill, customColor) {
+                            Transforms.socialFit(working, pw, ph, when (fill) {
+                                "White" -> Transforms.SocialFill.WHITE
+                                "Custom Color" -> Transforms.SocialFill.CUSTOM
+                                "Transparent" -> Transforms.SocialFill.TRANSPARENT
+                                else -> Transforms.SocialFill.BLUR
+                            }, customColor.toInt())
+                        }
+                        Image(bitmap = preview.asImageBitmap(), contentDescription = null, contentScale = ContentScale.Fit, modifier = Modifier.fillMaxSize())
+                    }
+                    else -> CropPreview(
+                        bitmap = working,
+                        rect = rect,
+                        aspect = tw.toFloat() / th.toFloat(),
+                        straighten = 0f,
+                        tiltH = 0f,
+                        tiltV = 0f,
+                        onRect = onRect,
+                        onDraggingChange = { dragging = it },
+                        modifier = Modifier.fillMaxSize()
+                    )
+                }
+            }
+        }
+        Spacer(Modifier.height(8.dp))
+        Text("$tw × $th px · ${target.label}", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = DeepNavy)
+        Spacer(Modifier.height(10.dp))
+        Row(Modifier.fillMaxWidth()) {
+            listOf("Crop", "Position", "Background").forEach { m ->
+                val selected = mode == m
+                OutlinedButton(
+                    onClick = { onMode(m) },
+                    modifier = Modifier.weight(1f).padding(horizontal = 3.dp),
+                    shape = RoundedCornerShape(12.dp),
+                    colors = ButtonDefaults.outlinedButtonColors(containerColor = if (selected) SkyBlue else Color.Transparent, contentColor = if (selected) DeepNavy else Slate)
+                ) { Text(m, fontSize = 13.sp) }
+            }
+        }
+        if (mode == "Position") {
+            Spacer(Modifier.height(8.dp))
+            Text("Zoom", fontSize = 13.sp, color = Slate)
+            Slider(value = zoom, onValueChange = onZoom, valueRange = 1f..5f)
+        }
+        if (mode == "Background") {
+            Spacer(Modifier.height(8.dp))
+            Row(Modifier.fillMaxWidth()) {
+                listOf("Blur", "White", "Custom Color", "Transparent").forEach { f ->
+                    val selected = fill == f
+                    OutlinedButton(
+                        onClick = { onFill(f) },
+                        modifier = Modifier.weight(1f).padding(horizontal = 2.dp),
+                        shape = RoundedCornerShape(12.dp),
+                        colors = ButtonDefaults.outlinedButtonColors(containerColor = if (selected) SkyBlue else Color.Transparent, contentColor = if (selected) DeepNavy else Slate)
+                    ) { Text(f, fontSize = 11.sp, maxLines = 1) }
+                }
+            }
+            if (fill == "Custom Color") {
+                Spacer(Modifier.height(8.dp))
+                Row {
+                    listOf(0xFF42A5F5, 0xFF172B4D, 0xFFE91E63, 0xFF1E9E50, 0xFFFFC107, 0xFF9C27B0).forEach { c ->
+                        Box(
+                            Modifier.padding(end = 10.dp).size(34.dp).background(Color(c), CircleShape)
+                                .then(if (customColor == c) Modifier.background(Color.Transparent, CircleShape) else Modifier)
+                                .clickable { onCustomColor(c) },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            if (customColor == c) Text("✓", color = Color.White, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                }
+            }
+        }
+        Spacer(Modifier.height(10.dp))
+        Card(colors = CardDefaults.cardColors(containerColor = PaleBlue), shape = RoundedCornerShape(14.dp)) {
+            Text(
+                when (mode) {
+                    "Position" -> "Drag your photo to position it. Use the slider to zoom in or out."
+                    "Background" -> "Your whole photo fits inside the frame, with the space around it filled."
+                    else -> "Drag the frame to choose the part of your photo to keep."
+                },
+                modifier = Modifier.padding(14.dp), fontSize = 13.sp, color = Slate
+            )
+        }
+        Spacer(Modifier.height(14.dp))
+        Button(onClick = onExport, enabled = !busy, modifier = Modifier.fillMaxWidth().height(52.dp), colors = ButtonDefaults.buttonColors(containerColor = Orange, contentColor = Color.White), shape = RoundedCornerShape(14.dp)) {
+            Text("Export Image", fontWeight = FontWeight.SemiBold)
+        }
+        Spacer(Modifier.height(24.dp))
+    }
 }
