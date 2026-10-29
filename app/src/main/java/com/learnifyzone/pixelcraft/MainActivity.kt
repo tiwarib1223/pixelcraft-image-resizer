@@ -2321,7 +2321,10 @@ private fun EditorScreen(
     onBgExport: () -> Unit,
     onSelectImage: () -> Unit
 ) {
-    Column(modifier.fillMaxSize().padding(horizontal = 16.dp).verticalScroll(rememberScrollState())) {
+    // While the crop frame is being dragged the page scroll is paused, otherwise
+    // the scroll steals vertical drags and the frame feels stuck (his report).
+    var cropDragging by remember { mutableStateOf(false) }
+    Column(modifier.fillMaxSize().padding(horizontal = 16.dp).verticalScroll(rememberScrollState(), enabled = !cropDragging)) {
         if (queueLabel != null) {
             Text(queueLabel, color = SkyBlue, fontWeight = FontWeight.SemiBold, fontSize = 13.sp, modifier = Modifier.padding(top = 8.dp))
         }
@@ -2362,6 +2365,7 @@ private fun EditorScreen(
                     tiltH = tiltHAngle,
                     tiltV = tiltVAngle,
                     onRect = onCropRect,
+                    onDraggingChange = { cropDragging = it },
                     modifier = Modifier.fillMaxSize().padding(8.dp)
                 )
             } else if (displayImage != null) {
@@ -2506,9 +2510,6 @@ private fun EditorScreen(
                 }
             }
         } else if (tool == Tool.Crop) {
-            Card(colors = CardDefaults.cardColors(containerColor = PaleBlue), shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth().padding(bottom = 10.dp)) {
-                Text("Drag the corners on the photo to frame it. Drag inside the frame to move it. Rotate or flip first if you like - everything happens on your phone, nothing is uploaded.", color = Slate, fontSize = 13.sp, lineHeight = 18.sp, modifier = Modifier.padding(16.dp))
-            }
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())) {
                 listOf(
                     Triple(CropTransform.LEFT, "Left 90°", Icons.Default.RotateLeft),
@@ -2560,6 +2561,9 @@ private fun EditorScreen(
                         Text(label, modifier = Modifier.padding(horizontal = 14.dp, vertical = 9.dp), fontSize = 12.sp, color = if (selected) Color.White else DeepNavy, fontWeight = FontWeight.SemiBold, maxLines = 1, softWrap = false)
                     }
                 }
+            }
+            Card(colors = CardDefaults.cardColors(containerColor = PaleBlue), shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth().padding(top = 12.dp, bottom = 10.dp)) {
+                Text("Drag the corners on the photo to frame it. Drag inside the frame to move it. Rotate or flip first if you like - everything happens on your phone, nothing is uploaded.", color = Slate, fontSize = 13.sp, lineHeight = 18.sp, modifier = Modifier.padding(16.dp))
             }
             Button(
                 onClick = onApplyCrop,
@@ -3340,6 +3344,7 @@ private fun CropPreview(
     tiltH: Float,
     tiltV: Float,
     onRect: (FloatArray) -> Unit,
+    onDraggingChange: (Boolean) -> Unit,
     modifier: Modifier = Modifier
 ) {
     BoxWithConstraints(modifier, contentAlignment = Alignment.Center) {
@@ -3375,17 +3380,19 @@ private fun CropPreview(
         val adjustPaint = remember { android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG or android.graphics.Paint.FILTER_BITMAP_FLAG) }
         val imageBitmap = remember(bitmap) { bitmap.asImageBitmap() }
         if (adjustMatrix == null) {
+            // The Box centers the child; adding offX/offY here too double-shifted
+            // the photo to one side (his v0.9.1 bug report). No manual offset.
             Image(
                 bitmap = imageBitmap,
                 contentDescription = "Crop preview - drag the corners to frame the photo",
-                modifier = Modifier.size(with(density) { dispW.toDp() }, with(density) { dispH.toDp() })
-                    .offset { IntOffset(offX.roundToInt(), offY.roundToInt()) },
+                modifier = Modifier.size(with(density) { dispW.toDp() }, with(density) { dispH.toDp() }),
                 contentScale = ContentScale.FillBounds
             )
         }
-        val hitRadius = with(density) { 28.dp.toPx() }
+        val hitRadius = with(density) { 34.dp.toPx() }
         val currentRect by rememberUpdatedState(rect)
         val currentOnRect by rememberUpdatedState(onRect)
+        val currentOnDragging by rememberUpdatedState(onDraggingChange)
         val imgAspect = bitmap.width.toFloat() / bitmap.height.toFloat()
         Canvas(
             Modifier.fillMaxSize().pointerInput(bitmap, aspect) {
@@ -3407,6 +3414,7 @@ private fun CropPreview(
                         }
                         if (bestIdx >= 0 && best <= hitRadius * hitRadius) mode = bestIdx
                         else if (p.x in l..r && p.y in t..b) mode = 4
+                        currentOnDragging(mode != -1)
                     },
                     onDrag = { change, drag ->
                         change.consume()
@@ -3419,7 +3427,8 @@ private fun CropPreview(
                         }
                         if (next !== currentRect) currentOnRect(next)
                     },
-                    onDragEnd = { mode = -1 }
+                    onDragEnd = { mode = -1; currentOnDragging(false) },
+                    onDragCancel = { mode = -1; currentOnDragging(false) }
                 )
             }
         ) {

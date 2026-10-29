@@ -1,7 +1,7 @@
 # PixelCraft Image Resizer — Progress
 
 ## Current stage
-Stage 3 v0.9.1 (built on Stage 2E v0.8.1): queue overview screen, the full "Select new dimensions" Process sheet, batch processing of the whole queue with live percent progress, a result screen with savings summary, and batch save (new copies or replace originals). Stage 2C delivered: "My Photos" library screen, export format picker (JPG/PNG/WEBP/PDF), size unit picker (pixels/inch/cm/mm), queue thumbnail strip, and a persistent debug signing key. Stage 2 delivered: process-then-export workflow, aspect-ratio adaptation, camera capture, multi-select (up to 50) with one-by-one queue, recently edited photos, quality control.
+Stage 3 v0.9.2 (built on Stage 2E v0.8.1): queue overview screen, the full "Select new dimensions" Process sheet, batch processing of the whole queue with live percent progress, a result screen with savings summary, and batch save (new copies or replace originals). Stage 2C delivered: "My Photos" library screen, export format picker (JPG/PNG/WEBP/PDF), size unit picker (pixels/inch/cm/mm), queue thumbnail strip, and a persistent debug signing key. Stage 2 delivered: process-then-export workflow, aspect-ratio adaptation, camera capture, multi-select (up to 50) with one-by-one queue, recently edited photos, quality control.
 
 ## Stage 2C: implemented in source
 - New bottom-nav tab "My Photos" with three internal tabs, all zero-permission and on-device:
@@ -73,6 +73,11 @@ Stage 3 v0.9.1 (built on Stage 2E v0.8.1): queue overview screen, the full "Sele
 
 
 
+
+## v0.9.2 fix (his report: "when I select image it is must stay in centre. Now it is stay in one side.")
+- Crop & Rotate preview: the photo was shifted to one side because centering was applied twice (the layout centers the image AND a manual offset moved it again). The manual offset is removed - the photo and its crop frame now stay centered on select, and through rotate, mirror and adjust.
+- Crop & Rotate layout (his request): the instruction text ("Drag the corners...") moved down below the edit controls - the rotate/mirror buttons and Adjust section now sit directly under the image.
+- Crop & Rotate drag (his report: "It must move freely any part of image"): the page scroll was stealing vertical drags so the frame felt stuck. Page scroll now pauses while a drag is active, corner handles have a larger touch target, and drag end/cancel always restores scrolling.
 
 ## v0.9.1 feature (his ask: screenshots of a reference editor + "add these things... and please add mirror as well")
 - STRAIGHTEN, HORIZONTAL and VERTICAL adjust dials in Crop & Rotate, matching his reference app in our light style: a round value dial over a draggable tick ruler (-45 to +45 degrees, half-degree steps), mode chips to switch between the three, and a small Reset that zeroes all adjustments. Straighten rotates the photo freely; Horizontal and Vertical add real 3D perspective tilt.
