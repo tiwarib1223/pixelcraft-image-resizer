@@ -127,4 +127,23 @@ class MainFlowUiTest {
             waitForText("WhatsApp")
         }
     }
+
+    @Test
+    fun shopSizesHomeShowsShops() {
+        val bytes = javaClass.classLoader!!.getResourceAsStream("test_photo.jpg")!!.readBytes()
+        val tmp = File.createTempFile("pc_ui_test_shop", ".jpg")
+        tmp.writeBytes(bytes)
+        tmp.deleteOnExit()
+        val intent = Intent(ApplicationProvider.getApplicationContext(), MainActivity::class.java)
+            .putExtra("pixelcraft.test.photo", tmp.absolutePath)
+            .putExtra("pixelcraft.test.tool", "shop")
+        ActivityScenario.launch<MainActivity>(intent).use {
+            waitForText("Online Shop Sizes")
+            waitForText("Every shop. Every product image.")
+            waitForText("Select Your Image")
+            waitForText("Etsy")
+            waitForText("Gumroad")
+            waitForText("Other Shop")
+        }
+    }
 }

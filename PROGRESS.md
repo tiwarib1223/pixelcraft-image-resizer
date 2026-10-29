@@ -74,6 +74,16 @@ Stage 3 v0.10.1 (built on Stage 2E v0.8.1): queue overview screen, the full "Sel
 
 
 
+## v0.12.0 feature - Online Shop Sizes (his GO: "This is my plan", "Deeply research. Accurate size of all platforms")
+- New tool on a new homepage tile "Online Shop Sizes", right next to Social Media Sizes (his placement). Same 3-page flow and engine as Social Media Sizes.
+- Platform picker: "Online Shop Sizes / Every shop. Every product image." + Select Your Image card (with the photo thumbnail, v0.11.1 pattern) + 6 tiles: Etsy, Shopify, Amazon, eBay, Gumroad, Other Shop (his design: Payhip, WooCommerce, Wix Stores, Squarespace, Ko-fi Shop and Creative Market live inside Other Shop). No "More" tile.
+- Per-platform categories: Product Image, Listing Gallery, Shop Banner, Shop Logo & Icon, Promotional Image, Product Collage, Custom Size - only the categories the platform really has, with every official variant as its own option (e.g. Gumroad cover 1280 x 720 AND thumbnail 600 x 600).
+- OFFICIAL sizes researched Oct 29, 2026 from each platform's own documentation; the full sourced table is in docs/shop-sizes.md and encoded in ShopSizes.kt. No invented numbers: platforms without an official banner/logo spec simply do not show those categories.
+- Editing page reuses the social engine: Crop (ratio-locked free-drag frame), Position (v0.11.2 free-pan + zoom), Background (Blur/White/Custom Color/Transparent fill). Reset in-tool. Export lands on the standard result page (JPG/PNG/WebP + quality slider = his "image quality and compression" requirement) and back returns to the shop editor.
+- Product Collage (new mini-feature): pick 2, 3 or 4 photos, they combine into one canvas at the platform's product size (side-by-side, stacked, big+two, or 2x2 depending on the canvas shape), white gaps, live preview, export through the standard page.
+- Batch export (new): from the shop editing page, "Batch export more photos at this size" processes up to 20 picked photos to the SAME target and settings in one go and saves them all to Pictures/PixelCraft with a progress dialog (Crop mode uses a centered crop per photo). Fully on-device, no new permissions.
+- Verified with REAL PIXEL tests (ShopSizesTest): collage layout geometry (side-by-side, stacked, quadrants, gap color), exact canvas dims, and the official-table sanity checks (11 platforms, 5 main shops, key sizes, collage on every platform). UI render test covers the picker.
+
 ## v0.11.3 fix (his report: "name not matching")
 - Homepage tile renamed "Social & Shop Sizes" -> "Social Media Sizes" so the tile and the tool inside carry the same name everywhere.
 

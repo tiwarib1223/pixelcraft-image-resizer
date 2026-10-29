@@ -106,6 +106,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
@@ -156,6 +157,7 @@ import com.learnifyzone.pixelcraft.image.Transforms
 import com.learnifyzone.pixelcraft.image.CropMath
 import com.learnifyzone.pixelcraft.image.SocialPlatform
 import com.learnifyzone.pixelcraft.image.SocialSize
+import com.learnifyzone.pixelcraft.image.ShopSizes
 import com.learnifyzone.pixelcraft.image.SocialSizes
 import com.learnifyzone.pixelcraft.image.Transforms.CropAnchor
 import com.learnifyzone.pixelcraft.image.Transforms.FitPad
@@ -189,7 +191,7 @@ class MainActivity : ComponentActivity() {
 }
 
 private enum class MainTab { Home, MyPhotos, Presets, Settings }
-private enum class Screen { Home, Editor, Export, Print, Success, QueueOverview, QueueResult, SocialHome, SocialPlatform, SocialEdit }
+private enum class Screen { Home, Editor, Export, Print, Success, QueueOverview, QueueResult, SocialHome, SocialPlatform, SocialEdit, ShopHome, ShopOther, ShopPlatform, ShopEdit, ShopCollage }
 private enum class Tool(val label: String) { Resize("Resize"), Presets("Presets"), Crop("Crop & Rotate"), Background("Background"), Circle("Circle Cutter"), Format("Format") }
 
 private enum class CropTransform { LEFT, RIGHT, FLIP_H, FLIP_V }
@@ -274,6 +276,24 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
     var socialPanY by remember { mutableStateOf(0f) }
     var socialFill by rememberSaveable { mutableStateOf("Blur") }
     var socialCustomColor by remember { mutableLongStateOf(0xFF42A5F5) }
+    var pendingShopTool by remember { mutableStateOf(false) }
+    var exportReturnToShop by remember { mutableStateOf(false) }
+    var exportReturnToCollage by remember { mutableStateOf(false) }
+    var shopPlatform by rememberSaveable { mutableStateOf("") }
+    var shopFromOther by rememberSaveable { mutableStateOf(false) }
+    var shopTarget by remember { mutableStateOf<SocialSize?>(null) }
+    var shopCustomW by rememberSaveable { mutableStateOf("") }
+    var shopCustomH by rememberSaveable { mutableStateOf("") }
+    var shopMode by rememberSaveable { mutableStateOf("Crop") }
+    var shopRect by remember { mutableStateOf(CropMath.defaultRect()) }
+    var shopZoom by remember { mutableStateOf(1f) }
+    var shopPanX by remember { mutableStateOf(0f) }
+    var shopPanY by remember { mutableStateOf(0f) }
+    var shopFill by rememberSaveable { mutableStateOf("White") }
+    var shopCustomColor by remember { mutableLongStateOf(0xFF42A5F5) }
+    var collageTarget by remember { mutableStateOf<SocialSize?>(null) }
+    var collageLayout by rememberSaveable { mutableStateOf(2) }
+    var collagePhotos = mutableStateListOf<Bitmap>()
     var circleShape by rememberSaveable { mutableStateOf("Circle") }
     var circleRect by remember { mutableStateOf(CropMath.defaultRect()) }
     var circleChoice by remember { mutableStateOf(BgChoice.TRANSPARENT) }
@@ -440,6 +460,11 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                     socialTarget?.let { t -> socialRect = CropMath.maxRectForRatio(t.w.toFloat() / t.h.toFloat(), loaded.width, loaded.height) }
                     screen = if (socialTarget != null) Screen.SocialEdit else Screen.SocialHome
                 }
+                if (pendingShopTool) {
+                    pendingShopTool = false
+                    shopTarget?.let { t -> shopRect = CropMath.maxRectForRatio(t.w.toFloat() / t.h.toFloat(), loaded.width, loaded.height) }
+                    screen = if (shopTarget != null) Screen.ShopEdit else Screen.ShopHome
+                }
                 // Clear busy BEFORE the snackbar: showSnackbar suspends until dismissal,
                 // so gating busy on it left the Process button spinning for ~4s after every load.
                 busy = false
@@ -463,6 +488,7 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
             if (testTool == "crop") pendingCropTool = true
             if (testTool == "circle") pendingCircleTool = true
             if (testTool == "social") pendingSocialTool = true
+            if (testTool == "shop") pendingShopTool = true
             loadPhoto(Uri.fromFile(File(testPath)), isCamera = false)
         }
     }
@@ -524,7 +550,7 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                 exportDpi = dpi.roundToInt()
                 if (bgChoice == BgChoice.TRANSPARENT && outFormat() == ExportFormat.JPEG) chosenFormat = "PNG"
                 estimatedBytes = withContext(Dispatchers.IO) { estimateBytes(out, outFormat(), quality) }
-                exportReturnToSocial = false
+                exportReturnToSocial = false; exportReturnToShop = false; exportReturnToCollage = false
                 screen = Screen.Export
             } finally {
                 busy = false
@@ -569,7 +595,7 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                 // Transparent needs real alpha - JPG has none, so force PNG like the Background tool.
                 if (circleChoice == BgChoice.TRANSPARENT && outFormat() == ExportFormat.JPEG) chosenFormat = "PNG"
                 estimatedBytes = withContext(Dispatchers.IO) { estimateBytes(out, outFormat(), quality) }
-                exportReturnToSocial = false
+                exportReturnToSocial = false; exportReturnToShop = false; exportReturnToCollage = false
                 screen = Screen.Export
                 snackbar.showSnackbar("$circleShape cut: ${out.width} × ${out.height} px.")
             } catch (e: Exception) {
@@ -629,6 +655,145 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
         }
     }
 
+    fun selectShopTarget(t: SocialSize) {
+        shopTarget = t
+        shopMode = "Crop"
+        shopZoom = 1f
+        shopPanX = 0f
+        shopPanY = 0f
+        val src = workingBitmap
+        shopRect = if (src != null) CropMath.maxRectForRatio(t.w.toFloat() / t.h.toFloat(), src.width, src.height) else CropMath.defaultRect()
+        screen = Screen.ShopEdit
+    }
+
+    fun bakeShop(src: Bitmap): Bitmap? {
+        val t = shopTarget ?: return null
+        return when (shopMode) {
+            "Position" -> Transforms.socialPosition(src, t.w, t.h, shopZoom, shopPanX, shopPanY)
+            "Background" -> Transforms.socialFit(src, t.w, t.h, when (shopFill) {
+                "Blur" -> Transforms.SocialFill.BLUR
+                "Custom Color" -> Transforms.SocialFill.CUSTOM
+                "Transparent" -> Transforms.SocialFill.TRANSPARENT
+                else -> Transforms.SocialFill.WHITE
+            }, shopCustomColor.toInt())
+            else -> Transforms.socialCrop(src, CropMath.toPixels(shopRect, src.width, src.height), t.w, t.h)
+        }
+    }
+
+    fun applyShop() {
+        val src = workingBitmap ?: return
+        val t = shopTarget ?: return
+        busy = true
+        busyLabel = "Exporting…"
+        scope.launch {
+            try {
+                val out = withContext(Dispatchers.Default) { bakeShop(src) } ?: return@launch
+                processedBitmap = out
+                exportName = suggestBaseName(t.w, t.h)
+                exportDpi = 0
+                beforeAfter = true
+                if (shopMode == "Background" && shopFill == "Transparent" && outFormat() == ExportFormat.JPEG) chosenFormat = "PNG"
+                estimatedBytes = withContext(Dispatchers.IO) { estimateBytes(out, outFormat(), quality) }
+                exportReturnToShop = true
+                screen = Screen.Export
+                snackbar.showSnackbar("Ready: ${t.w} × ${t.h} px for $shopPlatform.")
+            } catch (e: Exception) {
+                snackbar.showSnackbar("Couldn't export. Try a smaller target size.")
+            } finally {
+                busy = false
+                busyLabel = ""
+            }
+        }
+    }
+
+    fun applyShopBatch(uris: List<Uri>) {
+        val t = shopTarget ?: return
+        busy = true
+        scope.launch {
+            var done = 0
+            var failed = 0
+            try {
+                uris.forEachIndexed { i, uri ->
+                    busyLabel = "Exporting ${i + 1}/${uris.size}…"
+                    try {
+                        val src = withContext(Dispatchers.IO) { decodeOrientedBitmap(context, uri) }
+                        val out = withContext(Dispatchers.Default) {
+                            // Batch crops centered: per-photo frames make no sense across many photos.
+                            if (shopMode == "Crop") {
+                                val rect = CropMath.toPixels(CropMath.maxRectForRatio(t.w.toFloat() / t.h.toFloat(), src.width, src.height), src.width, src.height)
+                                Transforms.socialCrop(src, rect, t.w, t.h)
+                            } else bakeShop(src)
+                        } ?: return@forEachIndexed
+                        val fmt = if (shopMode == "Background" && shopFill == "Transparent") ExportFormat.PNG else outFormat()
+                        val bytes = withContext(Dispatchers.Default) {
+                            val baos = ByteArrayOutputStream()
+                            out.compress(fmt.compressFormat(), if (fmt == ExportFormat.PNG) 100 else quality, baos)
+                            out.recycle()
+                            baos.toByteArray()
+                        }
+                        withContext(Dispatchers.IO) {
+                            saveToGallery(context, "pixelcraft_${t.w}x${t.h}_${i + 1}.${fmt.extension}", fmt.mimeType, bytes)
+                        }
+                        done++
+                    } catch (e: Exception) { failed++ }
+                }
+                snackbar.showSnackbar(if (failed == 0) "Saved $done photos to Pictures/PixelCraft." else "Saved $done photos, $failed failed.")
+            } finally {
+                busy = false
+                busyLabel = ""
+            }
+        }
+    }
+
+    fun loadCollagePhotos(uris: List<Uri>) {
+        busy = true
+        busyLabel = "Loading photos…"
+        scope.launch {
+            try {
+                val loaded = mutableListOf<Bitmap>()
+                uris.take(collageLayout).forEach { uri ->
+                    withContext(Dispatchers.IO) { decodeOrientedBitmap(context, uri) }?.let { loaded.add(it) }
+                }
+                collagePhotos.clear()
+                collagePhotos.addAll(loaded)
+            } finally {
+                busy = false
+                busyLabel = ""
+            }
+        }
+    }
+
+    fun applyShopCollage() {
+        val t = collageTarget ?: return
+        if (collagePhotos.size < 2) {
+            scope.launch { snackbar.showSnackbar("Select at least 2 photos for the collage.") }
+            return
+        }
+        busy = true
+        busyLabel = "Exporting…"
+        scope.launch {
+            try {
+                val photos = collagePhotos.toList()
+                val out = withContext(Dispatchers.Default) {
+                    Transforms.collage(photos, t.w, t.h, maxOf(4, t.w / 200), android.graphics.Color.WHITE)
+                }
+                processedBitmap = out
+                exportName = suggestBaseName(t.w, t.h)
+                exportDpi = 0
+                beforeAfter = false
+                estimatedBytes = withContext(Dispatchers.IO) { estimateBytes(out, outFormat(), quality) }
+                exportReturnToCollage = true
+                screen = Screen.Export
+                snackbar.showSnackbar("Collage ready: ${t.w} × ${t.h} px.")
+            } catch (e: Exception) {
+                snackbar.showSnackbar("Couldn't build the collage. Try a smaller target size.")
+            } finally {
+                busy = false
+                busyLabel = ""
+            }
+        }
+    }
+
     fun encodeProcessed(format: ExportFormat = outFormat()): ByteArray {
         val processed = processedBitmap ?: throw IllegalStateException("Nothing processed yet")
         return encodeImage(context, sourceUri, processed, format, quality, exportDpi)
@@ -660,7 +825,7 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                 estimatedBytes = withContext(Dispatchers.IO) { estimateBytes(result, outFormat(), quality) }
                 // Straight to the result page (preview, before/after sizes, export options) -
                 // closing the size sheet must not drop the user back on the editor.
-                exportReturnToSocial = false
+                exportReturnToSocial = false; exportReturnToShop = false; exportReturnToCollage = false
                 screen = Screen.Export
                 snackbar.showSnackbar("Processed: $targetW × $targetH px.")
             } catch (e: Exception) {
@@ -692,7 +857,7 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                 beforeAfter = true
                 lastUsedTarget = fit.first.width to fit.first.height
                 saveLastUsedTarget(context, fit.first.width, fit.first.height)
-                exportReturnToSocial = false
+                exportReturnToSocial = false; exportReturnToShop = false; exportReturnToCollage = false
                 screen = Screen.Export
                 snackbar.showSnackbar("Processed: ${fit.first.width} × ${fit.first.height} px · ${formatBytes(fit.second)}.")
             } catch (e: Exception) {
@@ -1178,6 +1343,12 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
     val photoPicker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
         if (uri != null) loadPhoto(uri, isCamera = false)
     }
+    val shopBatchPicker = rememberLauncherForActivityResult(ActivityResultContracts.PickMultipleVisualMedia(20)) { uris ->
+        if (uris.isNotEmpty()) applyShopBatch(uris)
+    }
+    val collagePicker = rememberLauncherForActivityResult(ActivityResultContracts.PickMultipleVisualMedia(4)) { uris ->
+        if (uris.isNotEmpty()) loadCollagePhotos(uris)
+    }
     val multiPicker = rememberLauncherForActivityResult(ActivityResultContracts.PickMultipleVisualMedia(50)) { uris ->
         if (uris.size == 1) {
             loadPhoto(uris[0], isCamera = false)
@@ -1338,11 +1509,22 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
 
     BackHandler(enabled = screen != Screen.Home) {
         when (screen) {
-            Screen.Export -> screen = if (exportReturnToSocial) Screen.SocialEdit else Screen.Editor
+            Screen.Export -> {
+                screen = when {
+                    exportReturnToSocial -> { exportReturnToSocial = false; Screen.SocialEdit }
+                    exportReturnToShop -> { exportReturnToShop = false; Screen.ShopEdit }
+                    exportReturnToCollage -> { exportReturnToCollage = false; Screen.ShopCollage }
+                    else -> Screen.Editor
+                }
+            }
             Screen.QueueResult -> { screen = Screen.Home; tab = MainTab.Home }
             Screen.Editor -> leaveEditorToHome()
             Screen.SocialEdit -> screen = Screen.SocialPlatform
             Screen.SocialPlatform -> screen = Screen.SocialHome
+            Screen.ShopEdit -> screen = Screen.ShopPlatform
+            Screen.ShopCollage -> screen = Screen.ShopPlatform
+            Screen.ShopPlatform -> screen = if (shopFromOther) Screen.ShopOther else Screen.ShopHome
+            Screen.ShopOther -> screen = Screen.ShopHome
             else -> screen = Screen.Home
         }
     }
@@ -1398,7 +1580,7 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
         containerColor = MaterialTheme.colorScheme.background,
         snackbarHost = { SnackbarHost(snackbar) },
         topBar = {
-            if (screen == Screen.Editor || screen == Screen.Export || screen == Screen.Print || screen == Screen.QueueOverview || screen == Screen.QueueResult || screen == Screen.Success || screen == Screen.SocialHome || screen == Screen.SocialPlatform || screen == Screen.SocialEdit) {
+            if (screen == Screen.Editor || screen == Screen.Export || screen == Screen.Print || screen == Screen.QueueOverview || screen == Screen.QueueResult || screen == Screen.Success || screen == Screen.SocialHome || screen == Screen.SocialPlatform || screen == Screen.SocialEdit || screen == Screen.ShopHome || screen == Screen.ShopOther || screen == Screen.ShopPlatform || screen == Screen.ShopEdit || screen == Screen.ShopCollage) {
                 TopAppBar(
                     title = {
                         Text(
@@ -1411,6 +1593,11 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                                 Screen.SocialHome -> "Social Media Sizes"
                                 Screen.SocialPlatform -> socialPlatform
                                 Screen.SocialEdit -> "$socialPlatform · ${socialTarget?.label ?: "Custom"}"
+                                Screen.ShopHome -> "Online Shop Sizes"
+                                Screen.ShopOther -> "Other Shop"
+                                Screen.ShopPlatform -> shopPlatform
+                                Screen.ShopEdit -> "$shopPlatform · ${shopTarget?.label ?: "Custom"}"
+                                Screen.ShopCollage -> "$shopPlatform · Collage"
                                 else -> "Print Size & DPI"
                             },
                             fontWeight = FontWeight.SemiBold
@@ -1419,11 +1606,20 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                     navigationIcon = {
                         IconButton(onClick = {
                             when (screen) {
-                                Screen.Export -> screen = if (exportReturnToSocial) Screen.SocialEdit else Screen.Editor
+                                Screen.Export -> screen = when {
+                                    exportReturnToSocial -> { exportReturnToSocial = false; Screen.SocialEdit }
+                                    exportReturnToShop -> { exportReturnToShop = false; Screen.ShopEdit }
+                                    exportReturnToCollage -> { exportReturnToCollage = false; Screen.ShopCollage }
+                                    else -> Screen.Editor
+                                }
                                 Screen.QueueResult -> { screen = Screen.Home; tab = MainTab.Home }
                                 Screen.Editor -> leaveEditorToHome()
                                 Screen.SocialEdit -> screen = Screen.SocialPlatform
                                 Screen.SocialPlatform -> screen = Screen.SocialHome
+                                Screen.ShopEdit -> screen = Screen.ShopPlatform
+                                Screen.ShopCollage -> screen = Screen.ShopPlatform
+                                Screen.ShopPlatform -> screen = if (shopFromOther) Screen.ShopOther else Screen.ShopHome
+                                Screen.ShopOther -> screen = Screen.ShopHome
                                 else -> screen = Screen.Home
                             }
                         }) {
@@ -1445,6 +1641,22 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                                 "Reset",
                                 modifier = Modifier
                                     .clickable { resetEditor(); pendingSocialTool = true; screen = Screen.SocialEdit }
+                                    .padding(horizontal = 14.dp),
+                                color = DeepNavy
+                            )
+                        } else if (screen == Screen.ShopEdit) {
+                            Text(
+                                "Reset",
+                                modifier = Modifier
+                                    .clickable { resetEditor(); pendingShopTool = true; screen = Screen.ShopEdit }
+                                    .padding(horizontal = 14.dp),
+                                color = DeepNavy
+                            )
+                        } else if (screen == Screen.ShopCollage) {
+                            Text(
+                                "Reset",
+                                modifier = Modifier
+                                    .clickable { collagePhotos.clear() }
                                     .padding(horizontal = 14.dp),
                                 color = DeepNavy
                             )
@@ -1487,6 +1699,7 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                             "Resize" -> pickPhotos()
                             "Print Size & DPI" -> screen = Screen.Print
                             "Social Media Sizes" -> screen = Screen.SocialHome
+                            "Online Shop Sizes" -> screen = Screen.ShopHome
                             "Remove Background" -> {
                                 if (workingBitmap != null) { screen = Screen.Editor; tool = Tool.Background }
                                 else { pendingBgTool = true; pickPhotos() }
@@ -1677,7 +1890,7 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                                 straightenAngle = 0f
                                 tiltHAngle = 0f
                                 tiltVAngle = 0f
-                                exportReturnToSocial = false
+                                exportReturnToSocial = false; exportReturnToShop = false; exportReturnToCollage = false
                                 screen = Screen.Export
                                 snackbar.showSnackbar("Cropped: ${result.width} × ${result.height} px.")
                             } catch (e: Exception) {
@@ -1812,6 +2025,81 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                 onSelectImage = { pendingSocialTool = true; pickPhotos() },
                 onExport = { applySocial() }
             )
+            Screen.ShopHome -> ShopHomeScreen(
+                modifier = Modifier.padding(padding),
+                photo = workingBitmap,
+                photoLabel = workingBitmap?.let { "${it.width} × ${it.height} px" },
+                onSelectImage = { pendingShopTool = true; pickPhotos() },
+                onShop = { name ->
+                    if (name == "Other Shop") { screen = Screen.ShopOther }
+                    else { shopPlatform = name; shopFromOther = false; screen = Screen.ShopPlatform }
+                }
+            )
+            Screen.ShopOther -> ShopOtherScreen(
+                modifier = Modifier.padding(padding),
+                onShop = { name -> shopPlatform = name; shopFromOther = true; screen = Screen.ShopPlatform }
+            )
+            Screen.ShopPlatform -> ShopPlatformScreen(
+                modifier = Modifier.padding(padding),
+                platform = ShopSizes.platforms.firstOrNull { it.name == shopPlatform },
+                customW = shopCustomW,
+                customH = shopCustomH,
+                onCustomW = { shopCustomW = it.filter { c -> c.isDigit() } },
+                onCustomH = { shopCustomH = it.filter { c -> c.isDigit() } },
+                onTarget = { selectShopTarget(it) },
+                onCollage = { size ->
+                    collageTarget = size
+                    collagePhotos.clear()
+                    screen = Screen.ShopCollage
+                },
+                onCustom = {
+                    val w = shopCustomW.toIntOrNull()
+                    val h = shopCustomH.toIntOrNull()
+                    if (w == null || h == null || w < 16 || h < 16 || w > 12000 || h > 12000) {
+                        scope.launch { snackbar.showSnackbar("Enter width and height between 16 and 12000 px.") }
+                    } else {
+                        selectShopTarget(SocialSize("Custom", "$w x $h px", w, h))
+                    }
+                }
+            )
+            Screen.ShopEdit -> ShopEditScreen(
+                modifier = Modifier.padding(padding),
+                working = workingBitmap,
+                target = shopTarget,
+                mode = shopMode,
+                rect = shopRect,
+                zoom = shopZoom,
+                panX = shopPanX,
+                panY = shopPanY,
+                fill = shopFill,
+                customColor = shopCustomColor,
+                busy = busy,
+                onMode = { shopMode = it },
+                onRect = { shopRect = it },
+                onZoom = { shopZoom = it },
+                onPanDelta = { dx, dy ->
+                    shopPanX = (shopPanX + dx).coerceIn(-1f, 1f)
+                    shopPanY = (shopPanY + dy).coerceIn(-1f, 1f)
+                },
+                onFill = { shopFill = it },
+                onCustomColor = { shopCustomColor = it },
+                onSelectImage = { pendingShopTool = true; pickPhotos() },
+                onExport = { applyShop() },
+                onBatch = { shopBatchPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) }
+            )
+            Screen.ShopCollage -> ShopCollageScreen(
+                modifier = Modifier.padding(padding),
+                target = collageTarget,
+                layout = collageLayout,
+                photos = collagePhotos,
+                busy = busy,
+                onLayout = { n ->
+                    collageLayout = n
+                    while (collagePhotos.size > n) collagePhotos.removeAt(collagePhotos.size - 1)
+                },
+                onSelectPhotos = { collagePicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
+                onExport = { applyShopCollage() }
+            )
             Screen.Print -> PrintCalculator(
                 modifier = Modifier.padding(padding),
                 hasPhoto = workingBitmap != null,
@@ -1890,6 +2178,7 @@ private fun HomeScreen(
         Feature("Crop & Rotate", "Adjust framing and angle", "⌗"),
         Feature("Circle Cutter", "Cut photos into shapes", "◯"),
         Feature("Social Media Sizes", "Creator-ready dimensions", "▦"),
+        Feature("Online Shop Sizes", "Marketplace-ready images", "▣"),
         Feature("Convert Format", "JPEG, PNG and WebP", "⇄"),
         Feature("Compress", "Reduce file size", "↓"),
         Feature("Batch Resize", "Process many photos", "▤"),
@@ -4677,6 +4966,409 @@ private fun SocialEditScreen(
         }
         Spacer(Modifier.height(14.dp))
         Button(onClick = onExport, enabled = !busy, modifier = Modifier.fillMaxWidth().height(52.dp), colors = ButtonDefaults.buttonColors(containerColor = Orange, contentColor = Color.White), shape = RoundedCornerShape(14.dp)) {
+            Text("Export Image", fontWeight = FontWeight.SemiBold)
+        }
+        Spacer(Modifier.height(24.dp))
+    }
+}
+
+
+@Composable
+private fun ShopHomeScreen(
+    modifier: Modifier = Modifier,
+    photo: Bitmap?,
+    photoLabel: String?,
+    onSelectImage: () -> Unit,
+    onShop: (String) -> Unit
+) {
+    Column(modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).padding(horizontal = 16.dp).verticalScroll(rememberScrollState())) {
+        Spacer(Modifier.height(10.dp))
+        Text("Every shop. Every product image.", fontSize = 22.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onBackground)
+        Spacer(Modifier.height(4.dp))
+        Text("Pick your shop, choose the official size, and export your product photo ready to upload.", fontSize = 14.sp, color = Slate)
+        Spacer(Modifier.height(14.dp))
+        Card(colors = CardDefaults.cardColors(containerColor = PaleBlue), shape = RoundedCornerShape(16.dp)) {
+            Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                if (photo != null) {
+                    Image(
+                        bitmap = photo.asImageBitmap(),
+                        contentDescription = "Selected photo",
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.size(64.dp)
+                    )
+                    Spacer(Modifier.width(12.dp))
+                }
+                Column(Modifier.weight(1f)) {
+                    Text("Select Your Image", fontWeight = FontWeight.SemiBold, color = DeepNavy)
+                    Spacer(Modifier.height(2.dp))
+                    Text(if (photo != null) "Current photo: ${photoLabel ?: ""}" else "Choose a product photo from your gallery", fontSize = 13.sp, color = Slate)
+                }
+                Button(onClick = onSelectImage, colors = ButtonDefaults.buttonColors(containerColor = Orange, contentColor = Color.White), shape = RoundedCornerShape(12.dp)) {
+                    Text(if (photo != null) "Change" else "Select Image")
+                }
+            }
+        }
+        Spacer(Modifier.height(16.dp))
+        val names = ShopSizes.mainShops + "Other Shop"
+        names.chunked(2).forEach { rowNames ->
+            Row(Modifier.fillMaxWidth()) {
+                rowNames.forEach { name ->
+                    Card(
+                        modifier = Modifier.weight(1f).padding(4.dp).clickable { onShop(name) },
+                        colors = CardDefaults.cardColors(containerColor = SoftGrey),
+                        shape = RoundedCornerShape(14.dp)
+                    ) {
+                        Row(Modifier.fillMaxWidth().padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Box(Modifier.size(40.dp).background(SkyBlue, CircleShape), contentAlignment = Alignment.Center) {
+                                Text(name.take(1), fontWeight = FontWeight.Bold, color = Color.White, fontSize = 18.sp)
+                            }
+                            Spacer(Modifier.width(12.dp))
+                            Text(name, fontWeight = FontWeight.SemiBold, color = DeepNavy, fontSize = 15.sp)
+                        }
+                    }
+                }
+                if (rowNames.size == 1) Spacer(Modifier.weight(1f))
+            }
+        }
+        Spacer(Modifier.height(16.dp))
+        Card(colors = CardDefaults.cardColors(containerColor = SoftGrey), shape = RoundedCornerShape(14.dp)) {
+            Text(
+                "All sizes follow the official requirements from each marketplace. The full sourced table is in the app documentation.",
+                modifier = Modifier.padding(14.dp), fontSize = 13.sp, color = Slate
+            )
+        }
+        Spacer(Modifier.height(24.dp))
+    }
+}
+
+@Composable
+private fun ShopOtherScreen(
+    modifier: Modifier = Modifier,
+    onShop: (String) -> Unit
+) {
+    Column(modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).padding(horizontal = 16.dp).verticalScroll(rememberScrollState())) {
+        Spacer(Modifier.height(10.dp))
+        Text("More marketplaces", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onBackground)
+        Spacer(Modifier.height(4.dp))
+        Text("Official sizes for these shops too.", fontSize = 14.sp, color = Slate)
+        Spacer(Modifier.height(14.dp))
+        ShopSizes.platforms.map { it.name }.filter { it !in ShopSizes.mainShops }.forEach { name ->
+            Card(
+                modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp).clickable { onShop(name) },
+                colors = CardDefaults.cardColors(containerColor = SoftGrey),
+                shape = RoundedCornerShape(14.dp)
+            ) {
+                Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Box(Modifier.size(40.dp).background(SkyBlue, CircleShape), contentAlignment = Alignment.Center) {
+                        Text(name.take(1), fontWeight = FontWeight.Bold, color = Color.White, fontSize = 18.sp)
+                    }
+                    Spacer(Modifier.width(12.dp))
+                    Text(name, fontWeight = FontWeight.SemiBold, color = DeepNavy, fontSize = 16.sp)
+                }
+            }
+        }
+        Spacer(Modifier.height(24.dp))
+    }
+}
+
+@Composable
+private fun ShopPlatformScreen(
+    modifier: Modifier = Modifier,
+    platform: SocialPlatform?,
+    customW: String,
+    customH: String,
+    onCustomW: (String) -> Unit,
+    onCustomH: (String) -> Unit,
+    onTarget: (SocialSize) -> Unit,
+    onCollage: (SocialSize) -> Unit,
+    onCustom: () -> Unit
+) {
+    Column(modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).padding(horizontal = 16.dp).verticalScroll(rememberScrollState())) {
+        Spacer(Modifier.height(10.dp))
+        if (platform == null) {
+            Text("Shop not found.", color = Slate)
+        } else {
+            platform.categories.forEach { cat ->
+                Text(cat.label, fontSize = 17.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onBackground)
+                Text(cat.sub, fontSize = 13.sp, color = Slate)
+                Spacer(Modifier.height(6.dp))
+                cat.sizes.forEach { size ->
+                    Card(
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp).clickable {
+                            if (cat.label == "Product Collage") onCollage(size) else onTarget(size)
+                        },
+                        colors = CardDefaults.cardColors(containerColor = SoftGrey),
+                        shape = RoundedCornerShape(14.dp)
+                    ) {
+                        Column(Modifier.fillMaxWidth().padding(14.dp)) {
+                            Text(size.label, fontWeight = FontWeight.SemiBold, color = DeepNavy, fontSize = 15.sp)
+                            Text(size.sub, fontSize = 13.sp, color = Slate)
+                            if (size.note.isNotEmpty()) Text(size.note, fontSize = 12.sp, color = Slate)
+                        }
+                    }
+                }
+                Spacer(Modifier.height(12.dp))
+            }
+        }
+        Text("Custom Size", fontSize = 17.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onBackground)
+        Text("Any width and height, from 16 to 12000 px", fontSize = 13.sp, color = Slate)
+        Spacer(Modifier.height(6.dp))
+        Card(colors = CardDefaults.cardColors(containerColor = SoftGrey), shape = RoundedCornerShape(14.dp)) {
+            Column(Modifier.fillMaxWidth().padding(14.dp)) {
+                Row(Modifier.fillMaxWidth()) {
+                    OutlinedTextField(value = customW, onValueChange = onCustomW, label = { Text("Width (px)") }, singleLine = true, modifier = Modifier.weight(1f))
+                    Spacer(Modifier.width(10.dp))
+                    OutlinedTextField(value = customH, onValueChange = onCustomH, label = { Text("Height (px)") }, singleLine = true, modifier = Modifier.weight(1f))
+                }
+                Spacer(Modifier.height(10.dp))
+                Button(onClick = onCustom, modifier = Modifier.fillMaxWidth().height(48.dp), colors = ButtonDefaults.buttonColors(containerColor = SkyBlue, contentColor = DeepNavy), shape = RoundedCornerShape(12.dp)) {
+                    Text("Use Custom Size", fontWeight = FontWeight.SemiBold)
+                }
+            }
+        }
+        Spacer(Modifier.height(24.dp))
+    }
+}
+
+@Composable
+private fun ShopEditScreen(
+    modifier: Modifier = Modifier,
+    working: Bitmap?,
+    target: SocialSize?,
+    mode: String,
+    rect: FloatArray,
+    zoom: Float,
+    panX: Float,
+    panY: Float,
+    fill: String,
+    customColor: Long,
+    busy: Boolean,
+    onMode: (String) -> Unit,
+    onRect: (FloatArray) -> Unit,
+    onZoom: (Float) -> Unit,
+    onPanDelta: (Float, Float) -> Unit,
+    onFill: (String) -> Unit,
+    onCustomColor: (Long) -> Unit,
+    onSelectImage: () -> Unit,
+    onExport: () -> Unit,
+    onBatch: () -> Unit
+) {
+    var dragging by remember { mutableStateOf(false) }
+    Column(modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).padding(horizontal = 16.dp).verticalScroll(rememberScrollState(), enabled = !dragging)) {
+        Spacer(Modifier.height(10.dp))
+        if (working == null || target == null) {
+            Card(colors = CardDefaults.cardColors(containerColor = PaleBlue), shape = RoundedCornerShape(16.dp)) {
+                Column(Modifier.fillMaxWidth().padding(18.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text("Select Image", fontWeight = FontWeight.Bold, fontSize = 17.sp, color = DeepNavy)
+                    Spacer(Modifier.height(4.dp))
+                    Text("Choose a product photo from your gallery to start.", fontSize = 13.sp, color = Slate)
+                    Spacer(Modifier.height(12.dp))
+                    Button(onClick = onSelectImage, modifier = Modifier.fillMaxWidth().height(52.dp), colors = ButtonDefaults.buttonColors(containerColor = Orange, contentColor = Color.White), shape = RoundedCornerShape(14.dp)) {
+                        Text("Select Image")
+                    }
+                }
+            }
+            Spacer(Modifier.height(24.dp))
+            return@Column
+        }
+        val tw = target.w
+        val th = target.h
+        Card(colors = CardDefaults.cardColors(containerColor = SoftGrey), shape = RoundedCornerShape(16.dp)) {
+            BoxWithConstraints(Modifier.fillMaxWidth().height(320.dp).padding(8.dp), contentAlignment = Alignment.Center) {
+                when (mode) {
+                    "Position" -> {
+                        val pScale = 420f / maxOf(tw, th)
+                        val pw = (tw * pScale).toInt().coerceAtLeast(1)
+                        val ph = (th * pScale).toInt().coerceAtLeast(1)
+                        val preview = remember(working, tw, th, zoom, panX, panY) {
+                            Transforms.socialPosition(working, pw, ph, zoom, panX, panY)
+                        }
+                        val dispScale = minOf(constraints.maxWidth.toFloat() / tw, constraints.maxHeight.toFloat() / th)
+                        val density = LocalDensity.current
+                        val frameW = with(density) { (tw * dispScale).toDp() }
+                        val frameH = with(density) { (th * dispScale).toDp() }
+                        val base = maxOf(tw.toFloat() / working.width, th.toFloat() / working.height) * zoom
+                        val maxOffX = (working.width * base - tw) / 2f
+                        val maxOffY = (working.height * base - th) / 2f
+                        Image(
+                            bitmap = preview.asImageBitmap(),
+                            contentDescription = null,
+                            modifier = Modifier.size(frameW, frameH).pointerInput(working, tw, th, zoom) {
+                                detectDragGestures(
+                                    onDragStart = { dragging = true },
+                                    onDragEnd = { dragging = false },
+                                    onDragCancel = { dragging = false }
+                                ) { change, dragAmount ->
+                                    change.consume()
+                                    val dx = if (maxOffX > 0.5f) -dragAmount.x / (maxOffX * dispScale) else 0f
+                                    val dy = if (maxOffY > 0.5f) -dragAmount.y / (maxOffY * dispScale) else 0f
+                                    onPanDelta(dx, dy)
+                                }
+                            }
+                        )
+                    }
+                    "Background" -> {
+                        val pScale = 420f / maxOf(tw, th)
+                        val pw = (tw * pScale).toInt().coerceAtLeast(1)
+                        val ph = (th * pScale).toInt().coerceAtLeast(1)
+                        val preview = remember(working, tw, th, fill, customColor) {
+                            Transforms.socialFit(working, pw, ph, when (fill) {
+                                "Blur" -> Transforms.SocialFill.BLUR
+                                "Custom Color" -> Transforms.SocialFill.CUSTOM
+                                "Transparent" -> Transforms.SocialFill.TRANSPARENT
+                                else -> Transforms.SocialFill.WHITE
+                            }, customColor.toInt())
+                        }
+                        Image(bitmap = preview.asImageBitmap(), contentDescription = null, contentScale = ContentScale.Fit, modifier = Modifier.fillMaxSize())
+                    }
+                    else -> CropPreview(
+                        bitmap = working,
+                        rect = rect,
+                        aspect = tw.toFloat() / th.toFloat(),
+                        straighten = 0f,
+                        tiltH = 0f,
+                        tiltV = 0f,
+                        onRect = onRect,
+                        onDraggingChange = { dragging = it },
+                        modifier = Modifier.fillMaxSize()
+                    )
+                }
+            }
+        }
+        Spacer(Modifier.height(8.dp))
+        Text("$tw × $th px · ${target.label}", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = DeepNavy)
+        Spacer(Modifier.height(10.dp))
+        Row(Modifier.fillMaxWidth()) {
+            listOf("Crop", "Position", "Background").forEach { m ->
+                val selected = mode == m
+                OutlinedButton(
+                    onClick = { onMode(m) },
+                    modifier = Modifier.weight(1f).padding(horizontal = 3.dp),
+                    shape = RoundedCornerShape(12.dp),
+                    contentPadding = PaddingValues(horizontal = 4.dp),
+                    colors = ButtonDefaults.outlinedButtonColors(containerColor = if (selected) SkyBlue else Color.Transparent, contentColor = if (selected) DeepNavy else Slate)
+                ) { Text(m, fontSize = 12.sp, maxLines = 1, softWrap = false) }
+            }
+        }
+        if (mode == "Position") {
+            Spacer(Modifier.height(8.dp))
+            Text("Zoom", fontSize = 13.sp, color = Slate)
+            Slider(value = zoom, onValueChange = onZoom, valueRange = 1f..5f)
+        }
+        if (mode == "Background") {
+            Spacer(Modifier.height(8.dp))
+            Row(Modifier.fillMaxWidth()) {
+                listOf("Blur", "White", "Custom Color", "Transparent").forEach { f ->
+                    val selected = fill == f
+                    OutlinedButton(
+                        onClick = { onFill(f) },
+                        modifier = Modifier.weight(1f).padding(horizontal = 2.dp),
+                        shape = RoundedCornerShape(12.dp),
+                        contentPadding = PaddingValues(horizontal = 2.dp),
+                        colors = ButtonDefaults.outlinedButtonColors(containerColor = if (selected) SkyBlue else Color.Transparent, contentColor = if (selected) DeepNavy else Slate)
+                    ) { Text(f, fontSize = 11.sp, maxLines = 1, softWrap = false) }
+                }
+            }
+            if (fill == "Custom Color") {
+                Spacer(Modifier.height(8.dp))
+                Row {
+                    listOf(0xFF42A5F5, 0xFF172B4D, 0xFFE91E63, 0xFF1E9E50, 0xFFFFC107, 0xFF9C27B0).forEach { c ->
+                        Box(
+                            Modifier.padding(end = 10.dp).size(34.dp).background(Color(c), CircleShape).clickable { onCustomColor(c) },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            if (customColor == c) Text("✓", color = Color.White, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                }
+            }
+        }
+        Spacer(Modifier.height(10.dp))
+        Card(colors = CardDefaults.cardColors(containerColor = PaleBlue), shape = RoundedCornerShape(14.dp)) {
+            Text(
+                when (mode) {
+                    "Position" -> "Drag your photo to position it. Use the slider to zoom in or out."
+                    "Background" -> "Your whole photo fits inside the frame, with the space around it filled."
+                    else -> "Drag the frame to choose the part of your photo to keep."
+                },
+                modifier = Modifier.padding(14.dp), fontSize = 13.sp, color = Slate
+            )
+        }
+        Spacer(Modifier.height(14.dp))
+        Button(onClick = onExport, enabled = !busy, modifier = Modifier.fillMaxWidth().height(52.dp), colors = ButtonDefaults.buttonColors(containerColor = Orange, contentColor = Color.White), shape = RoundedCornerShape(14.dp)) {
+            Text("Export Image", fontWeight = FontWeight.SemiBold)
+        }
+        Spacer(Modifier.height(8.dp))
+        OutlinedButton(onClick = onBatch, enabled = !busy, modifier = Modifier.fillMaxWidth().height(52.dp), shape = RoundedCornerShape(14.dp)) {
+            Text("Batch export more photos at this size", fontSize = 14.sp, maxLines = 1, softWrap = false)
+        }
+        Spacer(Modifier.height(24.dp))
+    }
+}
+
+@Composable
+private fun ShopCollageScreen(
+    modifier: Modifier = Modifier,
+    target: SocialSize?,
+    layout: Int,
+    photos: List<Bitmap>,
+    busy: Boolean,
+    onLayout: (Int) -> Unit,
+    onSelectPhotos: () -> Unit,
+    onExport: () -> Unit
+) {
+    Column(modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).padding(horizontal = 16.dp).verticalScroll(rememberScrollState())) {
+        Spacer(Modifier.height(10.dp))
+        if (target == null) {
+            Text("No collage size selected.", color = Slate)
+            Spacer(Modifier.height(24.dp))
+            return@Column
+        }
+        val tw = target.w
+        val th = target.h
+        Text("$tw × $th px · Product Collage", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = DeepNavy)
+        Spacer(Modifier.height(10.dp))
+        Row(Modifier.fillMaxWidth()) {
+            listOf(2, 3, 4).forEach { n ->
+                val selected = layout == n
+                OutlinedButton(
+                    onClick = { onLayout(n) },
+                    modifier = Modifier.weight(1f).padding(horizontal = 3.dp),
+                    shape = RoundedCornerShape(12.dp),
+                    contentPadding = PaddingValues(horizontal = 4.dp),
+                    colors = ButtonDefaults.outlinedButtonColors(containerColor = if (selected) SkyBlue else Color.Transparent, contentColor = if (selected) DeepNavy else Slate)
+                ) { Text("$n photos", fontSize = 13.sp, maxLines = 1, softWrap = false) }
+            }
+        }
+        Spacer(Modifier.height(10.dp))
+        Card(colors = CardDefaults.cardColors(containerColor = SoftGrey), shape = RoundedCornerShape(16.dp)) {
+            Box(Modifier.fillMaxWidth().height(320.dp).padding(8.dp), contentAlignment = Alignment.Center) {
+                if (photos.size >= 2) {
+                    val preview = remember(photos.toList(), layout, tw, th) {
+                        val pScale = 480f / maxOf(tw, th)
+                        val pw = (tw * pScale).toInt().coerceAtLeast(1)
+                        val ph = (th * pScale).toInt().coerceAtLeast(1)
+                        Transforms.collage(photos, pw, ph, maxOf(2, pw / 200), android.graphics.Color.WHITE)
+                    }
+                    Image(bitmap = preview.asImageBitmap(), contentDescription = null, contentScale = ContentScale.Fit, modifier = Modifier.fillMaxSize())
+                } else {
+                    Text("Your collage preview shows here", color = Slate, fontSize = 14.sp)
+                }
+            }
+        }
+        Spacer(Modifier.height(10.dp))
+        Card(colors = CardDefaults.cardColors(containerColor = PaleBlue), shape = RoundedCornerShape(14.dp)) {
+            Text(
+                "Pick $layout photos. Each one fills its own part of the layout - the grid arranges itself.",
+                modifier = Modifier.padding(14.dp), fontSize = 13.sp, color = Slate
+            )
+        }
+        Spacer(Modifier.height(14.dp))
+        Button(onClick = onSelectPhotos, enabled = !busy, modifier = Modifier.fillMaxWidth().height(52.dp), colors = ButtonDefaults.buttonColors(containerColor = SkyBlue, contentColor = DeepNavy), shape = RoundedCornerShape(14.dp)) {
+            Text(if (photos.isEmpty()) "Select Photos" else "Change Photos (${photos.size}/$layout)", fontWeight = FontWeight.SemiBold)
+        }
+        Spacer(Modifier.height(8.dp))
+        Button(onClick = onExport, enabled = !busy && photos.size >= 2, modifier = Modifier.fillMaxWidth().height(52.dp), colors = ButtonDefaults.buttonColors(containerColor = Orange, contentColor = Color.White), shape = RoundedCornerShape(14.dp)) {
             Text("Export Image", fontWeight = FontWeight.SemiBold)
         }
         Spacer(Modifier.height(24.dp))

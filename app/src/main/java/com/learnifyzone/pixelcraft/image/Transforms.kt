@@ -178,6 +178,52 @@ object Transforms {
         return out
     }
 
+    /** Product collage: 2-4 photos cover-filled into a grid on one canvas.
+     *  Layout adapts to the canvas shape: wide canvas splits left/right,
+     *  tall canvas splits top/bottom. */
+    fun collage(photos: List<Bitmap>, tw: Int, th: Int, gapPx: Int, bgColor: Int): Bitmap {
+        val out = Bitmap.createBitmap(tw, th, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(out)
+        canvas.drawColor(bgColor)
+        val n = photos.size.coerceIn(2, 4)
+        val g = gapPx.toFloat()
+        val cells = when {
+            n == 2 && tw >= th -> listOf(
+                RectF(0f, 0f, (tw - g) / 2f, th.toFloat()),
+                RectF((tw + g) / 2f, 0f, tw.toFloat(), th.toFloat()))
+            n == 2 -> listOf(
+                RectF(0f, 0f, tw.toFloat(), (th - g) / 2f),
+                RectF(0f, (th + g) / 2f, tw.toFloat(), th.toFloat()))
+            n == 3 && tw >= th -> listOf(
+                RectF(0f, 0f, (2 * tw - g) / 3f, th.toFloat()),
+                RectF((2 * tw + 2 * g) / 3f, 0f, tw.toFloat(), (th - g) / 2f),
+                RectF((2 * tw + 2 * g) / 3f, (th + g) / 2f, tw.toFloat(), th.toFloat()))
+            n == 3 -> listOf(
+                RectF(0f, 0f, tw.toFloat(), (2 * th - g) / 3f),
+                RectF(0f, (2 * th + 2 * g) / 3f, (tw - g) / 2f, th.toFloat()),
+                RectF((tw + g) / 2f, (2 * th + 2 * g) / 3f, tw.toFloat(), th.toFloat()))
+            else -> listOf(
+                RectF(0f, 0f, (tw - g) / 2f, (th - g) / 2f),
+                RectF((tw + g) / 2f, 0f, tw.toFloat(), (th - g) / 2f),
+                RectF(0f, (th + g) / 2f, (tw - g) / 2f, th.toFloat()),
+                RectF((tw + g) / 2f, (th + g) / 2f, tw.toFloat(), th.toFloat()))
+        }
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
+        photos.take(n).forEachIndexed { i, photo ->
+            val cell = cells[i]
+            val base = max(cell.width() / photo.width, cell.height() / photo.height)
+            val dw = photo.width * base
+            val dh = photo.height * base
+            val left = cell.left + (cell.width() - dw) / 2f
+            val top = cell.top + (cell.height() - dh) / 2f
+            canvas.save()
+            canvas.clipRect(cell)
+            canvas.drawBitmap(photo, null, RectF(left, top, left + dw, top + dh), paint)
+            canvas.restore()
+        }
+        return out
+    }
+
     fun cropRegion(src: Bitmap, rectPx: IntArray): Bitmap =
         Bitmap.createBitmap(src, rectPx[0], rectPx[1], rectPx[2] - rectPx[0], rectPx[3] - rectPx[1])
 
