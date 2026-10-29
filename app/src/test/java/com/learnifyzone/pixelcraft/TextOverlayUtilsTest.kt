@@ -5,6 +5,7 @@ import android.graphics.Canvas
 import android.graphics.Color
 import com.learnifyzone.pixelcraft.image.TextOverlayUtils
 import com.learnifyzone.pixelcraft.image.TextOverlayUtils.TextLayer
+import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
@@ -228,6 +229,159 @@ class TextOverlayUtilsTest {
             if (out.getPixel(x, y) != Color.WHITE) ink++
         }
         assertTrue("export must draw the text block where measure() placed it (centre px $centerInk)", ink > 20)
+    }
+
+    @Test
+    fun cropMathCoversHisSpec() {
+        // 1:1 on a 4000x3000 photo: 3000x3000 centred.
+        val sq = TextOverlayUtils.maxCropForRatio(4000, 3000, 1, 1)
+        assertEquals(0.125f, sq[0], 0.001f)
+        assertEquals(0f, sq[1], 0.001f)
+        assertEquals(0.875f, sq[2], 0.001f)
+        assertEquals(1f, sq[3], 0.001f)
+        // 16:9 on a square photo: full width, letterboxed.
+        val wide = TextOverlayUtils.maxCropForRatio(3000, 3000, 16, 9)
+        assertEquals(0f, wide[0], 0.001f)
+        assertEquals((1f - 9f / 16f) / 2f, wide[1], 0.001f)
+        // Ratio equal to the photo's own aspect covers the whole frame.
+        val same = TextOverlayUtils.maxCropForRatio(4000, 3000, 4, 3)
+        assertEquals(0f, same[0], 0.0001f); assertEquals(1f, same[2], 0.0001f)
+        // Pixel size honours the crop and never collapses.
+        assertArrayEquals(intArrayOf(3000, 3000), TextOverlayUtils.cropPixelSize(4000, 3000, sq))
+    }
+
+    @Test
+    fun positionZoomScalesFrameAroundCentre() {
+        val r = TextOverlayUtils.maxCropForRatio(4000, 3000, 1, 1) // l=0.125 t=0 r=0.875 b=1
+        val z = TextOverlayUtils.zoomCrop(r, 2f)   // zoom in 2x: frame halves around its centre
+        assertEquals(0.375f, z[2] - z[0], 0.001f)
+        assertEquals(0.5f, z[3] - z[1], 0.001f)
+        assertEquals((r[0] + r[2]) / 2f, (z[0] + z[2]) / 2f, 0.001f)   // centre stays
+        val wide = TextOverlayUtils.zoomCrop(floatArrayOf(0f, 0.3f, 0.4f, 0.7f), 0.2f) // zoom out past the edge
+        assertTrue(wide[2] - wide[0] <= 1f)
+        assertTrue(wide[0] >= 0f && wide[2] <= 1f && wide[1] >= 0f && wide[3] <= 1f)
+        // Never smaller than the 5% guard.
+        val tiny = TextOverlayUtils.zoomCrop(floatArrayOf(0.4f, 0.4f, 0.5f, 0.5f), 100f)
+        assertTrue(tiny[2] - tiny[0] >= 0.05f)
+    }
+
+    @Test
+    fun customRatioValidationIsGentleAndStrict() {
+        assertArrayEquals(intArrayOf(5, 7), TextOverlayUtils.parseCustomRatio("5", "7"))
+        assertArrayEquals(intArrayOf(5, 7), TextOverlayUtils.parseCustomRatio(" 5 ", " 7"))
+        assertNull(TextOverlayUtils.parseCustomRatio("0", "7"))
+        assertNull(TextOverlayUtils.parseCustomRatio("abc", "3"))
+        assertNull(TextOverlayUtils.parseCustomRatio("100", "3"))
+        assertNull(TextOverlayUtils.parseCustomRatio("", "3"))
+    }
+
+    @Test
+    fun aspectOptionsMatchHisSpec() {
+        val commons = TextOverlayUtils.ASPECT_OPTIONS.filter { it.common }
+        assertEquals(4, commons.size)
+        assertEquals(listOf("Square", "Portrait", "Story", "Wide"), commons.map { it.label })
+        assertEquals(listOf("1:1", "4:5", "9:16", "16:9"), commons.map { "${it.rw}:${it.rh}" })
+        // The expanded list adds more ratios including A4, each with a distinct ratio.
+        val all = TextOverlayUtils.ASPECT_OPTIONS.map { it.rw to it.rh }
+        assertEquals(all.size, all.toSet().size)
+        assertTrue(TextOverlayUtils.ASPECT_OPTIONS.any { it.label == "A4" && it.rw == 210 && it.rh == 297 })
+        assertTrue(TextOverlayUtils.ASPECT_OPTIONS.size >= 10)
+    }
+
+    @Test
+    fun spacingSlidersChangeLayoutMath() {
+        val base = TextOverlayUtils.measure(TextLayer(1, text = "Hello\nWorld"), 400)
+        val tracked = TextOverlayUtils.measure(TextLayer(1, text = "Hello\nWorld", letterSpacing = 0.2f), 400)
+        assertTrue("letter spacing must widen lines", tracked.lineWidths[0] > base.lineWidths[0])
+        val leaded = TextOverlayUtils.measure(TextLayer(1, text = "Hello\nWorld", lineSpacing = 0.5f), 400)
+        assertTrue("line spacing must grow the block", leaded.h > base.h * 1.2f)
+        assertEquals(2, base.lineWidths.size) // two-line block measured
+    }
+
+    @Test
+    fun opacityAppliesToTextAndBackground() {
+        // Half opacity must blend BOTH the glyph and its background box toward white.
+        val layer = TextLayer(1, text = ".", colorArgb = Color.BLACK, bgColorArgb = Color.YELLOW, opacity = 0.5f)
+        val bmp = draw(layer)
+        var strongestBg = 0
+        for (y in 0 until bmp.height) for (x in 0 until bmp.width) {
+            val p = bmp.getPixel(x, y)
+            if (Color.red(p) > 200 && Color.green(p) > 200) strongestBg = maxOf(strongestBg, 255 - Color.blue(p))
+        }
+        assertTrue("half-opacity yellow box must be softened, blue deficit=$strongestBg", strongestBg in 60..200)
+    }
+
+    @Test
+    fun stylePresetRoundTripCoversEveryStyledField() {
+        val layer = TextLayer(1).apply {
+            font = TextOverlayUtils.FontChoice.Serif; sizeFrac = 0.11f; bold = true; italic = true
+            align = TextOverlayUtils.Align.RIGHT; colorArgb = 0xFFF5B942.toInt()
+            outlineFrac = 0.12f; outlineColorArgb = 0xFF172B4D.toInt(); bgColorArgb = 0xFF000000.toInt()
+            shadow = true; opacity = 0.8f; curved = true; arcSweep = 200f
+            letterSpacing = 0.1f; lineSpacing = 0.3f
+        }
+        // Mirror of the save/apply mapping used by the store: every styled field must survive.
+        val copy = TextLayer(99)
+        copy.font = layer.font; copy.sizeFrac = layer.sizeFrac; copy.bold = layer.bold; copy.italic = layer.italic
+        copy.align = layer.align; copy.colorArgb = layer.colorArgb; copy.outlineFrac = layer.outlineFrac
+        copy.outlineColorArgb = layer.outlineColorArgb; copy.bgColorArgb = layer.bgColorArgb
+        copy.shadow = layer.shadow; copy.opacity = layer.opacity; copy.curved = layer.curved
+        copy.arcSweep = layer.arcSweep; copy.letterSpacing = layer.letterSpacing; copy.lineSpacing = layer.lineSpacing
+        assertEquals(TextOverlayUtils.measure(layer, 800).w, TextOverlayUtils.measure(copy, 800).w, 0.01f)
+        assertEquals(TextOverlayUtils.measure(layer, 800).h, TextOverlayUtils.measure(copy, 800).h, 0.01f)
+        assertEquals(layer.copy(), copy.copy(id = 1))
+    }
+
+    @Test
+    fun imageLayerDrawsScaledAndHits() {
+        val photo = Bitmap.createBitmap(400, 300, Bitmap.Config.ARGB_8888)
+        Canvas(photo).drawColor(Color.WHITE)
+        val logo = Bitmap.createBitmap(20, 10, Bitmap.Config.ARGB_8888)
+        Canvas(logo).drawColor(Color.RED)
+        val layer = TextOverlayUtils.ImageLayer(7, logo, cx = 0.25f, cy = 0.25f, widthFrac = 0.2f)
+        // size honours the bitmap aspect: w=80, h=40
+        val sz = TextOverlayUtils.imageLayerSize(layer, 400)
+        assertEquals(80f, sz[0], 0.01f); assertEquals(40f, sz[1], 0.01f)
+        val out = TextOverlayUtils.renderToBitmap(photo, emptyList(), listOf(layer))
+        assertEquals(Color.RED, out.getPixel(100, 75))          // centre of the overlay
+        assertEquals(Color.WHITE, out.getPixel(300, 200))       // untouched area
+        assertTrue(TextOverlayUtils.imageLayerHit(layer, 100f, 75f, 400, 300))
+        assertFalse(TextOverlayUtils.imageLayerHit(layer, 300f, 200f, 400, 300))
+    }
+
+    @Test
+    fun imageLayerDrawsUnderTextAndBlends() {
+        val photo = Bitmap.createBitmap(400, 300, Bitmap.Config.ARGB_8888)
+        Canvas(photo).drawColor(Color.WHITE)
+        val logo = Bitmap.createBitmap(400, 300, Bitmap.Config.ARGB_8888)
+        Canvas(logo).drawColor(Color.RED)
+        val img = TextOverlayUtils.ImageLayer(8, logo, widthFrac = 1f)
+        img.opacity = 0.5f
+        val txt = TextLayer(9, text = "Hi", sizeFrac = 0.5f, colorArgb = Color.BLACK)
+        val out = TextOverlayUtils.renderToBitmap(photo, listOf(txt), listOf(img))
+        val bg = out.getPixel(20, 20)                            // overlay only, half alpha on white
+        assertTrue("half-opacity red over white must be pinkish", Color.red(bg) == 255 && Color.green(bg) in 100..160)
+        var darkest = 255
+        for (y in 110 until 190) for (x in 150 until 250) darkest = minOf(darkest, Color.red(out.getPixel(x, y)))
+        assertTrue("text must ink dark pixels over the image layer, darkest=$darkest", darkest < 100)
+    }
+
+    @Test
+    fun moreColoursPaletteIsDistinctFromQuickSix() {
+        assertTrue(TextOverlayUtils.EXTRA_COLORS.size >= 12)
+        val all = TextOverlayUtils.QUICK_COLORS + TextOverlayUtils.EXTRA_COLORS
+        assertEquals(all.size, all.toSet().size)   // no duplicates across both palettes
+    }
+
+    @Test
+    fun fontListMatchesHisSpec() {
+        val commons = TextOverlayUtils.FontChoice.values().filter { it.common }
+        assertEquals(4, commons.size)
+        assertEquals(listOf("Sans", "Serif", "Mono", "Script"), commons.map { it.label })
+        // "More fonts" reveals the rest; every family is a real Android generic family.
+        val extra = TextOverlayUtils.FontChoice.values().filter { !it.common }
+        assertTrue(extra.size >= 4)
+        assertTrue(TextOverlayUtils.FontChoice.values().all { it.family.isNotBlank() })
     }
 
     @Test

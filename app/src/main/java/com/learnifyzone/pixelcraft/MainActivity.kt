@@ -167,6 +167,8 @@ import com.learnifyzone.pixelcraft.data.RecentsStore
 import com.learnifyzone.pixelcraft.image.BackgroundRemoval
 import com.learnifyzone.pixelcraft.image.ExportFormat
 import com.learnifyzone.pixelcraft.image.SaveUtils
+import com.learnifyzone.pixelcraft.data.TextStylePreset
+import com.learnifyzone.pixelcraft.data.TextStylePresetsStore
 import com.learnifyzone.pixelcraft.image.TextOverlayUtils
 import com.learnifyzone.pixelcraft.image.Transforms
 import com.learnifyzone.pixelcraft.image.CropMath
@@ -384,6 +386,8 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
     var textPhotoName by remember { mutableStateOf("") }
     var textPhotoBytes by remember { mutableStateOf(-1L) }
     val textLayers = remember { mutableStateListOf<TextOverlayUtils.TextLayer>() }
+    val textImageLayers = remember { mutableStateListOf<TextOverlayUtils.ImageLayer>() }
+    var textImageSelectedId by remember { mutableStateOf<Long?>(null) }
     var textSelectedId by remember { mutableStateOf<Long?>(null) }
     val textUndo = remember { TextOverlayUtils.UndoRedo() }
     var textTick by remember { mutableStateOf(0) }   // bumped on every layer mutation so the live preview repaints
@@ -392,6 +396,11 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
     var textResultDims by remember { mutableStateOf("") }
     var textSaved by remember { mutableStateOf(false) }
     var textEditOpen by remember { mutableStateOf(false) }
+    var textCropRect by remember { mutableStateOf<FloatArray?>(null) }   // canvas cutter: [l,t,r,b] fractions of the photo
+    var textCropLabel by remember { mutableStateOf("") }
+    var textCropAdjust by remember { mutableStateOf(false) }
+    var textStylePresets by remember { mutableStateOf<List<TextStylePreset>>(emptyList()) }
+    var pendingTextStyle by remember { mutableStateOf<TextStylePreset?>(null) }
     var textLastGestureRecord by remember { mutableStateOf(0L) }
     var printFormat by remember { mutableStateOf("JPG") }
     var printFilename by remember { mutableStateOf("print-ready") }
@@ -2472,42 +2481,22 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
         uri?.let { loadPrintPdf(it) }
     }
 
-    fun loadTextPhoto(uri: Uri) {
-        scope.launch {
-            busy = true
-            busyLabel = "Loading photo…"
-            try {
-                val loaded = withContext(Dispatchers.IO) { decodeOrientedBitmap(context, uri) }
-                textPhotoBitmap = loaded
-                textPhotoName = queryDisplayName(context, uri) ?: "image"
-                textPhotoBytes = querySourceSize(context, uri)
-                textResultBytes = null
-                textSaved = false
-                if (textLayers.isEmpty()) {
-                    val layer = TextOverlayUtils.TextLayer(id = System.currentTimeMillis())
-                    textLayers.add(layer)
-                    textSelectedId = layer.id
-                }
-                textTick++
-            } catch (e: Exception) {
-                snackbar.showSnackbar("Could not open that image.")
-            }
-            busy = false
-            busyLabel = ""
-        }
-    }
-
     fun resetTextPhoto() {
         textPhotoBitmap = null
         textPhotoName = ""
         textPhotoBytes = -1L
         textLayers.clear()
         textSelectedId = null
+        textImageLayers.clear()
+        textImageSelectedId = null
         textUndo.clear()
         textFormat = "PNG"
         textResultBytes = null
         textSaved = false
         textEditOpen = false
+        textCropRect = null
+        textCropLabel = ""
+        textCropAdjust = false
         textTick++
     }
 
@@ -2561,6 +2550,64 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
         textTick++
     }
 
+    // ---- Image overlay layers (his v0.16.1 "Add image" spec: a logo/sticker photo ON TOP of the
+    //      main photo, stays fully editable - move/resize/rotate/delete - until export) ----
+    fun addTextImageLayer(uri: Uri) {
+        scope.launch {
+            busy = true
+            busyLabel = "Adding image…"
+            try {
+                val loaded = withContext(Dispatchers.IO) { decodeOrientedBitmap(context, uri) }
+                if (loaded != null) {
+                    val capped = if (maxOf(loaded.width, loaded.height) > 2048) {
+                        val fct = 2048f / maxOf(loaded.width, loaded.height)
+                        Bitmap.createScaledBitmap(loaded, (loaded.width * fct).roundToInt(), (loaded.height * fct).roundToInt(), true)
+                    } else loaded
+                    val layer = TextOverlayUtils.ImageLayer(System.currentTimeMillis() + 1L, capped, cx = 0.5f, cy = 0.4f)
+                    textImageLayers.add(layer)
+                    textImageSelectedId = layer.id
+                    textSelectedId = null
+                    textResultBytes = null
+                    textSaved = false
+                    textTick++
+                }
+            } catch (e: Exception) {
+                snackbar.showSnackbar("Could not add that image.")
+            }
+            busy = false
+            busyLabel = ""
+        }
+    }
+
+    fun selectedImageLayer(): TextOverlayUtils.ImageLayer? = textImageLayers.firstOrNull { it.id == textImageSelectedId }
+
+    fun mutateSelectedImageLayer(block: (TextOverlayUtils.ImageLayer) -> Unit) {
+        val layer = selectedImageLayer() ?: return
+        block(layer)
+        textResultBytes = null
+        textSaved = false
+        textTick++
+    }
+
+    fun deleteImageLayer(id: Long) {
+        textImageLayers.removeAll { it.id == id }
+        if (textImageSelectedId == id) textImageSelectedId = null
+        textResultBytes = null
+        textSaved = false
+        textTick++
+    }
+
+    fun moveImageLayer(id: Long, dir: Int) {
+        val i = textImageLayers.indexOfFirst { it.id == id }
+        val j = i + dir
+        if (i < 0 || j !in textImageLayers.indices) return
+        val l = textImageLayers.removeAt(i)
+        textImageLayers.add(j, l)
+        textResultBytes = null
+        textSaved = false
+        textTick++
+    }
+
     fun undoTextLayers() {
         textUndo.undo(textLayers.toList())?.let { snap ->
             textLayers.clear()
@@ -2583,12 +2630,135 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
         textTick++
     }
 
-    /** Tap-to-select: topmost layer whose measured block contains the image-space point (rotation-agnostic, generous pad). */
-    fun textLayerAt(xImg: Float, yImg: Float): TextOverlayUtils.TextLayer? {
-        val bmp = textPhotoBitmap ?: return null
+    /** Canvas size in effect: the crop when one is set, else the whole photo. */
+    fun textEffectiveSize(): IntArray {
+        val bmp = textPhotoBitmap ?: return intArrayOf(0, 0)
+        val r = textCropRect ?: return intArrayOf(bmp.width, bmp.height)
+        return TextOverlayUtils.cropPixelSize(bmp.width, bmp.height, r)
+    }
+
+    fun setTextCrop(label: String, rw: Int, rh: Int) {
+        val bmp = textPhotoBitmap ?: return
+        textCropRect = TextOverlayUtils.maxCropForRatio(bmp.width, bmp.height, rw, rh)
+        textCropLabel = "$label $rw:$rh"
+        textCropAdjust = true
+        textResultBytes = null
+        textSaved = false
+        textTick++
+    }
+
+    fun clearTextCrop() {
+        textCropRect = null
+        textCropLabel = ""
+        textCropAdjust = false
+        textResultBytes = null
+        textSaved = false
+        textTick++
+    }
+
+    /** Drag the crop frame; deltas are photo-space fractions. Moves freely, clamped at the photo edges - no snapping. */
+    fun nudgeTextCrop(dxFrac: Float, dyFrac: Float) {
+        val r = textCropRect ?: return
+        textCropRect = com.learnifyzone.pixelcraft.image.CropMath.move(r, dxFrac, dyFrac)
+        textResultBytes = null
+        textSaved = false
+        textTick++
+    }
+
+    /** Pinch-zoom the crop frame around its centre (his Position interaction, like Social Media Sizes). */
+    fun zoomTextCrop(zoom: Float) {
+        val r = textCropRect ?: return
+        textCropRect = TextOverlayUtils.zoomCrop(r, zoom)
+        textResultBytes = null
+        textSaved = false
+        textTick++
+    }
+
+    fun refreshTextStylePresets() {
+        scope.launch(Dispatchers.IO) {
+            val list = TextStylePresetsStore.load(context)
+            withContext(Dispatchers.Main) { textStylePresets = list }
+        }
+    }
+
+    /** Apply a saved style to the selected layer (creates one when none exists). */
+    fun applyTextStylePreset(p: TextStylePreset) {
+        if (selectedTextLayer() == null) addTextLayer()
+        val layer = selectedTextLayer() ?: return
+        recordTextUndo()
+        layer.font = TextOverlayUtils.FontChoice.values().firstOrNull { it.name == p.font } ?: TextOverlayUtils.FontChoice.Sans
+        layer.sizeFrac = p.sizeFrac
+        layer.bold = p.bold
+        layer.italic = p.italic
+        layer.align = TextOverlayUtils.Align.values().firstOrNull { it.name == p.align } ?: TextOverlayUtils.Align.CENTER
+        layer.colorArgb = p.colorArgb
+        layer.outlineFrac = p.outlineFrac
+        layer.outlineColorArgb = p.outlineColorArgb
+        layer.bgColorArgb = p.bgColorArgb
+        layer.shadow = p.shadow
+        layer.opacity = p.opacity
+        layer.curved = p.curved
+        layer.arcSweep = p.arcSweep
+        layer.letterSpacing = p.letterSpacing
+        layer.lineSpacing = p.lineSpacing
+        textResultBytes = null
+        textSaved = false
+        textTick++
+    }
+
+    fun saveTextStylePreset(name: String) {
+        val layer = selectedTextLayer() ?: return
+        val p = TextStylePreset(
+            id = System.currentTimeMillis(), name = name, font = layer.font.name,
+            sizeFrac = layer.sizeFrac, bold = layer.bold, italic = layer.italic, align = layer.align.name,
+            colorArgb = layer.colorArgb, outlineFrac = layer.outlineFrac, outlineColorArgb = layer.outlineColorArgb,
+            bgColorArgb = layer.bgColorArgb, shadow = layer.shadow, opacity = layer.opacity,
+            curved = layer.curved, arcSweep = layer.arcSweep,
+            letterSpacing = layer.letterSpacing, lineSpacing = layer.lineSpacing,
+            createdAt = System.currentTimeMillis()
+        )
+        scope.launch(Dispatchers.IO) {
+            TextStylePresetsStore.add(context, p)
+            refreshTextStylePresets()
+        }
+        scope.launch { snackbar.showSnackbar("Style \"" + name + "\" saved - find it in the Presets tab.") }
+    }
+
+    fun loadTextPhoto(uri: Uri) {
+        scope.launch {
+            busy = true
+            busyLabel = "Loading photo…"
+            try {
+                val loaded = withContext(Dispatchers.IO) { decodeOrientedBitmap(context, uri) }
+                textPhotoBitmap = loaded
+                textPhotoName = queryDisplayName(context, uri) ?: "image"
+                textPhotoBytes = querySourceSize(context, uri)
+                textResultBytes = null
+                textSaved = false
+                if (textLayers.isEmpty()) {
+                    val layer = TextOverlayUtils.TextLayer(id = System.currentTimeMillis())
+                    textLayers.add(layer)
+                    textSelectedId = layer.id
+                }
+                refreshTextStylePresets()
+                pendingTextStyle?.let { p -> pendingTextStyle = null; applyTextStylePreset(p) }
+                textTick++
+            } catch (e: Exception) {
+                snackbar.showSnackbar("Could not open that image.")
+            }
+            busy = false
+            busyLabel = ""
+        }
+    }
+
+
+    /** Tap-to-select: topmost layer whose measured block contains the point (in EFFECTIVE canvas pixels; rotation-agnostic, generous pad). */
+    fun textLayerAt(xEff: Float, yEff: Float): TextOverlayUtils.TextLayer? {
+        val eff = textEffectiveSize()
+        if (eff[0] == 0) return null
         for (i in textLayers.indices.reversed()) {
             val l = textLayers[i]
-            val b = TextOverlayUtils.measure(l, bmp.width)
+            val b = TextOverlayUtils.measure(l, eff[0])
             val pad = b.textSize * 0.5f
             val halfW: Float
             val halfH: Float
@@ -2602,9 +2772,9 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                 halfW = b.w / 2f + pad
                 halfH = b.h / 2f + pad
             }
-            val cxp = l.cx * bmp.width
-            val cyp = l.cy * bmp.height - if (l.curved) halfH - pad else 0f
-            if (xImg >= cxp - halfW && xImg <= cxp + halfW && yImg >= cyp - halfH && yImg <= cyp + halfH) return l
+            val cxp = l.cx * eff[0]
+            val cyp = l.cy * eff[1] - if (l.curved) halfH - pad else 0f
+            if (xEff >= cxp - halfW && xEff <= cxp + halfW && yEff >= cyp - halfH && yEff <= cyp + halfH) return l
         }
         return null
     }
@@ -2615,16 +2785,26 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
             busy = true
             busyLabel = "Processing…"
             try {
+                val eff = textEffectiveSize()
                 val bytes = withContext(Dispatchers.IO) {
-                    val out = TextOverlayUtils.renderToBitmap(bmp, textLayers.toList())
+                    val crop = textCropRect
+                    val source = if (crop == null) bmp else Bitmap.createBitmap(
+                        bmp,
+                        (crop[0] * bmp.width).toInt().coerceIn(0, bmp.width - 16),
+                        (crop[1] * bmp.height).toInt().coerceIn(0, bmp.height - 16),
+                        eff[0].coerceAtMost(bmp.width - (crop[0] * bmp.width).toInt().coerceIn(0, bmp.width - 16)),
+                        eff[1].coerceAtMost(bmp.height - (crop[1] * bmp.height).toInt().coerceIn(0, bmp.height - 16))
+                    )
+                    val out = TextOverlayUtils.renderToBitmap(source, textLayers.toList(), textImageLayers.toList())
                     val baos = java.io.ByteArrayOutputStream()
                     if (textFormat == "PNG") out.compress(Bitmap.CompressFormat.PNG, 100, baos)
                     else out.compress(Bitmap.CompressFormat.JPEG, 95, baos)
                     out.recycle()
+                    if (source !== bmp) source.recycle()
                     baos.toByteArray()
                 }
                 textResultBytes = bytes
-                textResultDims = "${bmp.width} × ${bmp.height} px"
+                textResultDims = "${eff[0]} × ${eff[1]} px"
                 textSaved = false
             } catch (e: Exception) {
                 snackbar.showSnackbar("Could not process that image.")
@@ -2656,6 +2836,9 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
 
     val textPhotoPicker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
         uri?.let { loadTextPhoto(it) }
+    }
+    val textImagePicker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
+        uri?.let { addTextImageLayer(it) }
     }
     val compressPicker = rememberLauncherForActivityResult(ActivityResultContracts.PickMultipleVisualMedia(20)) { uris ->
         if (uris.isNotEmpty()) loadCompressPhotos(uris)
@@ -3166,6 +3349,24 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                 )
                 MainTab.Presets -> PresetsScreen(
                     modifier = Modifier.padding(padding),
+                    textStyles = textStylePresets,
+                    onRefreshTextStyles = { refreshTextStylePresets() },
+                    onTextStyle = { p ->
+                        if (textPhotoBitmap != null) {
+                            applyTextStylePreset(p)
+                        } else {
+                            resetTextPhoto()
+                            pendingTextStyle = p
+                        }
+                        tab = MainTab.Home
+                        screen = Screen.TextPhoto
+                    },
+                    onDeleteTextStyle = { id ->
+                        scope.launch(Dispatchers.IO) {
+                            TextStylePresetsStore.remove(context, id)
+                            refreshTextStylePresets()
+                        }
+                    },
                     onPreset = { preset ->
                         if (workingBitmap != null) {
                             applyTarget(preset.width, preset.height)
@@ -3649,18 +3850,46 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                 editOpen = textEditOpen,
                 busy = busy,
                 onSelectPhoto = { textPhotoPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
-                onSelectLayer = { textSelectedId = it; textTick++ },
-                onAddLayer = { addTextLayer() },
+                onSelectLayer = { textSelectedId = it; textImageSelectedId = null; textTick++ },
+                onAddLayer = { textImageSelectedId = null; addTextLayer() },
                 onDeleteLayer = { deleteTextLayer(it) },
                 onMoveLayer = { id, dir -> moveTextLayer(id, dir) },
                 onMutate = { coalesce, block -> mutateSelectedLayer(coalesce, block) },
-                onTapAt = { x, y -> textLayerAt(x, y)?.let { textSelectedId = it.id; textTick++ } },
+                imageLayers = textImageLayers,
+                selectedImageId = textImageSelectedId,
+                onAddImageLayer = { textImagePicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
+                onSelectImageLayer = { textImageSelectedId = it; textSelectedId = null; textTick++ },
+                onMutateImageLayer = { block -> mutateSelectedImageLayer(block) },
+                onDeleteImageLayer = { deleteImageLayer(it) },
+                onMoveImageLayer = { id, dir -> moveImageLayer(id, dir) },
+                onTapAt = { x, y ->
+                    val hit = textLayerAt(x, y)
+                    if (hit != null) { textSelectedId = hit.id; textImageSelectedId = null; textTick++ }
+                    else {
+                        val eff = textEffectiveSize()
+                        val im = textImageLayers.lastOrNull { TextOverlayUtils.imageLayerHit(it, x, y, eff[0], eff[1]) }
+                        if (im != null) { textImageSelectedId = im.id; textSelectedId = null; textTick++ }
+                    }
+                },
                 onEditOpen = { textEditOpen = it },
                 onUndo = { undoTextLayers() },
                 onRedo = { redoTextLayers() },
                 onFormat = { textFormat = it; textResultBytes = null; textSaved = false },
                 onProcess = { processTextPhoto() },
-                onSave = { saveTextPhoto() }
+                onSave = { saveTextPhoto() },
+                cropRect = textCropRect,
+                cropLabel = textCropLabel,
+                cropAdjust = textCropAdjust,
+                canvasDims = textEffectiveSize().let { "${it[0]} × ${it[1]} px" },
+                onSetCrop = { label, rw, rh -> setTextCrop(label, rw, rh) },
+                onClearCrop = { clearTextCrop() },
+                onCropAdjust = { textCropAdjust = it; textTick++ },
+                onCropNudge = { dx, dy -> nudgeTextCrop(dx, dy) },
+                onCropZoom = { z -> zoomTextCrop(z) },
+                stylePresets = textStylePresets,
+                onLoadStyles = { refreshTextStylePresets() },
+                onApplyStyle = { p -> applyTextStylePreset(p) },
+                onSaveStyle = { name -> saveTextStylePreset(name) }
             )
             Screen.PrintHome -> PrintHomeScreen(
                 modifier = Modifier.padding(padding),
@@ -5687,16 +5916,48 @@ private suspend fun shareExported(context: Context, uri: Uri, displayName: Strin
 }
 
 @Composable
-private fun PresetsScreen(modifier: Modifier, onPreset: (Preset) -> Unit) {
+private fun PresetsScreen(
+    modifier: Modifier,
+    textStyles: List<TextStylePreset>,
+    onRefreshTextStyles: () -> Unit,
+    onTextStyle: (TextStylePreset) -> Unit,
+    onDeleteTextStyle: (Long) -> Unit,
+    onPreset: (Preset) -> Unit
+) {
     val context = androidx.compose.ui.platform.LocalContext.current
     var presets by remember { mutableStateOf<List<Preset>?>(null) }
     var search by rememberSaveable { mutableStateOf("") }
     LaunchedEffect(Unit) {
+        onRefreshTextStyles()
         presets = withContext(Dispatchers.IO) { PresetStore.load(context) }
     }
-    Column(modifier.fillMaxSize().padding(16.dp)) {
+    Column(modifier.fillMaxSize().padding(16.dp).verticalScroll(rememberScrollState())) {
         Text("Presets", color = DeepNavy, fontSize = 26.sp, fontWeight = FontWeight.Bold)
-        Text("Shop & creator · Social media", color = Slate, modifier = Modifier.padding(top = 4.dp, bottom = 14.dp))
+        Text("Your text styles · Shop & creator · Social media", color = Slate, modifier = Modifier.padding(top = 4.dp, bottom = 14.dp))
+        if (textStyles.isNotEmpty()) {
+            Text("My text styles", color = DeepNavy, fontWeight = FontWeight.Bold, fontSize = 16.sp, modifier = Modifier.padding(bottom = 6.dp))
+            textStyles.forEach { style ->
+                Row(
+                    Modifier.fillMaxWidth().padding(vertical = 4.dp).clip(RoundedCornerShape(12.dp)).background(PaleBlue).clickable { onTextStyle(style) }.padding(14.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box(Modifier.size(34.dp).clip(CircleShape).background(SkyBlue), contentAlignment = Alignment.Center) {
+                        Text("T", color = Color.White, fontWeight = FontWeight.Bold)
+                    }
+                    Column(Modifier.weight(1f).padding(start = 12.dp)) {
+                        Text(style.name, color = DeepNavy, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
+                        Text(
+                            style.font + (if (style.bold) " · bold" else "") + (if (style.italic) " · italic" else "") + (if (style.curved) " · curved" else ""),
+                            color = Slate, fontSize = 12.sp
+                        )
+                    }
+                    IconButton(onClick = { onDeleteTextStyle(style.id) }) {
+                        Icon(Icons.Default.Delete, contentDescription = "Delete style", tint = Slate, modifier = Modifier.size(20.dp))
+                    }
+                }
+            }
+            Text("Tap a style to open Text on Photo with it applied.", color = Slate, fontSize = 11.sp, modifier = Modifier.padding(bottom = 10.dp))
+        }
         OutlinedTextField(value = search, onValueChange = { search = it }, modifier = Modifier.fillMaxWidth(), label = { Text("Search presets") }, singleLine = true)
         Spacer(Modifier.height(12.dp))
         val list = presets
@@ -8819,15 +9080,37 @@ private fun TextOnPhotoScreen(
     onDeleteLayer: (Long) -> Unit,
     onMoveLayer: (Long, Int) -> Unit,
     onMutate: (Long, (TextOverlayUtils.TextLayer) -> Unit) -> Unit,
+    imageLayers: List<TextOverlayUtils.ImageLayer>,
+    selectedImageId: Long?,
+    onAddImageLayer: () -> Unit,
+    onSelectImageLayer: (Long) -> Unit,
+    onMutateImageLayer: ((TextOverlayUtils.ImageLayer) -> Unit) -> Unit,
+    onDeleteImageLayer: (Long) -> Unit,
+    onMoveImageLayer: (Long, Int) -> Unit,
     onTapAt: (Float, Float) -> Unit,
     onEditOpen: (Boolean) -> Unit,
     onUndo: () -> Unit,
     onRedo: () -> Unit,
     onFormat: (String) -> Unit,
     onProcess: () -> Unit,
-    onSave: () -> Unit
+    onSave: () -> Unit,
+    cropRect: FloatArray?,
+    cropLabel: String,
+    cropAdjust: Boolean,
+    canvasDims: String,
+    onSetCrop: (String, Int, Int) -> Unit,
+    onClearCrop: () -> Unit,
+    onCropAdjust: (Boolean) -> Unit,
+    onCropNudge: (Float, Float) -> Unit,
+    onCropZoom: (Float) -> Unit,
+    stylePresets: List<TextStylePreset>,
+    onLoadStyles: () -> Unit,
+    onApplyStyle: (TextStylePreset) -> Unit,
+    onSaveStyle: (String) -> Unit
 ) {
+    LaunchedEffect(Unit) { onLoadStyles() }
     val selected = layers.firstOrNull { it.id == selectedId }
+    val selectedImage = imageLayers.firstOrNull { it.id == selectedImageId }
     var previewTouch by remember { mutableStateOf(false) }
     val scrollState = rememberScrollState()
 
@@ -8870,19 +9153,22 @@ private fun TextOnPhotoScreen(
         Spacer(Modifier.height(6.dp))
         BoxWithConstraints(Modifier.fillMaxWidth().height(330.dp).clip(RoundedCornerShape(12.dp)).background(SoftGrey).border(1.dp, BorderGrey, RoundedCornerShape(12.dp))) {
             val bmp = bitmap
-            val imgRatio = bmp.width.toFloat() / bmp.height
+            // Adjust mode shows the WHOLE photo with the crop frame; normal mode shows the effective canvas.
+            val effW = if (cropRect != null && !cropAdjust) ((cropRect[2] - cropRect[0]) * bmp.width).toInt().coerceAtLeast(1) else bmp.width
+            val effH = if (cropRect != null && !cropAdjust) ((cropRect[3] - cropRect[1]) * bmp.height).toInt().coerceAtLeast(1) else bmp.height
+            val imgRatio = effW.toFloat() / effH
             var pw = maxWidth
             var ph = maxWidth / imgRatio
             if (ph > maxHeight) { ph = maxHeight; pw = maxHeight * imgRatio }
             val density = LocalDensity.current
-            val sPx = with(density) { pw.toPx() } / bmp.width
+            val sPx = with(density) { pw.toPx() } / effW
             Box(
                 Modifier
                     .size(pw, ph)
                     .align(Alignment.Center)
                     .pointerInput(bmp) {
                         // While a finger is on the preview the page scroll is disabled,
-                        // so single-finger drags move the text instead of the page.
+                        // so single-finger drags move the text (or the crop frame) instead of the page.
                         awaitEachGesture {
                             awaitFirstDown()
                             previewTouch = true
@@ -8892,19 +9178,33 @@ private fun TextOnPhotoScreen(
                             previewTouch = false
                         }
                     }
-                    .pointerInput(bmp) {
-                        detectTapGestures(
-                            onTap = { off -> onTapAt(off.x / sPx, off.y / sPx) },
-                            onDoubleTap = { off -> onTapAt(off.x / sPx, off.y / sPx); onEditOpen(true) }
-                        )
+                    .pointerInput(bmp, cropAdjust) {
+                        if (!cropAdjust) {
+                            detectTapGestures(
+                                onTap = { off -> onTapAt(off.x / sPx, off.y / sPx) },
+                                onDoubleTap = { off -> onTapAt(off.x / sPx, off.y / sPx); onEditOpen(true) }
+                            )
+                        }
                     }
-                    .pointerInput(bmp) {
+                    .pointerInput(bmp, cropAdjust) {
                         detectTransformGestures { _, pan, zoom, rot ->
-                            onMutate(1000L) { l ->
-                                l.cx = (l.cx + pan.x / sPx / bmp.width).coerceIn(0f, 1f)
-                                l.cy = (l.cy + pan.y / sPx / bmp.height).coerceIn(0f, 1f)
-                                l.scale = (l.scale * zoom).coerceIn(0.2f, 10f)
-                                l.rotation = (l.rotation + rot) % 360f
+                            if (cropAdjust) {
+                                onCropNudge(pan.x / sPx / bmp.width, pan.y / sPx / bmp.height)
+                                if (zoom != 1f) onCropZoom(zoom)
+                            } else if (selectedImageId != null) {
+                                onMutateImageLayer { im ->
+                                    im.cx = (im.cx + pan.x / sPx / effW).coerceIn(0f, 1f)
+                                    im.cy = (im.cy + pan.y / sPx / effH).coerceIn(0f, 1f)
+                                    im.widthFrac = (im.widthFrac * zoom).coerceIn(0.02f, 2f)
+                                    im.rotation = (im.rotation + rot) % 360f
+                                }
+                            } else {
+                                onMutate(1000L) { l ->
+                                    l.cx = (l.cx + pan.x / sPx / effW).coerceIn(0f, 1f)
+                                    l.cy = (l.cy + pan.y / sPx / effH).coerceIn(0f, 1f)
+                                    l.scale = (l.scale * zoom).coerceIn(0.2f, 10f)
+                                    l.rotation = (l.rotation + rot) % 360f
+                                }
                             }
                         }
                     }
@@ -8914,23 +9214,287 @@ private fun TextOnPhotoScreen(
                     val nc = drawContext.canvas.nativeCanvas
                     nc.save()
                     nc.scale(sPx, sPx)
-                    nc.drawBitmap(bmp, 0f, 0f, null)
-                    TextOverlayUtils.drawAll(nc, layers, bmp.width, bmp.height, selectedId, selectionFrame = true)
+                    if (cropAdjust && cropRect != null) {
+                        // Whole photo + darkened outside + crop frame.
+                        nc.drawBitmap(bmp, 0f, 0f, null)
+                        val cl = cropRect[0] * bmp.width
+                        val ct = cropRect[1] * bmp.height
+                        val cr = cropRect[2] * bmp.width
+                        val cb = cropRect[3] * bmp.height
+                        val scrim = android.graphics.Paint().apply { color = 0x99000000.toInt() }
+                        nc.drawRect(0f, 0f, bmp.width.toFloat(), ct, scrim)
+                        nc.drawRect(0f, cb, bmp.width.toFloat(), bmp.height.toFloat(), scrim)
+                        nc.drawRect(0f, ct, cl, cb, scrim)
+                        nc.drawRect(cr, ct, bmp.width.toFloat(), cb, scrim)
+                        val frame = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+                            style = android.graphics.Paint.Style.STROKE
+                            strokeWidth = (bmp.width * 0.004f).coerceAtLeast(2f)
+                            color = 0xFF42BFEF.toInt()
+                        }
+                        nc.drawRect(cl, ct, cr, cb, frame)
+                    } else {
+                        if (cropRect != null) nc.translate(-cropRect[0] * bmp.width, -cropRect[1] * bmp.height)
+                        nc.drawBitmap(bmp, 0f, 0f, null)
+                        TextOverlayUtils.drawAll(nc, layers, effW, effH, selectedId, selectionFrame = true, imageLayers = imageLayers, selectedImageId = selectedImageId)
+                    }
                     nc.restore()
                 }
             }
         }
         Spacer(Modifier.height(4.dp))
-        Text("Drag to move · pinch to resize · twist to rotate · double-tap to edit text", color = Slate, fontSize = 11.sp)
+        Text(
+            if (cropAdjust) "Drag the photo freely to position it · pinch to zoom in or out · tap Done when it looks right."
+            else "Drag to move · pinch to resize · twist to rotate · double-tap to edit text",
+            color = Slate, fontSize = 11.sp
+        )
         Spacer(Modifier.height(14.dp))
 
-        // ---- Add Text ----
+        // ---- Image layer quick edits (his "Add image" spec: stays editable until export) ----
+        if (selectedImage != null) {
+            Card(colors = CardDefaults.cardColors(containerColor = SoftGrey), shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(12.dp)) {
+                    Text("Image layer", color = DeepNavy, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                    Text("Drag on the photo to move · pinch to resize · twist to rotate.", color = Slate, fontSize = 11.sp)
+                    Spacer(Modifier.height(6.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("Size", color = Slate, fontSize = 12.sp)
+                        Slider(
+                            value = selectedImage.widthFrac,
+                            onValueChange = { v -> onMutateImageLayer { im -> im.widthFrac = v } },
+                            valueRange = 0.05f..1f,
+                            modifier = Modifier.weight(1f).padding(horizontal = 8.dp)
+                        )
+                        Text("${(selectedImage.widthFrac * 100).toInt()}%", color = DeepNavy, fontSize = 12.sp)
+                    }
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("Rotation", color = Slate, fontSize = 12.sp)
+                        Slider(
+                            value = ((selectedImage.rotation % 360f) + 540f) % 360f - 180f,
+                            onValueChange = { v -> onMutateImageLayer { im -> im.rotation = v } },
+                            valueRange = -180f..180f,
+                            modifier = Modifier.weight(1f).padding(horizontal = 8.dp)
+                        )
+                        Text("${(((selectedImage.rotation % 360f) + 540f) % 360f - 180f).toInt()}°", color = DeepNavy, fontSize = 12.sp)
+                    }
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("Opacity", color = Slate, fontSize = 12.sp)
+                        Slider(
+                            value = selectedImage.opacity,
+                            onValueChange = { v -> onMutateImageLayer { im -> im.opacity = v } },
+                            valueRange = 0.2f..1f,
+                            modifier = Modifier.weight(1f).padding(horizontal = 8.dp)
+                        )
+                        Text("${(selectedImage.opacity * 100).toInt()}%", color = DeepNavy, fontSize = 12.sp)
+                    }
+                    OutlinedButton(onClick = { onDeleteImageLayer(selectedImage.id) }, modifier = Modifier.fillMaxWidth()) {
+                        Icon(Icons.Default.Delete, contentDescription = null, tint = DeepNavy, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text("Delete image layer", color = DeepNavy)
+                    }
+                }
+            }
+            Spacer(Modifier.height(14.dp))
+        }
+
+        // ---- Quick edits (his layout request: font size, background, shadow, curve and spacing live
+        //      right under the image, so every change is seen live without scrolling) ----
+        if (selected != null) {
+            Card(colors = CardDefaults.cardColors(containerColor = SoftGrey), shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(12.dp)) {
+                    Text("Quick edits", color = DeepNavy, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                    Text("Every change shows live on your photo above.", color = Slate, fontSize = 11.sp)
+                    Spacer(Modifier.height(8.dp))
+
+                    Text("Font size", color = Slate, fontSize = 12.sp)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("A-", color = Slate, fontSize = 12.sp)
+                        Slider(
+                            value = selected.sizeFrac,
+                            onValueChange = { v -> onMutate(1200L) { l -> l.sizeFrac = v } },
+                            valueRange = 0.02f..0.20f,
+                            modifier = Modifier.weight(1f).padding(horizontal = 8.dp)
+                        )
+                        Text("A+", color = DeepNavy, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                    }
+
+                    OutlinedButton(
+                        onClick = { onMutate(0L) { l -> l.curved = !l.curved } },
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = ButtonDefaults.outlinedButtonColors(containerColor = if (selected.curved) PaleBlue else Color.Transparent)
+                    ) {
+                        Text(if (selected.curved) "Curve Text: ON - text follows a real arc" else "Curve Text: bend the text along an arc", color = DeepNavy, fontWeight = FontWeight.SemiBold)
+                    }
+                    if (selected.curved) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text("Arc", color = Slate, fontSize = 12.sp)
+                            Slider(
+                                value = selected.arcSweep,
+                                onValueChange = { v -> onMutate(1200L) { l -> l.arcSweep = v } },
+                                valueRange = 60f..320f,
+                                modifier = Modifier.weight(1f).padding(horizontal = 8.dp)
+                            )
+                            Text("${selected.arcSweep.toInt()}°", color = DeepNavy, fontSize = 12.sp)
+                        }
+                    }
+                    Spacer(Modifier.height(8.dp))
+
+                    Text("Text background", color = Slate, fontSize = 12.sp)
+                    run {
+                        var bgColoursOpen by remember { mutableStateOf(false) }
+                        Row(Modifier.padding(top = 4.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                            listOf(0 to "None", 0xFFFFFFFF.toInt() to "White", 0xFF000000.toInt() to "Black", 0xFF42BFEF.toInt() to "Blue", 0xFFF5B942.toInt() to "Gold").forEach { (c, lbl) ->
+                                val sel = selected.bgColorArgb == c
+                                Card(
+                                    colors = CardDefaults.cardColors(containerColor = if (sel) PaleBlue else Color.White),
+                                    shape = RoundedCornerShape(10.dp),
+                                    modifier = Modifier.padding(end = 8.dp, bottom = 8.dp).border(if (sel) 2.dp else 0.dp, if (sel) SkyBlue else Color.Transparent, RoundedCornerShape(10.dp)).clickable { onMutate(0L) { l -> l.bgColorArgb = c } }
+                                ) { Text(lbl, modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp), fontSize = 12.sp, color = DeepNavy) }
+                            }
+                            Card(
+                                colors = CardDefaults.cardColors(containerColor = if (bgColoursOpen) PaleBlue else SoftGrey),
+                                shape = RoundedCornerShape(10.dp),
+                                modifier = Modifier.border(if (bgColoursOpen) 2.dp else 0.dp, if (bgColoursOpen) SkyBlue else Color.Transparent, RoundedCornerShape(10.dp)).clickable { bgColoursOpen = !bgColoursOpen }
+                            ) { Text("More colours", modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp), fontSize = 12.sp, color = DeepNavy, fontWeight = FontWeight.SemiBold) }
+                        }
+                        if (bgColoursOpen) {
+                            TextOverlayUtils.EXTRA_COLORS.chunked(8).forEach { rowItems ->
+                                Row(Modifier.padding(bottom = 8.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                    rowItems.forEach { c ->
+                                        val sel = selected.bgColorArgb == c
+                                        Box(
+                                            Modifier
+                                                .size(30.dp)
+                                                .clip(CircleShape)
+                                                .background(Color(c))
+                                                .border(if (sel) 3.dp else 1.dp, if (sel) SkyBlue else BorderGrey, CircleShape)
+                                                .clickable { onMutate(0L) { l -> l.bgColorArgb = c } }
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("Shadow", color = Slate, fontSize = 13.sp, modifier = Modifier.weight(1f))
+                        Switch(checked = selected.shadow, onCheckedChange = { onMutate(0L) { l -> l.shadow = it } })
+                    }
+
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("Opacity", color = Slate, fontSize = 12.sp)
+                        Slider(
+                            value = selected.opacity,
+                            onValueChange = { v -> onMutate(1200L) { l -> l.opacity = v } },
+                            valueRange = 0.2f..1f,
+                            modifier = Modifier.weight(1f).padding(horizontal = 8.dp)
+                        )
+                        Text("${(selected.opacity * 100).toInt()}%", color = DeepNavy, fontSize = 12.sp)
+                    }
+
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("Letter spacing", color = Slate, fontSize = 12.sp)
+                        Slider(
+                            value = selected.letterSpacing,
+                            onValueChange = { v -> onMutate(1200L) { l -> l.letterSpacing = v } },
+                            valueRange = 0f..0.3f,
+                            modifier = Modifier.weight(1f).padding(horizontal = 8.dp)
+                        )
+                        Text("${(selected.letterSpacing * 100).toInt()}%", color = DeepNavy, fontSize = 12.sp)
+                    }
+
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("Line spacing", color = Slate, fontSize = 12.sp)
+                        Slider(
+                            value = selected.lineSpacing,
+                            onValueChange = { v -> onMutate(1200L) { l -> l.lineSpacing = v } },
+                            valueRange = 0f..1f,
+                            modifier = Modifier.weight(1f).padding(horizontal = 8.dp)
+                        )
+                        Text("${(selected.lineSpacing * 100).toInt()}%", color = DeepNavy, fontSize = 12.sp)
+                    }
+                }
+            }
+            Spacer(Modifier.height(14.dp))
+        }
+
+        // ---- Image Size (his v0.16.1 spec: 4 common sizes up front + "More sizes" -> all sizes + custom) ----
+        run {
+            var moreOpen by remember { mutableStateOf(false) }
+            var customW by remember { mutableStateOf("") }
+            var customH by remember { mutableStateOf("") }
+            var customNote by remember { mutableStateOf("") }
+            Text("Image Size", color = DeepNavy, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+            Text("Pick the canvas shape first, then add your words.", color = Slate, fontSize = 11.sp)
+            Spacer(Modifier.height(6.dp))
+            Row {
+                TextOverlayUtils.ASPECT_OPTIONS.filter { it.common }.forEach { opt ->
+                    PrintPresetChip(opt.label, "${opt.rw}:${opt.rh}", cropLabel == "${opt.label} ${opt.rw}:${opt.rh}") { onSetCrop(opt.label, opt.rw, opt.rh) }
+                }
+                PrintPresetChip("More sizes", "all + custom", moreOpen) { moreOpen = !moreOpen }
+            }
+            if (moreOpen) {
+                Row {
+                    PrintPresetChip("Original", "no crop", cropRect == null && cropLabel.isEmpty()) { onClearCrop() }
+                    TextOverlayUtils.ASPECT_OPTIONS.filter { !it.common }.take(3).forEach { opt ->
+                        PrintPresetChip(opt.label, "${opt.rw}:${opt.rh}", cropLabel == "${opt.label} ${opt.rw}:${opt.rh}") { onSetCrop(opt.label, opt.rw, opt.rh) }
+                    }
+                }
+                Row {
+                    TextOverlayUtils.ASPECT_OPTIONS.filter { !it.common }.drop(3).forEach { opt ->
+                        PrintPresetChip(opt.label, "${opt.rw}:${opt.rh}", cropLabel == "${opt.label} ${opt.rw}:${opt.rh}") { onSetCrop(opt.label, opt.rw, opt.rh) }
+                    }
+                }
+                Text("Custom size", color = Slate, fontSize = 12.sp)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    OutlinedTextField(
+                        value = customW,
+                        onValueChange = { customW = it; customNote = "" },
+                        singleLine = true,
+                        label = { Text("Width") },
+                        modifier = Modifier.weight(1f).padding(end = 6.dp)
+                    )
+                    Text(":", color = Slate, fontSize = 16.sp)
+                    OutlinedTextField(
+                        value = customH,
+                        onValueChange = { customH = it; customNote = "" },
+                        singleLine = true,
+                        label = { Text("Height") },
+                        modifier = Modifier.weight(1f).padding(horizontal = 6.dp)
+                    )
+                    OutlinedButton(onClick = {
+                        val ratio = TextOverlayUtils.parseCustomRatio(customW, customH)
+                        if (ratio == null) customNote = "Enter whole numbers from 1 to 99, like 5 and 7."
+                        else onSetCrop("Custom", ratio[0], ratio[1])
+                    }) { Text("Apply", color = DeepNavy) }
+                }
+                if (customNote.isNotBlank()) Text(customNote, color = MaterialTheme.colorScheme.error, fontSize = 11.sp)
+            }
+            if (cropRect != null) {
+                Spacer(Modifier.height(4.dp))
+                Text("Canvas: $cropLabel · $canvasDims", color = SkyBlue, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                Row {
+                    OutlinedButton(onClick = { onCropAdjust(!cropAdjust) }, modifier = Modifier.padding(end = 8.dp)) {
+                        Text(if (cropAdjust) "Done" else "Position", color = DeepNavy)
+                    }
+                    OutlinedButton(onClick = onClearCrop) { Text("Original size", color = DeepNavy) }
+                }
+            }
+        }
+        Spacer(Modifier.height(14.dp))
+
+        // ---- Add Layers (his v0.16.1 spec: text layers AND image-over-image layers) ----
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("Add Text", color = DeepNavy, fontWeight = FontWeight.Bold, fontSize = 16.sp, modifier = Modifier.weight(1f))
+            Text("Add Layers", color = DeepNavy, fontWeight = FontWeight.Bold, fontSize = 16.sp, modifier = Modifier.weight(1f))
             OutlinedButton(onClick = onAddLayer) {
                 Icon(Icons.Default.Add, contentDescription = null, tint = DeepNavy, modifier = Modifier.size(16.dp))
                 Spacer(Modifier.width(4.dp))
-                Text("Add text layer", color = DeepNavy)
+                Text("Text", color = DeepNavy)
+            }
+            Spacer(Modifier.width(8.dp))
+            OutlinedButton(onClick = onAddImageLayer, enabled = bitmap != null) {
+                Icon(Icons.Default.Add, contentDescription = null, tint = DeepNavy, modifier = Modifier.size(16.dp))
+                Spacer(Modifier.width(4.dp))
+                Text("Image", color = DeepNavy)
             }
         }
         Spacer(Modifier.height(6.dp))
@@ -8948,6 +9512,45 @@ private fun TextOnPhotoScreen(
         if (selected != null) {
             Text("Text Styling", color = DeepNavy, fontWeight = FontWeight.Bold, fontSize = 16.sp)
             Spacer(Modifier.height(8.dp))
+
+            run {
+                var saveStyleOpen by remember { mutableStateOf(false) }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("My styles", color = Slate, fontSize = 12.sp, modifier = Modifier.weight(1f))
+                    OutlinedButton(onClick = { saveStyleOpen = true }) { Text("Save current style", color = DeepNavy) }
+                }
+                if (stylePresets.isNotEmpty()) {
+                    stylePresets.chunked(3).forEach { rowItems ->
+                        Row {
+                            rowItems.forEach { p ->
+                                Card(
+                                    colors = CardDefaults.cardColors(containerColor = SoftGrey),
+                                    shape = RoundedCornerShape(10.dp),
+                                    modifier = Modifier.padding(end = 8.dp, bottom = 8.dp).clickable { onApplyStyle(p) }
+                                ) { Text(p.name, modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp), fontSize = 12.sp, color = DeepNavy, fontWeight = FontWeight.SemiBold, maxLines = 1) }
+                            }
+                        }
+                    }
+                } else {
+                    Text("Style a text layer, then save it here to reuse on any photo - it also appears in the Presets tab.", color = Slate, fontSize = 11.sp, modifier = Modifier.padding(bottom = 6.dp))
+                }
+                if (saveStyleOpen) {
+                    var styleName by remember { mutableStateOf("") }
+                    AlertDialog(
+                        onDismissRequest = { saveStyleOpen = false },
+                        title = { Text("Save current style") },
+                        text = {
+                            OutlinedTextField(value = styleName, onValueChange = { styleName = it }, singleLine = true, label = { Text("Style name") }, modifier = Modifier.fillMaxWidth())
+                        },
+                        confirmButton = {
+                            Button(onClick = { if (styleName.isNotBlank()) { onSaveStyle(styleName.trim()); saveStyleOpen = false } }) { Text("Save") }
+                        },
+                        dismissButton = {
+                            OutlinedButton(onClick = { saveStyleOpen = false }) { Text("Cancel", color = DeepNavy) }
+                        }
+                    )
+                }
+            }
 
             Text("Quick Text Styles", color = Slate, fontSize = 12.sp)
             Spacer(Modifier.height(4.dp))
@@ -8977,36 +9580,37 @@ private fun TextOnPhotoScreen(
                 }
             }
 
-            OutlinedButton(
-                onClick = { onMutate(0L) { l -> l.curved = !l.curved } },
-                modifier = Modifier.fillMaxWidth(),
-                colors = ButtonDefaults.outlinedButtonColors(containerColor = if (selected.curved) PaleBlue else Color.Transparent)
-            ) {
-                Text(if (selected.curved) "Curve Text: ON - text follows a real arc" else "Curve Text: bend the text along an arc", color = DeepNavy, fontWeight = FontWeight.SemiBold)
-            }
-            if (selected.curved) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("Arc", color = Slate, fontSize = 12.sp)
-                    Slider(
-                        value = selected.arcSweep,
-                        onValueChange = { v -> onMutate(1200L) { l -> l.arcSweep = v } },
-                        valueRange = 60f..320f,
-                        modifier = Modifier.weight(1f).padding(horizontal = 8.dp)
-                    )
-                    Text("${selected.arcSweep.toInt()}°", color = DeepNavy, fontSize = 12.sp)
-                }
-            }
-            Spacer(Modifier.height(8.dp))
-
             Text("Font", color = Slate, fontSize = 12.sp)
-            Row(Modifier.padding(top = 4.dp)) {
-                TextOverlayUtils.FontChoice.values().forEach { f ->
-                    val sel = selected.font == f
+            run {
+                var fontsOpen by remember { mutableStateOf(false) }
+                Row(Modifier.padding(top = 4.dp)) {
+                    TextOverlayUtils.FontChoice.values().filter { it.common }.forEach { f ->
+                        val sel = selected.font == f
+                        Card(
+                            colors = CardDefaults.cardColors(containerColor = if (sel) PaleBlue else SoftGrey),
+                            shape = RoundedCornerShape(10.dp),
+                            modifier = Modifier.padding(end = 8.dp, bottom = 8.dp).border(if (sel) 2.dp else 0.dp, if (sel) SkyBlue else Color.Transparent, RoundedCornerShape(10.dp)).clickable { onMutate(0L) { l -> l.font = f } }
+                        ) { Text(f.label, modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp), fontSize = 13.sp, color = DeepNavy, fontWeight = if (sel) FontWeight.Bold else FontWeight.Normal) }
+                    }
                     Card(
-                        colors = CardDefaults.cardColors(containerColor = if (sel) PaleBlue else SoftGrey),
+                        colors = CardDefaults.cardColors(containerColor = if (fontsOpen) PaleBlue else SoftGrey),
                         shape = RoundedCornerShape(10.dp),
-                        modifier = Modifier.padding(end = 8.dp, bottom = 8.dp).border(if (sel) 2.dp else 0.dp, if (sel) SkyBlue else Color.Transparent, RoundedCornerShape(10.dp)).clickable { onMutate(0L) { l -> l.font = f } }
-                    ) { Text(f.label, modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp), fontSize = 13.sp, color = DeepNavy, fontWeight = if (sel) FontWeight.Bold else FontWeight.Normal) }
+                        modifier = Modifier.padding(end = 8.dp, bottom = 8.dp).border(if (fontsOpen) 2.dp else 0.dp, if (fontsOpen) SkyBlue else Color.Transparent, RoundedCornerShape(10.dp)).clickable { fontsOpen = !fontsOpen }
+                    ) { Text("More fonts", modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp), fontSize = 13.sp, color = DeepNavy, fontWeight = FontWeight.SemiBold) }
+                }
+                if (fontsOpen) {
+                    TextOverlayUtils.FontChoice.values().filter { !it.common }.chunked(3).forEach { rowItems ->
+                        Row {
+                            rowItems.forEach { f ->
+                                val sel = selected.font == f
+                                Card(
+                                    colors = CardDefaults.cardColors(containerColor = if (sel) PaleBlue else SoftGrey),
+                                    shape = RoundedCornerShape(10.dp),
+                                    modifier = Modifier.padding(end = 8.dp, bottom = 8.dp).border(if (sel) 2.dp else 0.dp, if (sel) SkyBlue else Color.Transparent, RoundedCornerShape(10.dp)).clickable { onMutate(0L) { l -> l.font = f } }
+                                ) { Text(f.label, modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp), fontSize = 13.sp, color = DeepNavy, fontWeight = if (sel) FontWeight.Bold else FontWeight.Normal) }
+                            }
+                        }
+                    }
                 }
             }
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -9022,18 +9626,6 @@ private fun TextOnPhotoScreen(
                 ) { Text("Italic", modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp), fontSize = 13.sp, color = DeepNavy, fontStyle = androidx.compose.ui.text.font.FontStyle.Italic) }
             }
 
-            Text("Font size", color = Slate, fontSize = 12.sp)
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("A-", color = Slate, fontSize = 12.sp)
-                Slider(
-                    value = selected.sizeFrac,
-                    onValueChange = { v -> onMutate(1200L) { l -> l.sizeFrac = v } },
-                    valueRange = 0.02f..0.20f,
-                    modifier = Modifier.weight(1f).padding(horizontal = 8.dp)
-                )
-                Text("A+", color = DeepNavy, fontSize = 15.sp, fontWeight = FontWeight.Bold)
-            }
-
             Text("Text alignment", color = Slate, fontSize = 12.sp)
             Row(Modifier.padding(top = 4.dp)) {
                 TextOverlayUtils.Align.values().forEach { a ->
@@ -9047,17 +9639,42 @@ private fun TextOnPhotoScreen(
             }
 
             Text("Text colour", color = Slate, fontSize = 12.sp)
-            Row(Modifier.padding(top = 6.dp, bottom = 8.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                TextOverlayUtils.QUICK_COLORS.forEach { c ->
-                    val sel = selected.colorArgb == c
-                    Box(
-                        Modifier
-                            .size(30.dp)
-                            .clip(CircleShape)
-                            .background(Color(c))
-                            .border(if (sel) 3.dp else 1.dp, if (sel) SkyBlue else BorderGrey, CircleShape)
-                            .clickable { onMutate(0L) { l -> l.colorArgb = c } }
-                    )
+            run {
+                var coloursOpen by remember { mutableStateOf(false) }
+                Row(Modifier.padding(top = 6.dp, bottom = 8.dp), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                    TextOverlayUtils.QUICK_COLORS.forEach { c ->
+                        val sel = selected.colorArgb == c
+                        Box(
+                            Modifier
+                                .size(30.dp)
+                                .clip(CircleShape)
+                                .background(Color(c))
+                                .border(if (sel) 3.dp else 1.dp, if (sel) SkyBlue else BorderGrey, CircleShape)
+                                .clickable { onMutate(0L) { l -> l.colorArgb = c } }
+                        )
+                    }
+                    Card(
+                        colors = CardDefaults.cardColors(containerColor = if (coloursOpen) PaleBlue else SoftGrey),
+                        shape = RoundedCornerShape(10.dp),
+                        modifier = Modifier.border(if (coloursOpen) 2.dp else 0.dp, if (coloursOpen) SkyBlue else Color.Transparent, RoundedCornerShape(10.dp)).clickable { coloursOpen = !coloursOpen }
+                    ) { Text("More colours", modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp), fontSize = 12.sp, color = DeepNavy, fontWeight = FontWeight.SemiBold) }
+                }
+                if (coloursOpen) {
+                    TextOverlayUtils.EXTRA_COLORS.chunked(8).forEach { rowItems ->
+                        Row(Modifier.padding(bottom = 8.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                            rowItems.forEach { c ->
+                                val sel = selected.colorArgb == c
+                                Box(
+                                    Modifier
+                                        .size(30.dp)
+                                        .clip(CircleShape)
+                                        .background(Color(c))
+                                        .border(if (sel) 3.dp else 1.dp, if (sel) SkyBlue else BorderGrey, CircleShape)
+                                        .clickable { onMutate(0L) { l -> l.colorArgb = c } }
+                                )
+                            }
+                        }
+                    }
                 }
             }
 
@@ -9085,34 +9702,6 @@ private fun TextOnPhotoScreen(
                 Spacer(Modifier.height(8.dp))
             }
 
-            Text("Text background", color = Slate, fontSize = 12.sp)
-            Row(Modifier.padding(top = 4.dp, bottom = 8.dp)) {
-                listOf(0 to "None", 0xFFFFFFFF.toInt() to "White", 0xFF000000.toInt() to "Black", 0xFF42BFEF.toInt() to "Blue", 0xFFF5B942.toInt() to "Gold").forEach { (c, lbl) ->
-                    val sel = selected.bgColorArgb == c
-                    Card(
-                        colors = CardDefaults.cardColors(containerColor = if (sel) PaleBlue else SoftGrey),
-                        shape = RoundedCornerShape(10.dp),
-                        modifier = Modifier.padding(end = 8.dp, bottom = 8.dp).border(if (sel) 2.dp else 0.dp, if (sel) SkyBlue else Color.Transparent, RoundedCornerShape(10.dp)).clickable { onMutate(0L) { l -> l.bgColorArgb = c } }
-                    ) { Text(lbl, modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp), fontSize = 12.sp, color = DeepNavy) }
-                }
-            }
-
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("Shadow", color = Slate, fontSize = 13.sp, modifier = Modifier.weight(1f))
-                Switch(checked = selected.shadow, onCheckedChange = { onMutate(0L) { l -> l.shadow = it } })
-            }
-
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("Opacity", color = Slate, fontSize = 12.sp)
-                Slider(
-                    value = selected.opacity,
-                    onValueChange = { v -> onMutate(1200L) { l -> l.opacity = v } },
-                    valueRange = 0.2f..1f,
-                    modifier = Modifier.weight(1f).padding(horizontal = 8.dp)
-                )
-                Text("${(selected.opacity * 100).toInt()}%", color = DeepNavy, fontSize = 12.sp)
-            }
-            Spacer(Modifier.height(10.dp))
         }
 
         // ---- Position and Layers ----
@@ -9161,6 +9750,30 @@ private fun TextOnPhotoScreen(
                 }
             }
         }
+        imageLayers.forEachIndexed { i, layer ->
+            val sel = layer.id == selectedImageId
+            Card(
+                colors = CardDefaults.cardColors(containerColor = if (sel) PaleBlue else SoftGrey),
+                shape = RoundedCornerShape(10.dp),
+                modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp).border(if (sel) 2.dp else 0.dp, if (sel) SkyBlue else Color.Transparent, RoundedCornerShape(10.dp)).clickable { onSelectImageLayer(layer.id) }
+            ) {
+                Row(Modifier.padding(horizontal = 10.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Image ${i + 1}", color = DeepNavy, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
+                        Text("Overlay · sits under the text", color = Slate, fontSize = 11.sp)
+                    }
+                    IconButton(onClick = { onMoveImageLayer(layer.id, -1) }, enabled = i > 0) {
+                        Icon(Icons.Default.KeyboardArrowDown, contentDescription = "Send backward", tint = if (i > 0) DeepNavy else BorderGrey)
+                    }
+                    IconButton(onClick = { onMoveImageLayer(layer.id, 1) }, enabled = i < imageLayers.lastIndex) {
+                        Icon(Icons.Default.KeyboardArrowUp, contentDescription = "Bring forward", tint = if (i < imageLayers.lastIndex) DeepNavy else BorderGrey)
+                    }
+                    IconButton(onClick = { onDeleteImageLayer(layer.id) }) {
+                        Icon(Icons.Default.Delete, contentDescription = "Delete image", tint = Slate)
+                    }
+                }
+            }
+        }
         Text("Later layers sit on top of earlier ones. Use the arrows to reorder.", color = Slate, fontSize = 11.sp)
         Spacer(Modifier.height(14.dp))
 
@@ -9185,7 +9798,7 @@ private fun TextOnPhotoScreen(
             Card(colors = CardDefaults.cardColors(containerColor = SoftGrey), shape = RoundedCornerShape(12.dp), modifier = Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(12.dp)) {
                     Text("Ready to save", color = DeepNavy, fontWeight = FontWeight.Bold, fontSize = 14.sp)
-                    Text("text-on-photo.${if (format == "PNG") "png" else "jpg"} · $resultDims · ${formatBytes(resultBytes.size.toLong())}", color = Slate, fontSize = 12.sp)
+                    Text("text-on-photo.${if (format == "PNG") "png" else "jpg"} · $resultDims" + (if (cropRect != null) " · $cropLabel" else "") + " · ${formatBytes(resultBytes.size.toLong())}", color = Slate, fontSize = 12.sp)
                     Text("${layers.size} text ${if (layers.size == 1) "layer" else "layers"}", color = Slate, fontSize = 12.sp)
                 }
             }
