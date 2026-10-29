@@ -315,6 +315,9 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
     var convertSaved by remember { mutableStateOf(false) }
     val convertReadyBitmaps = remember { mutableStateListOf<Bitmap?>() }
     var pendingPdfTestPath by remember { mutableStateOf<String?>(null) }
+    var convertBatchResults by remember { mutableStateOf<List<Pair<String, ByteArray>>?>(null) }
+    var convertBatchOutTotal by remember { mutableLongStateOf(-1L) }
+    var convertBatchIsPdf by remember { mutableStateOf(false) }
     var convertPdfPages by remember { mutableStateOf<List<Bitmap>?>(null) }
     val convertPdfChecked = remember { mutableStateListOf<Boolean>() }
     var circleShape by rememberSaveable { mutableStateOf("Circle") }
@@ -918,10 +921,10 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
             busy = true
             busyLabel = "Converting…"
             scope.launch {
-                var saved = 0
                 var origTotal = 0L
                 var outTotal = 0L
                 try {
+                    val results = mutableListOf<Pair<String, ByteArray>>()
                     if (fmt.id == "pdf") {
                         val bitmaps = mutableListOf<Bitmap>()
                         convertUris.forEachIndexed { i, u ->
@@ -932,28 +935,33 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                         }
                         busyLabel = "Building PDF…"
                         val bytes = withContext(Dispatchers.Default) { ConvertFormats.encodePdf(bitmaps, bgColor) }
-                        saved = bitmaps.size
-                        saveToDownloads(context, "pixelcraft_document.pdf", fmt.mimeType, bytes)
+                        results.add("pixelcraft_document.pdf" to bytes)
                         outTotal = bytes.size.toLong()
                         origTotal = convertOrigSizes.filter { it > 0 }.sum()
                     } else {
                         convertUris.forEachIndexed { i, u ->
                             busyLabel = "Converting ${i + 1} of ${convertUris.size}…"
-                            val src = convertReadyBitmaps.getOrNull(i)
+                            val ready = convertReadyBitmaps.getOrNull(i)
+                            val src = ready
                                 ?: withContext(Dispatchers.IO) { decodeOrientedBitmap(context, u) } ?: return@forEachIndexed
                             val bytes = withContext(Dispatchers.Default) { ConvertFormats.encode(src, fmt, convertQuality, bgColor) }
-                            saveToGallery(context, "pixelcraft_${src.width}x${src.height}_${i + 1}.${fmt.extension}", fmt.mimeType, bytes)
+                            results.add("pixelcraft_${src.width}x${src.height}_${i + 1}.${fmt.extension}" to bytes)
+                            if (ready == null) src.recycle()
                             outTotal += bytes.size
                             val os = convertOrigSizes.getOrNull(i) ?: -1L
                             if (os > 0) origTotal += os
-                            saved++
                         }
                     }
+                    convertBatchResults = results
+                    convertBatchOutTotal = outTotal
+                    convertBatchIsPdf = fmt.id == "pdf"
+                    convertResultOrigSize = if (origTotal > 0) origTotal else -1L
+                    convertResultFrom = convertLabels.map { it.substringBefore(" p.") }.distinct().let { if (it.size == 1) it.first() else "Mixed" }
+                    convertResultPreview = null
+                    convertSaved = false
                     busy = false
                     busyLabel = ""
-                    val where = if (fmt.id == "pdf") "Downloads/PixelCraft" else "Pictures/PixelCraft"
-                    val sizes = if (origTotal > 0) " (${formatBytes(origTotal)} → ${formatBytes(outTotal)})" else ""
-                    snackbar.showSnackbar("Saved $saved image${if (saved == 1) "" else "s"} as ${fmt.label} to $where$sizes.")
+                    screen = Screen.ConvertResult
                 } catch (e: Exception) {
                     busy = false
                     busyLabel = ""
@@ -964,8 +972,32 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
     }
 
     fun saveConvertResult() {
-        val bytes = convertResultBytes ?: return
         val fmt = convertTarget
+        val batch = convertBatchResults
+        if (batch != null) {
+            busy = true
+            busyLabel = "Saving…"
+            scope.launch {
+                try {
+                    batch.forEachIndexed { i, (name, bytes) ->
+                        busyLabel = "Saving ${i + 1} of ${batch.size}…"
+                        if (fmt.id == "pdf") saveToDownloads(context, name, fmt.mimeType, bytes)
+                        else saveToGallery(context, name, fmt.mimeType, bytes)
+                    }
+                    convertSaved = true
+                    busy = false
+                    busyLabel = ""
+                    val where = if (fmt.id == "pdf") "Downloads/PixelCraft" else "Pictures/PixelCraft"
+                    snackbar.showSnackbar("Saved to $where.")
+                } catch (e: Exception) {
+                    busy = false
+                    busyLabel = ""
+                    snackbar.showSnackbar("Couldn't save. Try again.")
+                }
+            }
+            return
+        }
+        val bytes = convertResultBytes ?: return
         scope.launch {
             try {
                 if (fmt.id == "pdf") saveToDownloads(context, convertResultName, fmt.mimeType, bytes)
@@ -982,6 +1014,7 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
         convertUris.clear(); convertThumbs.clear(); convertLabels.clear(); convertOrigSizes.clear()
         convertReadyBitmaps.clear(); convertPdfPages = null; convertPdfChecked.clear()
         convertResultBytes = null; convertResultPreview = null; convertSaved = false
+        convertBatchResults = null; convertBatchOutTotal = -1L; convertBatchIsPdf = false
         convertGoEdit = false
     }
 
@@ -2430,8 +2463,10 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                 fromLabel = convertResultFrom,
                 target = convertTarget,
                 origSize = convertResultOrigSize,
-                newSize = convertResultBytes?.size?.toLong() ?: -1L,
+                newSize = convertBatchResults?.let { convertBatchOutTotal } ?: (convertResultBytes?.size?.toLong() ?: -1L),
                 saved = convertSaved,
+                batchCount = convertBatchResults?.size ?: 0,
+                batchIsPdf = convertBatchIsPdf,
                 onSave = { saveConvertResult() },
                 onConvertAnother = { resetConvert(); screen = Screen.ConvertHome }
             )
@@ -5741,13 +5776,20 @@ private fun ConvertHomeScreen(
             Column(Modifier.fillMaxWidth().padding(16.dp)) {
                 if (thumbs.isNotEmpty()) {
                     Row(Modifier.fillMaxWidth().padding(bottom = 10.dp).horizontalScroll(rememberScrollState())) {
-                        thumbs.forEach { t ->
-                            Image(
-                                bitmap = t.asImageBitmap(),
-                                contentDescription = "Selected image",
-                                contentScale = ContentScale.Crop,
-                                modifier = Modifier.padding(end = 6.dp).size(56.dp)
-                            )
+                        thumbs.forEachIndexed { i, t ->
+                            Box(Modifier.padding(end = 6.dp)) {
+                                Image(
+                                    bitmap = t.asImageBitmap(),
+                                    contentDescription = "Selected image ${i + 1}",
+                                    contentScale = ContentScale.Crop,
+                                    modifier = Modifier.size(56.dp)
+                                )
+                                Text(
+                                    labels.getOrNull(i) ?: "",
+                                    fontSize = 9.sp, fontWeight = FontWeight.Bold, color = Color.White,
+                                    modifier = Modifier.align(Alignment.BottomStart).background(DeepNavy).padding(horizontal = 4.dp, vertical = 2.dp)
+                                )
+                            }
                         }
                     }
                 }
@@ -5972,6 +6014,8 @@ private fun ConvertResultScreen(
     origSize: Long,
     newSize: Long,
     saved: Boolean,
+    batchCount: Int = 0,
+    batchIsPdf: Boolean = false,
     onSave: () -> Unit,
     onConvertAnother: () -> Unit
 ) {
@@ -5997,12 +6041,12 @@ private fun ConvertResultScreen(
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Icon(Icons.Default.CheckCircle, contentDescription = null, tint = SuccessGreen, modifier = Modifier.size(20.dp))
                     Spacer(Modifier.width(6.dp))
-                    Text("Converted to ${target.label}", fontWeight = FontWeight.Bold, color = DeepNavy, fontSize = 17.sp)
+                    Text(if (batchCount > 1) "Converted $batchCount images to ${target.label}" else "Converted to ${target.label}", fontWeight = FontWeight.Bold, color = DeepNavy, fontSize = 17.sp)
                 }
                 Spacer(Modifier.height(10.dp))
-                Text("Original: $fromLabel${if (origSize > 0) " · ${formatBytes(origSize)}" else ""}", fontSize = 14.sp, color = Slate)
+                Text(if (batchCount > 1) "Original: $batchCount images ($fromLabel)${if (origSize > 0) " · ${formatBytes(origSize)}" else ""}" else "Original: $fromLabel${if (origSize > 0) " · ${formatBytes(origSize)}" else ""}", fontSize = 14.sp, color = Slate)
                 Spacer(Modifier.height(4.dp))
-                Text("Converted: ${target.label}${if (newSize > 0) " · ${formatBytes(newSize)}" else ""}", fontSize = 14.sp, color = DeepNavy, fontWeight = FontWeight.SemiBold)
+                Text(if (batchCount > 1 && !batchIsPdf) "Converted: $batchCount ${target.label} files${if (newSize > 0) " · ${formatBytes(newSize)}" else ""}" else "Converted: ${target.label}${if (newSize > 0) " · ${formatBytes(newSize)}" else ""}", fontSize = 14.sp, color = DeepNavy, fontWeight = FontWeight.SemiBold)
             }
         }
         Spacer(Modifier.height(16.dp))
@@ -6013,7 +6057,7 @@ private fun ConvertResultScreen(
             colors = ButtonDefaults.buttonColors(containerColor = Orange, contentColor = Color.White),
             shape = RoundedCornerShape(14.dp)
         ) {
-            Text(if (saved) "Saved ✓" else if (target.id == "pdf") "Save PDF to Downloads" else "Save to Phone", fontWeight = FontWeight.Bold)
+            Text(if (saved) "Saved ✓" else if (target.id == "pdf") "Save PDF to Downloads" else if (batchCount > 1) "Save $batchCount Images to Phone" else "Save to Phone", fontWeight = FontWeight.Bold)
         }
         Spacer(Modifier.height(10.dp))
         OutlinedButton(onClick = onConvertAnother, modifier = Modifier.fillMaxWidth().height(48.dp), shape = RoundedCornerShape(14.dp)) {

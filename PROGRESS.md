@@ -74,6 +74,10 @@ Stage 3 v0.10.1 (built on Stage 2E v0.8.1): queue overview screen, the full "Sel
 
 
 
+## v0.13.2 fix - Format Converter home card format labels (his fix #1: "it must show file format with image in this page")
+- The Select Your Image card on the converter home page now puts the same content-sniffed format badge on every selected thumbnail, matching the conversion page badges.
+- His fix #2: BATCH conversions no longer save automatically. Convert now builds all outputs in memory and lands on the Conversion Result page (like single-file): "Converted 6 images to PNG", totals "Original: 6 images (Mixed) · 7.2 MB" / "Converted: 6 PNG files · 3.1 MB", and NOTHING is written until he taps "Save N Images to Phone". Batch-to-PDF behaves the same ("Save PDF to Downloads", one multi-page PDF). Single-file flow unchanged.
+
 ## v0.13.1 fix+feature - Format Converter polish + PDF input (his screenshot feedback + "How to choose PDF?" + "Pdf to png/jpg" + "it must show accurate current format")
 - Every selected image in the file card now carries its own format badge on the thumbnail, detected from the FILE CONTENT (magic bytes), not the extension - a .jpg that is really a PNG shows PNG. Detection covers JPG/PNG/GIF/BMP/WebP/TIFF/PDF/HEIC with MIME fallback (ConvertFormats.detectFormatBytes, fully unit-tested including the mislabeled-file case).
 - The "To" box is tappable ("Tap to change") and opens a chooser with all 6 formats - target can be switched without going back to the picker. Top bar title follows the new target.
