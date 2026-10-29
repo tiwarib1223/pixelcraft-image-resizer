@@ -222,6 +222,44 @@ class ConvertFormatsTest {
     }
 
     @Test
+    fun pdfPageCountAndSinglePageWhereSupported() {
+        val objs = listOf(
+            "1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n",
+            "2 0 obj<</Type/Pages/Kids[3 0 R 4 0 R]/Count 2>>endobj\n",
+            "3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 40 30]>>endobj\n",
+            "4 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 20 20]>>endobj\n"
+        )
+        val sb = StringBuilder("%PDF-1.4\n")
+        val offsets = mutableListOf<Int>()
+        objs.forEach { offsets.add(sb.length); sb.append(it) }
+        val xrefPos = sb.length
+        sb.append("xref\n0 5\n0000000000 65535 f \n")
+        offsets.forEach { sb.append(String.format("%010d 00000 n \n", it)) }
+        sb.append("trailer<</Size 5/Root 1 0 R>>\nstartxref\n").append(xrefPos).append("\n%%EOF")
+        val tmp = File.createTempFile("pc_pdf_count_test", ".pdf")
+        tmp.writeBytes(sb.toString().toByteArray(Charsets.ISO_8859_1))
+        try {
+            val pfd = ParcelFileDescriptor.open(tmp, ParcelFileDescriptor.MODE_READ_ONLY)
+            val count = ConvertFormats.pdfPageCount(pfd)
+            if (count == 0) return   // host shadow parses no pages
+            assertEquals(2, count)
+            val p1 = ConvertFormats.renderPdfPage(ParcelFileDescriptor.open(tmp, ParcelFileDescriptor.MODE_READ_ONLY), 1)
+            assertEquals(20, p1.width)
+            assertEquals(20, p1.height)
+            try {
+                ConvertFormats.renderPdfPage(ParcelFileDescriptor.open(tmp, ParcelFileDescriptor.MODE_READ_ONLY), 5)
+                org.junit.Assert.fail("out-of-range page must throw")
+            } catch (expected: IllegalArgumentException) { }
+        } catch (e: Exception) {
+            val msg = e.message ?: ""
+            if (msg.contains("closed") || e is java.io.IOException) return   // host JVM has no PDF engine
+            throw e
+        } finally {
+            tmp.delete()
+        }
+    }
+
+    @Test
     fun sixTargetsInHisOrder() {
         assertEquals(listOf("JPG/JPEG", "PNG", "WebP", "PDF", "BMP", "TIFF"), ConvertFormats.targets.map { it.label })
         assertTrue(ConvertFormats.qualityApplies(ConvertFormats.byId("jpg")))

@@ -1319,7 +1319,11 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                 val thumbs = withContext(Dispatchers.IO) {
                     val pfd = context.contentResolver.openFileDescriptor(uri, "r")
                         ?: throw IllegalStateException("Could not open the PDF")
-                    pfd.use { ConvertFormats.renderPdfPages(it, maxPages = 12, maxDim = 300) }
+                    pfd.use {
+                        val count = ConvertFormats.pdfPageCount(it)
+                        if (count > 500) throw IllegalStateException("That PDF has $count pages - this tool handles up to 500.")
+                        ConvertFormats.renderPdfPages(it, maxPages = count, maxDim = 200)
+                    }
                 }
                 if (thumbs.isEmpty()) throw IllegalStateException("No pages")
                 printPdfUri = uri
@@ -1346,7 +1350,7 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                 val page = withContext(Dispatchers.IO) {
                     val pfd = context.contentResolver.openFileDescriptor(uri, "r")
                         ?: throw IllegalStateException("Could not open the PDF")
-                    pfd.use { ConvertFormats.renderPdfPages(it, maxPages = index + 1, maxDim = 2600) }.last()
+                    pfd.use { ConvertFormats.renderPdfPage(it, index, maxDim = 2600) }
                 }
                 printPageBitmap = page
                 printUri = uri
@@ -7532,14 +7536,16 @@ private fun PrintSetupScreen(
                     )
                 }
                 Spacer(Modifier.height(8.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     listOf("in", "cm", "mm", "px").forEach { u ->
-                        PrintPresetChip(u, if (u == "in") "inches" else if (u == "cm") "centimeters" else if (u == "mm") "millimeters" else "pixels", unit == u) { onUnit(u) }
+                        Box(Modifier.weight(1f)) {
+                            PrintPresetChip(u, if (u == "in") "inches" else if (u == "cm") "centimeters" else if (u == "mm") "millimeters" else "pixels", unit == u) { onUnit(u) }
+                        }
                     }
                 }
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    PrintPresetChip("Portrait", "taller than wide", !landscape) { onLandscape(false) }
-                    PrintPresetChip("Landscape", "wider than tall", landscape) { onLandscape(true) }
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Box(Modifier.weight(1f)) { PrintPresetChip("Portrait", "taller than wide", !landscape) { onLandscape(false) } }
+                    Box(Modifier.weight(1f)) { PrintPresetChip("Landscape", "wider than tall", landscape) { onLandscape(true) } }
                 }
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {

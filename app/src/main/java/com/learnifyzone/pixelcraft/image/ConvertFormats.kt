@@ -215,6 +215,37 @@ object ConvertFormats {
      * side and flattened onto white (PDF pages have no transparency). On-device only:
      * the host JVM has no native pdfium.
      */
+    fun pdfPageCount(pfd: ParcelFileDescriptor): Int {
+        val renderer = PdfRenderer(pfd)
+        try {
+            return renderer.pageCount
+        } finally {
+            renderer.close()
+        }
+    }
+
+    /** Render a single page (0-based) at up to maxDim on the long side. */
+    fun renderPdfPage(pfd: ParcelFileDescriptor, index: Int, maxDim: Int = 2600): Bitmap {
+        val renderer = PdfRenderer(pfd)
+        try {
+            require(index >= 0 && index < renderer.pageCount) { "Page out of range" }
+            val page = renderer.openPage(index)
+            try {
+                val scale = minOf(1f, maxDim.toFloat() / maxOf(page.width, page.height).coerceAtLeast(1))
+                val w = (page.width * scale).toInt().coerceAtLeast(1)
+                val h = (page.height * scale).toInt().coerceAtLeast(1)
+                val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+                bmp.eraseColor(android.graphics.Color.WHITE)
+                page.render(bmp, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+                return bmp
+            } finally {
+                page.close()
+            }
+        } finally {
+            renderer.close()
+        }
+    }
+
     fun renderPdfPages(pfd: ParcelFileDescriptor, maxPages: Int = 20, maxDim: Int = 3000): List<Bitmap> {
         val renderer = PdfRenderer(pfd)
         try {

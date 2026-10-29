@@ -74,10 +74,13 @@ Stage 3 v0.10.1 (built on Stage 2E v0.8.1): queue overview screen, the full "Sel
 
 
 
-## v0.15.1 addition - PDF as input + pixels unit (both his approvals)
+## v0.15.2 fix - px chip layout + all PDF pages
+- The px unit chip was crushed (zero-width vertical wrap, same pattern as v0.14.1): unit and orientation chips now share the row width equally.
+- PDF page picker showed only 12 pages; it now shows every page (thumbnails for the whole document, up to a 500-page guard) and renders just the chosen page at full resolution instead of re-rendering every page before it (fast even for page 200 of a planner).
+
+## v0.15.1 additions - PDF input + pixels unit (both his approvals)
 - "Select PDF" sits next to Choose Image on the landing page. Picking a PDF renders page thumbnails and asks him to choose a page; the chosen page renders at good resolution (up to 2600 px) via PdfRenderer and then flows through the whole tool exactly like an image (calculator, quality check, preview, export). Label shows "PDF · Page N". Device-only path (host JVM has no PDF engine) - same known caveat as the converter's PDF input.
-## v0.15.1 addition - pixels as a custom-size unit (his approval)
-- Custom size now offers px alongside in/cm/mm. In px mode the fields take pixels and the calculator works in reverse: physical size = pixels / PPI at the selected PPI, shown in inches and cm; required pixels equals what he entered; the quality check automatically compares the source image against the entered pixels; aspect lock and reset-to-proportions work in px too.
+- Pixels unit: Custom size offers px alongside in/cm/mm. In px mode the fields take pixels and the calculator works in reverse: physical size = pixels / PPI at the selected PPI, shown in inches and cm; required pixels equals what he entered; the quality check automatically compares the source image against the entered pixels; aspect lock and reset-to-proportions work in px too.
 
 ## v0.15.0 feature - Print Size & DPI (his GO "research deeply and make perfect" + full 3-batch spec)
 - The old placeholder calculator became the real "Print Size & DPI" tool, four screens in the app's design language (his mockup's dark theme was layout-only, per his instruction):
