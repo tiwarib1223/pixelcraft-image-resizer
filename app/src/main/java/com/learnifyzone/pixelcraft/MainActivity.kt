@@ -376,7 +376,12 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
     var printResultDims by remember { mutableStateOf("") }
     var printSaved by remember { mutableStateOf(false) }
     var printPdfUri by remember { mutableStateOf<Uri?>(null) }
-    val printPdfThumbs = remember { mutableStateListOf<Bitmap>() }
+    val printPdfThumbs = remember { mutableStateMapOf<Int, Bitmap>() }
+    var printPdfPageCount by remember { mutableStateOf(0) }
+    var printPdfTempFile by remember { mutableStateOf<File?>(null) }
+    val printPdfThumbQueue = remember { java.util.concurrent.ConcurrentLinkedQueue<Int>() }
+    val printPdfThumbQueued = remember { java.util.Collections.synchronizedSet(mutableSetOf<Int>()) }
+    var printPdfThumbWorkerRunning by remember { mutableStateOf(false) }
     var printPdfPickerOpen by remember { mutableStateOf(false) }
     var printPageBitmap by remember { mutableStateOf<Bitmap?>(null) }
     var printSheetOn by remember { mutableStateOf(false) }
@@ -932,9 +937,7 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
         scope.launch {
             try {
                 val pages = withContext(Dispatchers.IO) {
-                    val pfd: ParcelFileDescriptor = context.contentResolver.openFileDescriptor(uri, "r")
-                        ?: throw IllegalStateException("Could not open the PDF")
-                    pfd.use { ConvertFormats.renderPdfPages(it) }
+                    ConvertFormats.withSeekablePdf(context, uri) { ConvertFormats.renderPdfPages(it) }
                 }
                 if (pages.isEmpty()) throw IllegalStateException("No pages")
                 convertPdfPages = pages
@@ -1103,9 +1106,7 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
         scope.launch {
             try {
                 val pages = withContext(Dispatchers.IO) {
-                    val pfd = context.contentResolver.openFileDescriptor(uri, "r")
-                        ?: throw IllegalStateException("Could not open the PDF")
-                    pfd.use { ConvertFormats.renderPdfPages(it, maxPages = 40) }
+                    ConvertFormats.withSeekablePdf(context, uri) { ConvertFormats.renderPdfPages(it, maxPages = 40) }
                 }
                 if (pages.isEmpty()) throw IllegalStateException("No pages")
                 compressUris.clear(); compressThumbs.clear(); compressLabels.clear(); compressNames.clear(); compressOrigSizes.clear()
@@ -1311,24 +1312,68 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
         }
     }
 
+    /** Picker thumbnails render one at a time, on demand, from the temp file - never all up front. */
+    fun startPrintPdfThumbWorker() {
+        if (printPdfThumbWorkerRunning) return
+        printPdfThumbWorkerRunning = true
+        scope.launch {
+            try {
+                while (true) {
+                    val next = printPdfThumbQueue.poll() ?: break
+                    printPdfThumbQueued.remove(next)
+                    if (printPdfThumbs.containsKey(next)) continue
+                    val file = printPdfTempFile ?: break
+                    try {
+                        val bmp = withContext(Dispatchers.IO) { ConvertFormats.renderPdfPageFromFile(file, next, maxDim = 200) }
+                        printPdfThumbs[next] = bmp
+                    } catch (_: Exception) { /* placeholder stays; scrolling away and back retries */ }
+                }
+            } finally {
+                printPdfThumbWorkerRunning = false
+                if (printPdfThumbQueue.peek() != null) startPrintPdfThumbWorker()
+            }
+        }
+    }
+
+    fun ensurePrintPdfThumb(index: Int) {
+        if (printPdfTempFile == null) return
+        if (index < 0 || index >= printPdfPageCount) return
+        if (printPdfThumbs.containsKey(index)) return
+        if (!printPdfThumbQueued.add(index)) return
+        printPdfThumbQueue.add(index)
+        startPrintPdfThumbWorker()
+    }
+
     fun loadPrintPdf(uri: Uri) {
         busy = true
         busyLabel = "Reading PDF…"
         scope.launch {
             try {
-                val thumbs = withContext(Dispatchers.IO) {
-                    val pfd = context.contentResolver.openFileDescriptor(uri, "r")
-                        ?: throw IllegalStateException("Could not open the PDF")
-                    pfd.use {
-                        val count = ConvertFormats.pdfPageCount(it)
+                // Copy to a temp cache file first: some providers hand out non-seekable
+                // pipe descriptors, and every render opens its own reader on the temp
+                // file (a real file is always seekable) instead of reusing one
+                // descriptor twice - the double open is what v0.15.2 did and his phone
+                // rejected it.
+                val (tmp, count) = withContext(Dispatchers.IO) {
+                    val tmp = File.createTempFile("pixelcraft_pdf_", ".pdf", context.cacheDir)
+                    try {
+                        (context.contentResolver.openInputStream(uri)
+                            ?: throw IllegalStateException("Could not open the PDF")).use { input ->
+                            tmp.outputStream().use { input.copyTo(it) }
+                        }
+                        val count = ConvertFormats.pdfPageCountFromFile(tmp)
+                        if (count <= 0) throw IllegalStateException("No pages")
                         if (count > 500) throw IllegalStateException("That PDF has $count pages - this tool handles up to 500.")
-                        ConvertFormats.renderPdfPages(it, maxPages = count, maxDim = 200)
-                    }
+                        tmp to count
+                    } catch (e: Exception) { tmp.delete(); throw e }
                 }
-                if (thumbs.isEmpty()) throw IllegalStateException("No pages")
-                printPdfUri = uri
+                printPdfTempFile?.delete()
+                printPdfTempFile = tmp
+                printPdfPageCount = count
                 printPdfThumbs.clear()
-                printPdfThumbs.addAll(thumbs)
+                printPdfThumbQueue.clear()
+                printPdfThumbQueued.clear()
+                printPdfUri = uri
                 printPdfPickerOpen = true
                 busy = false
                 busyLabel = ""
@@ -1348,9 +1393,8 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
         scope.launch {
             try {
                 val page = withContext(Dispatchers.IO) {
-                    val pfd = context.contentResolver.openFileDescriptor(uri, "r")
-                        ?: throw IllegalStateException("Could not open the PDF")
-                    pfd.use { ConvertFormats.renderPdfPage(it, index, maxDim = 2600) }
+                    val tmp = printPdfTempFile ?: throw IllegalStateException("Pick the PDF again")
+                    ConvertFormats.renderPdfPageFromFile(tmp, index, maxDim = 2600)
                 }
                 printPageBitmap = page
                 printUri = uri
@@ -1548,7 +1592,7 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
         printPpi = 300; printFitMode = "Fit"; printMarginsOn = false; printCropMarks = false
         printBgWhite = true; printFormat = "JPG"; printFilename = "print-ready"; printJpgQuality = 92
         printResultBytes = null; printResultName = ""; printResultMime = ""; printResultDims = ""
-        printPdfUri = null; printPdfThumbs.clear(); printPdfPickerOpen = false; printPageBitmap = null
+        printPdfUri = null; printPdfThumbs.clear(); printPdfPageCount = 0; printPdfTempFile?.delete(); printPdfTempFile = null; printPdfThumbQueue.clear(); printPdfThumbQueued.clear(); printPdfPickerOpen = false; printPageBitmap = null
         printSheetOn = false; printSheet = "4 × 6"; printCopyCount = 4
         printSaved = false; printGoSetup = false
     }
@@ -3163,7 +3207,9 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                 imgH = printImgH,
                 onPick = { printPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
                 onPickPdf = { printPdfPicker.launch(arrayOf("application/pdf")) },
-                pdfThumbs = if (printPdfPickerOpen) printPdfThumbs else emptyList(),
+                pdfPageCount = if (printPdfPickerOpen) printPdfPageCount else 0,
+                pdfThumbs = printPdfThumbs,
+                onPdfThumbNeeded = { ensurePrintPdfThumb(it) },
                 onPdfPage = { selectPrintPdfPage(it) },
                 onContinue = { screen = Screen.PrintSetup }
             )
@@ -7367,7 +7413,9 @@ private fun PrintHomeScreen(
     imgH: Int,
     onPick: () -> Unit,
     onPickPdf: () -> Unit,
-    pdfThumbs: List<Bitmap>,
+    pdfPageCount: Int,
+    pdfThumbs: Map<Int, Bitmap>,
+    onPdfThumbNeeded: (Int) -> Unit,
     onPdfPage: (Int) -> Unit,
     onContinue: () -> Unit
 ) {
@@ -7401,19 +7449,24 @@ private fun PrintHomeScreen(
                 }
             }
         }
-        if (pdfThumbs.isNotEmpty()) {
+        if (pdfPageCount > 0) {
             Spacer(Modifier.height(12.dp))
             Card(colors = CardDefaults.cardColors(containerColor = SoftGrey), shape = RoundedCornerShape(12.dp)) {
                 Column(Modifier.fillMaxWidth().padding(14.dp)) {
-                    Text("Choose a page", fontWeight = FontWeight.SemiBold, color = DeepNavy, fontSize = 15.sp)
+                    Text("Choose a page ($pdfPageCount pages)", fontWeight = FontWeight.SemiBold, color = DeepNavy, fontSize = 15.sp)
                     Spacer(Modifier.height(8.dp))
-                    Row(Modifier.horizontalScroll(rememberScrollState())) {
-                        pdfThumbs.forEachIndexed { i, t ->
-                            Column(
-                                horizontalAlignment = Alignment.CenterHorizontally,
-                                modifier = Modifier.padding(end = 10.dp).clickable { onPdfPage(i) }
-                            ) {
-                                Image(bitmap = t.asImageBitmap(), contentDescription = null, contentScale = ContentScale.Fit, modifier = Modifier.height(120.dp).border(1.dp, Slate))
+                    LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        items(pdfPageCount) { i ->
+                            val t = pdfThumbs[i]
+                            LaunchedEffect(i) { if (t == null) onPdfThumbNeeded(i) }
+                            Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.clickable { onPdfPage(i) }) {
+                                if (t != null) {
+                                    Image(bitmap = t.asImageBitmap(), contentDescription = null, contentScale = ContentScale.Fit, modifier = Modifier.height(120.dp).border(1.dp, Slate))
+                                } else {
+                                    Box(Modifier.width(88.dp).height(120.dp).border(1.dp, Slate), contentAlignment = Alignment.Center) {
+                                        CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp, color = SkyBlue)
+                                    }
+                                }
                                 Text("Page ${i + 1}", fontSize = 12.sp, color = DeepNavy)
                             }
                         }

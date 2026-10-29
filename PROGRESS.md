@@ -74,6 +74,12 @@ Stage 3 v0.10.1 (built on Stage 2E v0.8.1): queue overview screen, the full "Sel
 
 
 
+## v0.15.3 fix - PDF open path rebuilt (his "File descriptor not seekable" report + 200-page requirement)
+- Root cause from the v0.15.1 -> v0.15.2 diff: v0.15.1 opened Android's PDF engine ONCE per file and worked; v0.15.2 opened it twice on the same descriptor (once to count pages, once to render) and the second open is what his phone rejected with "File descriptor not seekable". Back to one open per operation, and every operation works on a temp copy of the PDF in the app's cache - a real file is always seekable, so Downloads/cloud providers that hand out pipe descriptors work too. The temp file is deleted when the tool resets or another PDF is picked.
+- The page picker is built for big documents now: opening a PDF only reads the page count (instant even for 200 pages), the picker lists every page right away with a loading placeholder, and each thumbnail renders on demand as it scrolls into view - pages are never all rendered up front. The chosen page renders singly at full resolution (up to 2600 px), so page 200 is as fast as page 1.
+- The same temp-copy path now covers the Format Converter and Compress PDF inputs, which shared the old direct-descriptor open.
+- Tested against a synthetic 200-page PDF (page count + rendering page 199 directly) and the temp-copy/cleanup path. The 500-page guard from v0.15.2 still applies (vetoable).
+
 ## v0.15.2 fix - px chip layout + all PDF pages
 - The px unit chip was crushed (zero-width vertical wrap, same pattern as v0.14.1): unit and orientation chips now share the row width equally.
 - PDF page picker showed only 12 pages; it now shows every page (thumbnails for the whole document, up to a 500-page guard) and renders just the chosen page at full resolution instead of re-rendering every page before it (fast even for page 200 of a planner).

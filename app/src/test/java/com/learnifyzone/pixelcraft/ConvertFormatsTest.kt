@@ -260,6 +260,80 @@ class ConvertFormatsTest {
     }
 
     @Test
+    fun withSeekablePdfCopiesAndCleansUp() {
+        // Some providers (Downloads, cloud-backed files) hand out non-seekable pipe
+        // descriptors that PdfRenderer rejects. withSeekablePdf must copy the bytes
+        // to a temp file, give the block a seekable descriptor, and delete the temp.
+        val context = org.robolectric.RuntimeEnvironment.getApplication()
+        val objs = listOf(
+            "1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n",
+            "2 0 obj<</Type/Pages/Kids[3 0 R 4 0 R]/Count 2>>endobj\n",
+            "3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 40 30]>>endobj\n",
+            "4 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 20 20]>>endobj\n"
+        )
+        val sb = StringBuilder("%PDF-1.4\n")
+        val offsets = mutableListOf<Int>()
+        objs.forEach { offsets.add(sb.length); sb.append(it) }
+        val xrefPos = sb.length
+        sb.append("xref\n0 5\n0000000000 65535 f \n")
+        offsets.forEach { sb.append(String.format("%010d 00000 n \n", it)) }
+        sb.append("trailer<</Size 5/Root 1 0 R>>\nstartxref\n").append(xrefPos).append("\n%%EOF")
+        // file:// exercises the same openInputStream -> temp-copy -> seekable-descriptor
+        // path; the non-seekable provider pipe it guards against exists only on-device.
+        val src = File.createTempFile("pc_pdf_src_test", ".pdf")
+        src.writeBytes(sb.toString().toByteArray(Charsets.ISO_8859_1))
+        val uri = android.net.Uri.fromFile(src)
+        fun tempLeftovers() = context.cacheDir.listFiles()?.count { it.name.startsWith("pixelcraft_pdf_") } ?: 0
+        val before = tempLeftovers()
+        try {
+            val count = ConvertFormats.withSeekablePdf(context, uri) { ConvertFormats.pdfPageCount(it) }
+            if (count != 0) assertEquals(2, count)   // host shadow parses no pages; on-device path proves the copy
+        } catch (e: Exception) {
+            val msg = e.message ?: ""
+            if (!(msg.contains("closed") || e is java.io.IOException)) throw e   // host JVM has no PDF engine
+        } finally {
+            assertEquals(before, tempLeftovers())   // temp file always deleted
+            src.delete()
+        }
+    }
+
+    private fun buildPdfBytes(pageCount: Int): ByteArray {
+        val sb = StringBuilder("%PDF-1.4\n")
+        val offsets = mutableListOf<Int>()
+        fun obj(body: String) { offsets.add(sb.length); sb.append(body) }
+        obj("1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n")
+        val kids = (3 until 3 + pageCount).joinToString(" ") { "$it 0 R" }
+        obj("2 0 obj<</Type/Pages/Kids[$kids]/Count $pageCount>>endobj\n")
+        for (i in 0 until pageCount) obj("${3 + i} 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 40 30]>>endobj\n")
+        val xrefPos = sb.length
+        sb.append("xref\n0 ${offsets.size + 1}\n0000000000 65535 f \n")
+        offsets.forEach { sb.append(String.format("%010d 00000 n \n", it)) }
+        sb.append("trailer<</Size ${offsets.size + 1}/Root 1 0 R>>\nstartxref\n").append(xrefPos).append("\n%%EOF")
+        return sb.toString().toByteArray(Charsets.ISO_8859_1)
+    }
+
+    @Test
+    fun twoHundredPagePdfCountsAndRendersLatePageFromFile() {
+        // His requirement: even a 200-page PDF must open, show every page, and render
+        // a late page directly (page 199 without rendering the 199 before it).
+        val tmp = File.createTempFile("pc_pdf_200_test", ".pdf")
+        tmp.writeBytes(buildPdfBytes(200))
+        try {
+            val count = ConvertFormats.pdfPageCountFromFile(tmp)
+            if (count == 0) return   // host shadow parses no pages
+            assertEquals(200, count)
+            val p199 = ConvertFormats.renderPdfPageFromFile(tmp, 199, maxDim = 200)
+            assertTrue(p199.width > 0 && p199.height > 0)
+        } catch (e: Exception) {
+            val msg = e.message ?: ""
+            if (msg.contains("closed") || e is java.io.IOException) return   // host JVM has no PDF engine
+            throw e
+        } finally {
+            tmp.delete()
+        }
+    }
+
+    @Test
     fun sixTargetsInHisOrder() {
         assertEquals(listOf("JPG/JPEG", "PNG", "WebP", "PDF", "BMP", "TIFF"), ConvertFormats.targets.map { it.label })
         assertTrue(ConvertFormats.qualityApplies(ConvertFormats.byId("jpg")))

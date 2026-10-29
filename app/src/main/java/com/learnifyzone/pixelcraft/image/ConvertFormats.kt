@@ -8,6 +8,7 @@ import android.graphics.pdf.PdfRenderer
 import android.net.Uri
 import android.os.ParcelFileDescriptor
 import java.io.ByteArrayOutputStream
+import java.io.File
 
 /**
  * Real encoders for the Format Converter tool.
@@ -215,6 +216,50 @@ object ConvertFormats {
      * side and flattened onto white (PDF pages have no transparency). On-device only:
      * the host JVM has no native pdfium.
      */
+    /**
+     * Opens a PDF from a content Uri as a SEEKABLE descriptor. Some providers
+     * (Downloads, cloud-backed files) hand out pipe descriptors that
+     * PdfRenderer rejects with "File descriptor not seekable", so the bytes are
+     * copied to a cache temp file first and the temp file is deleted after use.
+     */
+    fun <T> withSeekablePdf(context: Context, uri: Uri, block: (ParcelFileDescriptor) -> T): T {
+        val tmp = File.createTempFile("pixelcraft_pdf_", ".pdf", context.cacheDir)
+        try {
+            (context.contentResolver.openInputStream(uri)
+                ?: throw IllegalStateException("Could not open the PDF")).use { input ->
+                tmp.outputStream().use { input.copyTo(it) }
+            }
+            return ParcelFileDescriptor.open(tmp, ParcelFileDescriptor.MODE_READ_ONLY).use(block)
+        } finally {
+            tmp.delete()
+        }
+    }
+
+    /** Runs [block] with a PdfRenderer open on a real file (always seekable); exactly one open per call. */
+    fun <T> withPdfRendererOnFile(file: File, block: (PdfRenderer) -> T): T =
+        ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY).use { pfd ->
+            PdfRenderer(pfd).use(block)
+        }
+
+    fun pdfPageCountFromFile(file: File): Int = withPdfRendererOnFile(file) { it.pageCount }
+
+    /** Render one page (0-based) from a real file at up to maxDim on the long side. */
+    fun renderPdfPageFromFile(file: File, index: Int, maxDim: Int): Bitmap = withPdfRendererOnFile(file) { renderer ->
+        require(index >= 0 && index < renderer.pageCount) { "Page out of range" }
+        val page = renderer.openPage(index)
+        try {
+            val scale = minOf(1f, maxDim.toFloat() / maxOf(page.width, page.height).coerceAtLeast(1))
+            val w = (page.width * scale).toInt().coerceAtLeast(1)
+            val h = (page.height * scale).toInt().coerceAtLeast(1)
+            val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+            bmp.eraseColor(android.graphics.Color.WHITE)
+            page.render(bmp, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+            bmp
+        } finally {
+            page.close()
+        }
+    }
+
     fun pdfPageCount(pfd: ParcelFileDescriptor): Int {
         val renderer = PdfRenderer(pfd)
         try {
