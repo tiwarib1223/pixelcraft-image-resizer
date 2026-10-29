@@ -103,8 +103,6 @@ import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextField
-import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.darkColorScheme
@@ -1531,6 +1529,15 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                 snackbar.showSnackbar("Could not render that PDF: ${e.message ?: "unknown error"}")
             }
         }
+    }
+
+    /** "Add" applies the currently marked pages - same action as the big "Use N selected pages" button. */
+    fun addMarkedPrintPages() {
+        if (printPdfSelected.isEmpty()) {
+            scope.launch { snackbar.showSnackbar("Tap pages below to select them first.") }
+            return
+        }
+        selectPrintPdfPages(printPdfSelected.sorted())
     }
 
     /** Custom-field value to inches; px mode converts through the selected PPI. */
@@ -3416,7 +3423,7 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                 pdfPageCount = if (printPdfPickerOpen) printPdfPageCount else 0,
                 pdfThumbs = printPdfThumbs,
                 pdfSelected = printPdfSelected,
-                onPdfPagesAdd = { pages -> pages.forEach { printPdfSelected.add(it) } },
+                onPdfAddMarked = { addMarkedPrintPages() },
                 onPdfThumbNeeded = { ensurePrintPdfThumb(it) },
                 onPdfAllPages = { selectPrintPdfAllPages() },
                 onPdfPage = { togglePrintPdfPage(it) },
@@ -7881,7 +7888,7 @@ private fun PrintHomeScreen(
     pdfPageCount: Int,
     pdfThumbs: Map<Int, Bitmap>,
     pdfSelected: Set<Int>,
-    onPdfPagesAdd: (List<Int>) -> Unit,
+    onPdfAddMarked: () -> Unit,
     onPdfThumbNeeded: (Int) -> Unit,
     onPdfAllPages: () -> Unit,
     onPdfPage: (Int) -> Unit,
@@ -7952,38 +7959,9 @@ private fun PrintHomeScreen(
                             )
                         }
                         Spacer(Modifier.height(8.dp))
-                        Text("Select pages", color = DeepNavy, fontSize = 15.sp)
-                        Spacer(Modifier.height(2.dp))
-                        var pageText by remember(pdfPageCount) { mutableStateOf("") }
-                        var pageTextNote by remember { mutableStateOf("") }
-                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            TextField(
-                                value = pageText,
-                                onValueChange = { pageText = it; pageTextNote = "" },
-                                placeholder = { Text("(e.g., 4, 9, 47, 83, 126, 229, …)", fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, softWrap = false) },
-                                singleLine = true,
-                                colors = TextFieldDefaults.colors(
-                                    focusedContainerColor = Color.Transparent,
-                                    unfocusedContainerColor = Color.Transparent,
-                                    disabledContainerColor = Color.Transparent,
-                                    focusedIndicatorColor = SkyBlue,
-                                    unfocusedIndicatorColor = Slate
-                                ),
-                                modifier = Modifier.weight(1f)
-                            )
-                            OutlinedButton(onClick = {
-                                val (pages, skipped) = parsePageList(pageText, pdfPageCount)
-                                when {
-                                    pages.isEmpty() && skipped.isEmpty() -> pageTextNote = "Type page numbers first, like 3, 23, 67-70."
-                                    skipped.isEmpty() -> { onPdfPagesAdd(pages); pageText = ""; pageTextNote = "" }
-                                    pages.isEmpty() -> pageTextNote = "Could not use: ${skipped.joinToString(", ")} - this PDF has $pdfPageCount pages."
-                                    else -> { onPdfPagesAdd(pages); pageText = ""; pageTextNote = "Added. Skipped: ${skipped.joinToString(", ")} - this PDF has $pdfPageCount pages." }
-                                }
-                            }) { Text("Add", color = DeepNavy) }
-                        }
-                        if (pageTextNote.isNotBlank()) {
-                            Spacer(Modifier.height(4.dp))
-                            Text(pageTextNote, fontSize = 12.sp, color = if (pageTextNote.startsWith("Added")) Slate else MaterialTheme.colorScheme.error)
+                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+                            Text("Select pages", color = DeepNavy, fontSize = 15.sp)
+                            OutlinedButton(onClick = onPdfAddMarked) { Text("Add", color = DeepNavy) }
                         }
                         Spacer(Modifier.height(6.dp))
                         if (pdfSelected.isNotEmpty()) {
@@ -8012,7 +7990,6 @@ private fun PrintHomeScreen(
                                         Text("✅", fontSize = 22.sp, modifier = Modifier.align(Alignment.TopEnd).padding(2.dp))
                                     }
                                 }
-                                Text("Page ${i + 1}", fontSize = 12.sp, color = if (isSel) SkyBlue else DeepNavy, fontWeight = if (isSel) FontWeight.Bold else FontWeight.Normal)
                             }
                         }
                     }

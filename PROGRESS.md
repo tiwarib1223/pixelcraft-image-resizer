@@ -74,6 +74,9 @@ Stage 3 v0.10.1 (built on Stage 2E v0.8.1): queue overview screen, the full "Sel
 
 
 
+## v0.15.9 - typed page entry removed entirely (his veto: "But no typing")
+- The typed page-number entry is gone completely: no box, no underline, no placeholder, no hint, no keyboard, nothing tappable except Add. The row is plain "Select pages" text on the left and the Add button on the right, same line. Add applies the currently ✅-marked pages - the same action as the big "Use N selected pages" button (both stay, matching his mental model of Add = apply my marks); with nothing marked, Add shows a gentle "Tap pages below to select them first." Selection by ✅ marks on thumbnails is the one way to pick pages, and thumbnails now show clean - no "Page N" labels under them (his removal, confirmed by screenshot); the ✅ mark plus blue border on selected pages is the only overlay. Kept as he confirmed: "N pages selected: ..." banner, "Choose a page (N pages)", thumbnail page labels, "Use N selected pages", All pages mode. (The page-list parser code remains but is user-unreachable, covered by its unit test.)
+
 ## v0.15.8 text - final label casing (his pick)
 - The entry label is "Select pages" (lowercase p), matching "Choose a page" above it.
 
