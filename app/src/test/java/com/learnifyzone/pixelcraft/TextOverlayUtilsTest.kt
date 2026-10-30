@@ -403,4 +403,22 @@ class TextOverlayUtilsTest {
         assertEquals(0xFF000000.toInt(), TextOverlayUtils.QUICK_COLORS[1])
         assertEquals(listOf("Classic", "Bold", "Elegant", "Shadow"), TextOverlayUtils.QUICK_STYLE_NAMES)
     }
+
+    @Test
+    fun flipHorizontalMirrorsInkAroundLayerCentre() {
+        // v0.16.7 Flip & Clone: a flipped layer's ink must be the horizontal mirror of the
+        // original around the layer centre (off-centre so the mirror is measurable).
+        val base = TextLayer(1, text = "AB", colorArgb = Color.BLACK)
+        base.cx = 0.3f
+        val normal = draw(base)
+        val flipped = draw(base.copy(flipH = true))
+        val (nMinX, _, nMaxX, _) = inkBounds(normal)
+        val (fMinX, _, fMaxX, _) = inkBounds(flipped)
+        val px = 0.3f * 400
+        assertEquals(2 * px - nMaxX, fMinX.toFloat(), 3f)
+        assertEquals(2 * px - nMinX, fMaxX.toFloat(), 3f)
+        // mirroring preserves the amount of ink (pixel-for-pixel copy across the centre axis)
+        fun ink(b: Bitmap): Int { var n = 0; for (y in 0 until b.height) for (x in 0 until b.width) if (b.getPixel(x, y) != Color.WHITE) n++; return n }
+        assertEquals(ink(normal).toFloat(), ink(flipped).toFloat(), ink(normal) * 0.1f + 4f)
+    }
 }

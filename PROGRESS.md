@@ -74,6 +74,15 @@ Stage 3 v0.10.1 (built on Stage 2E v0.8.1): queue overview screen, the full "Sel
 
 
 
+## v0.16.7 - Corner handles, eyedropper, flip & clone (his "Use all" - 3 approved ideas)
+
+- CORNER HANDLES on the selected layer, pro-app style: a small white X at the top-left corner deletes the layer (one tap, undoable), and an orange handle at the bottom-right corner resizes + rotates with ONE finger (drag away/toward = bigger/smaller, drag around = rotate). Works for text and image layers, on top of the existing pinch/drag gestures.
+- PICK COLOUR (eyedropper): new Create-menu tab. Choose the target (Text colour / Background), tap "Start picking", tap any spot on the photo - that exact colour goes to the selected text layer. Picking mode exits after one successful pick or when leaving the tab.
+- FLIP & CLONE: new Create-menu tab. "Flip Horizontal" mirrors the selected text or image layer (mirroring is applied in the draw pipeline, so preview AND export match). "Duplicate Layer" clones the selected layer with a small offset and selects the clone.
+- Create grid is now 8 tiles: Add Text, Add Image, Image Size, Layers, Filters, Process, Pick Colour, Flip & Clone.
+- Correction inside the tap hit-test: draw order is image layers UNDER text (verified in drawAll), so text is hit-tested first again (v0.16.6 briefly had images first). Topmost layer always wins, logo still tappable wherever no text bounds cover it.
+- Tests: 121 total / 0 failures (flipHorizontalMirrorsInkAroundLayerCentre, phoneWindowCornerHandles, phoneWindowFlipClone with a real Duplicate click, phoneWindowPickColour + the v0.16.6 set).
+
 ## v0.16.6 - Menu button colour + Position-mode zoom slider (his two "small things")
 
 - Menu back button is now ORANGE with WHITE writing (his exact ask: "Menu button make orange colour with white writing").

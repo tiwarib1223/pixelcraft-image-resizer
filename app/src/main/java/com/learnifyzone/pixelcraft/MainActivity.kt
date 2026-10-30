@@ -87,6 +87,10 @@ import androidx.compose.material.icons.filled.SwapVert
 import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Tune
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Colorize
+import androidx.compose.material.icons.filled.Flip
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -2731,6 +2735,62 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
         }
     }
 
+    /** v0.16.7 eyedropper (his approved idea): sample the photo colour at an effective-canvas point and apply it to the selected text layer. */
+    fun pickColourAt(xEff: Float, yEff: Float, target: String): Boolean {
+        val bmp = textPhotoBitmap ?: return false
+        val layer = selectedTextLayer() ?: return false
+        val r = textCropRect
+        val px = ((r?.get(0) ?: 0f) * bmp.width + xEff).toInt()
+        val py = ((r?.get(1) ?: 0f) * bmp.height + yEff).toInt()
+        if (px !in 0 until bmp.width || py !in 0 until bmp.height) return false
+        recordTextUndo()
+        val c = bmp.getPixel(px, py)
+        if (target == "background") layer.bgColorArgb = c else layer.colorArgb = c
+        textResultBytes = null
+        textSaved = false
+        textTick++
+        return true
+    }
+
+    /** v0.16.7: mirror the selected layer (text or image) horizontally - one tap. */
+    fun flipSelectedLayer() {
+        val t = selectedTextLayer()
+        val im = selectedImageLayer()
+        if (t == null && im == null) return
+        recordTextUndo()
+        t?.let { it.flipH = !it.flipH }
+        im?.let { it.flipH = !it.flipH }
+        textResultBytes = null
+        textSaved = false
+        textTick++
+    }
+
+    /** v0.16.7: duplicate the selected layer with a small offset - one tap. */
+    fun cloneSelectedLayer() {
+        val t = selectedTextLayer()
+        if (t != null) {
+            recordTextUndo()
+            var newId = System.currentTimeMillis()
+            while (textLayers.any { it.id == newId } || textImageLayers.any { it.id == newId }) newId++
+            val c = t.copy(id = newId, cx = (t.cx + 0.05f).coerceAtMost(0.95f), cy = (t.cy + 0.05f).coerceAtMost(0.95f))
+            textLayers.add(c)
+            textSelectedId = c.id
+            textImageSelectedId = null
+        } else {
+            val im = selectedImageLayer() ?: return
+            var newId = System.currentTimeMillis()
+            while (textLayers.any { it.id == newId } || textImageLayers.any { it.id == newId }) newId++
+            val c = TextOverlayUtils.ImageLayer(newId, im.bitmap, (im.cx + 0.05f).coerceAtMost(0.95f), (im.cy + 0.05f).coerceAtMost(0.95f), im.widthFrac, im.rotation, im.opacity)
+            c.flipH = im.flipH
+            textImageLayers.add(c)
+            textImageSelectedId = c.id
+            textSelectedId = null
+        }
+        textResultBytes = null
+        textSaved = false
+        textTick++
+    }
+
     fun refreshTextStylePresets() {
         scope.launch(Dispatchers.IO) {
             val list = TextStylePresetsStore.load(context)
@@ -3970,15 +4030,15 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                 onDeleteImageLayer = { deleteImageLayer(it) },
                 onMoveImageLayer = { id, dir -> moveImageLayer(id, dir) },
                 onTapAt = { x, y ->
-                    // v0.16.6 (his "I can't choose properly in main image"): the TOP layer wins. Image
-                    // layers draw above text, so they are hit-tested FIRST; within each kind the
-                    // topmost (last drawn) layer is picked (textLayerAt already walks top-down).
-                    val eff = textEffectiveSize()
-                    val im = textImageLayers.lastOrNull { TextOverlayUtils.imageLayerHit(it, x, y, eff[0], eff[1]) }
-                    if (im != null) { textImageSelectedId = im.id; textSelectedId = null; textTick++ }
+                    // drawAll draws image layers UNDER text, so the TOP layer is text: hit-test text
+                    // first (textLayerAt walks topmost-first), then image layers (topmost first).
+                    // (v0.16.6 briefly had images first - corrected here to match the real draw order.)
+                    val hit = textLayerAt(x, y)
+                    if (hit != null) { textSelectedId = hit.id; textImageSelectedId = null; textTick++ }
                     else {
-                        val hit = textLayerAt(x, y)
-                        if (hit != null) { textSelectedId = hit.id; textImageSelectedId = null; textTick++ }
+                        val eff = textEffectiveSize()
+                        val im = textImageLayers.lastOrNull { TextOverlayUtils.imageLayerHit(it, x, y, eff[0], eff[1]) }
+                        if (im != null) { textImageSelectedId = im.id; textSelectedId = null; textTick++ }
                     }
                 },
                 onEditOpen = { textEditOpen = it },
@@ -4013,6 +4073,9 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                 onCropZoom = { z -> pinchTextCropZoom(z) },
                 cropZoomAbs = textCropZoomAbs,
                 onCropZoomAbs = { z -> setTextCropZoomAbs(z) },
+                onPickColourAt = { x, y, t -> pickColourAt(x, y, t) },
+                onFlipSelected = { flipSelectedLayer() },
+                onCloneSelected = { cloneSelectedLayer() },
                 stylePresets = textStylePresets,
                 onLoadStyles = { refreshTextStylePresets() },
                 onApplyStyle = { p -> applyTextStylePreset(p) },
@@ -9253,6 +9316,9 @@ private fun TextOnPhotoScreen(
     onCropZoom: (Float) -> Unit,
     cropZoomAbs: Float,
     onCropZoomAbs: (Float) -> Unit,
+    onPickColourAt: (Float, Float, String) -> Boolean,
+    onFlipSelected: () -> Unit,
+    onCloneSelected: () -> Unit,
     stylePresets: List<TextStylePreset>,
     onLoadStyles: () -> Unit,
     onApplyStyle: (TextStylePreset) -> Unit,
@@ -9262,6 +9328,8 @@ private fun TextOnPhotoScreen(
     val selected = layers.firstOrNull { it.id == selectedId }
     val selectedImage = imageLayers.firstOrNull { it.id == selectedImageId }
     var previewTouch by remember { mutableStateOf(false) }
+    var pickColourMode by remember { mutableStateOf(false) }   // v0.16.7 eyedropper
+    var pickTarget by remember { mutableStateOf("text") }
 
     BoxWithConstraints(modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
     // v0.16.5: the sheet takes a SHARE of the screen (42%, clamped) instead of a fixed height,
@@ -9334,10 +9402,13 @@ private fun TextOnPhotoScreen(
                             previewTouch = false
                         }
                     }
-                    .pointerInput(bmp, cropAdjust) {
+                    .pointerInput(bmp, cropAdjust, pickColourMode, pickTarget) {
                         if (!cropAdjust) {
                             detectTapGestures(
-                                onTap = { off -> onTapAt(off.x / sPx, off.y / sPx) },
+                                onTap = { off ->
+                                    if (pickColourMode) { if (onPickColourAt(off.x / sPx, off.y / sPx, pickTarget)) pickColourMode = false }
+                                    else onTapAt(off.x / sPx, off.y / sPx)
+                                },
                                 onDoubleTap = { off -> onDoubleTapAt(off.x / sPx, off.y / sPx) }
                             )
                         }
@@ -9386,11 +9457,68 @@ private fun TextOnPhotoScreen(
                     }
                     nc.restore()
                 }
+                // v0.16.7 (his "Use all"): pro corner handles on the selected layer - top-left X deletes,
+                // bottom-right orange handle resizes + rotates with ONE finger (routes through onTransform,
+                // the same proven path as pinch). Drag math reads the corner vector fresh via state.
+                if (!cropAdjust && (selected != null || selectedImage != null)) {
+                    val hCxPx: Float; val hCyPx: Float; val hHalfW: Float; val hHalfH: Float; val hRot: Float
+                    if (selected != null) {
+                        val mb = TextOverlayUtils.measure(selected, effW)
+                        hCxPx = selected.cx * effW; hCyPx = selected.cy * effH
+                        hHalfW = mb.w / 2f; hHalfH = mb.h / 2f; hRot = selected.rotation
+                    } else {
+                        val sz = TextOverlayUtils.imageLayerSize(selectedImage!!, effW)
+                        hCxPx = selectedImage!!.cx * effW; hCyPx = selectedImage!!.cy * effH
+                        hHalfW = sz[0] / 2f; hHalfH = sz[1] / 2f; hRot = selectedImage!!.rotation
+                    }
+                    val hRad = Math.toRadians(hRot.toDouble())
+                    val hCos = kotlin.math.cos(hRad).toFloat(); val hSin = kotlin.math.sin(hRad).toFloat()
+                    val hCentre = Offset(hCxPx * sPx, hCyPx * sPx)
+                    val cornerVecNow = { Offset((hHalfW * hCos - hHalfH * hSin) * sPx, (hHalfW * hSin + hHalfH * hCos) * sPx) }
+                    val cornerVecState = rememberUpdatedState(cornerVecNow)
+                    val onTransformNow = rememberUpdatedState(onTransform)
+                    val delCorner = hCentre + Offset((-hHalfW * hCos + hHalfH * hSin) * sPx, (-hHalfW * hSin - hHalfH * hCos) * sPx)
+                    val rsCorner = hCentre + cornerVecNow()
+                    Box(
+                        Modifier
+                            .offset { IntOffset((delCorner.x - 13.dp.toPx()).roundToInt(), (delCorner.y - 13.dp.toPx()).roundToInt()) }
+                            .size(26.dp)
+                            .background(Color.White, CircleShape)
+                            .border(2.dp, Color(0xFFE53935), CircleShape)
+                            .clickable { if (selected != null) onDeleteLayer(selected.id) else selectedImage?.let { onDeleteImageLayer(it.id) } },
+                        contentAlignment = Alignment.Center
+                    ) { Icon(Icons.Default.Close, contentDescription = "Delete layer", tint = Color(0xFFE53935), modifier = Modifier.size(15.dp)) }
+                    Box(
+                        Modifier
+                            .offset { IntOffset((rsCorner.x - 14.dp.toPx()).roundToInt(), (rsCorner.y - 14.dp.toPx()).roundToInt()) }
+                            .size(28.dp)
+                            .background(Orange, CircleShape)
+                            .border(2.dp, Color.White, CircleShape)
+                            .pointerInput(selectedId, selectedImageId) {
+                                var vec = Offset.Zero
+                                detectDragGestures(
+                                    onDragStart = { vec = cornerVecState.value() }
+                                ) { change, drag ->
+                                    change.consume()
+                                    val len = vec.getDistance()
+                                    val newVec = vec + drag
+                                    if (len > 6f) {
+                                        val z = newVec.getDistance() / len
+                                        val r = (Math.toDegrees(kotlin.math.atan2(newVec.y.toDouble(), newVec.x.toDouble())) - Math.toDegrees(kotlin.math.atan2(vec.y.toDouble(), vec.x.toDouble()))).toFloat()
+                                        vec = newVec
+                                        if (z.isFinite() && z > 0.05f) onTransformNow.value(0f, 0f, z, r)
+                                    } else vec = newVec
+                                }
+                            },
+                        contentAlignment = Alignment.Center
+                    ) { Icon(Icons.Default.Refresh, contentDescription = "Resize and rotate", tint = Color.White, modifier = Modifier.size(16.dp)) }
+                }
             }
         }
         Spacer(Modifier.height(2.dp))
         Text(
-            if (cropAdjust) "Drag your photo to position it · use the slider or pinch to zoom · tap Done when it looks right."
+            if (pickColourMode) "Tap anywhere on the photo - that colour goes to your text."
+            else if (cropAdjust) "Drag your photo to position it · use the slider or pinch to zoom · tap Done when it looks right."
             else "Drag to move · pinch to resize · twist to rotate · double-tap to edit text",
             color = Slate, fontSize = 10.sp
         )
@@ -9404,10 +9532,13 @@ private fun TextOnPhotoScreen(
         val testCropAdjust = (androidx.compose.ui.platform.LocalContext.current as? Activity)?.intent?.getStringExtra("pixelcraft.test.cropadjust")
         LaunchedEffect(Unit) { if (testCropAdjust == "1" && !cropAdjust) onCropAdjust(true) }
         var sheetLevel by remember { mutableStateOf(testSheetLevel ?: "menu") }
+        LaunchedEffect(sheetLevel) { if (sheetLevel != "pickcolour") pickColourMode = false }
         // Selecting a layer jumps straight to its options (his flow); Back returns to the menu manually.
         LaunchedEffect(selectedId, selectedImageId) {
-            if (selectedImageId != null) sheetLevel = "image"
-            else if (selectedId != null) sheetLevel = "text"
+            if (testSheetLevel == null) {   // a test hook pins the level
+                if (selectedImageId != null) sheetLevel = "image"
+                else if (selectedId != null) sheetLevel = "text"
+            }
         }
         Card(
             colors = CardDefaults.cardColors(containerColor = Color.White),
@@ -9981,16 +10112,51 @@ private fun TextOnPhotoScreen(
                     Spacer(Modifier.height(14.dp))
 
                     }
+                    "pickcolour" -> {
+                    // v0.16.7 eyedropper (his approved idea): pick any colour straight from the photo.
+                    Text("Pick Colour", color = DeepNavy, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                    Spacer(Modifier.height(4.dp))
+                    Text(if (selected == null) "Tap a text layer on the photo first, then come back here." else "Choose where the colour goes, tap Start picking, then tap the photo.", color = Slate, fontSize = 11.sp)
+                    Spacer(Modifier.height(8.dp))
+                    Row {
+                        OutlinedButton(onClick = { pickTarget = "text" }, shape = RoundedCornerShape(10.dp), colors = ButtonDefaults.outlinedButtonColors(containerColor = if (pickTarget == "text") SkyBlue else Color.Transparent, contentColor = if (pickTarget == "text") Color.White else DeepNavy)) { Text("Text colour", fontSize = 12.sp) }
+                        Spacer(Modifier.width(8.dp))
+                        OutlinedButton(onClick = { pickTarget = "background" }, shape = RoundedCornerShape(10.dp), colors = ButtonDefaults.outlinedButtonColors(containerColor = if (pickTarget == "background") SkyBlue else Color.Transparent, contentColor = if (pickTarget == "background") Color.White else DeepNavy)) { Text("Background", fontSize = 12.sp) }
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    Button(
+                        onClick = { pickColourMode = !pickColourMode },
+                        enabled = selected != null,
+                        modifier = Modifier.fillMaxWidth().height(46.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = if (pickColourMode) Orange else SkyBlue, contentColor = Color.White),
+                        shape = RoundedCornerShape(14.dp)
+                    ) { Text(if (pickColourMode) "Now tap the photo…" else "Start picking", fontWeight = FontWeight.Bold) }
+                    }
+                    "flipclone" -> {
+                    // v0.16.7 (his approved idea): mirror + duplicate the selected layer in one tap.
+                    Text("Flip & Clone", color = DeepNavy, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                    Spacer(Modifier.height(4.dp))
+                    Text(if (selected == null && selectedImage == null) "Tap a layer on the photo first - then flip or duplicate it here." else "Works on the selected " + (if (selected != null) "text" else "image") + " layer.", color = Slate, fontSize = 11.sp)
+                    Spacer(Modifier.height(8.dp))
+                    Button(onClick = onFlipSelected, enabled = selected != null || selectedImage != null, modifier = Modifier.fillMaxWidth().height(46.dp), colors = ButtonDefaults.buttonColors(containerColor = SkyBlue, contentColor = Color.White), shape = RoundedCornerShape(14.dp)) { Text("Flip Horizontal", fontWeight = FontWeight.Bold) }
+                    Spacer(Modifier.height(8.dp))
+                    Button(onClick = onCloneSelected, enabled = selected != null || selectedImage != null, modifier = Modifier.fillMaxWidth().height(46.dp), colors = ButtonDefaults.buttonColors(containerColor = Orange, contentColor = Color.White), shape = RoundedCornerShape(14.dp)) { Text("Duplicate Layer", fontWeight = FontWeight.Bold) }
+                    if (testSheetLevel != null) Text("hook:layers=" + layers.size + ",images=" + imageLayers.size, fontSize = 8.sp, color = BorderGrey)
+                    }
                     "save" -> {
                     // ---- Save Photo ----
                     Text("Process & Save", color = DeepNavy, fontWeight = FontWeight.Bold, fontSize = 16.sp)
                     Spacer(Modifier.height(6.dp))
                     Row {
-                        PrintPresetChip("PNG", "best quality", format == "PNG") { onFormat("PNG") }
-                        PrintPresetChip("JPG", "smaller file", format == "JPG") { onFormat("JPG") }
+                        PrintPresetChip("PNG", "best quality", format == "PNG") { val had = resultBytes != null; onFormat("PNG"); if (had) onProcess() }
+                        PrintPresetChip("JPG", "smaller file", format == "JPG") { val had = resultBytes != null; onFormat("JPG"); if (had) onProcess() }
                     }
                     Text("Nothing is saved until you tap Save. Your original photo is never replaced.", color = Slate, fontSize = 11.sp)
                     Spacer(Modifier.height(8.dp))
+                    // v0.16.7 (his "After first process again second process coming"): once a fresh
+                    // result exists, ONLY "Save to Gallery" shows - Process returns when an edit
+                    // (layer, format, filter, position) invalidates the result (resultBytes -> null).
+                    if (resultBytes == null) {
                     Button(
                         onClick = onProcess,
                         // v0.16.5: enabled with zero layers too - zoom/crop + save without text is a real flow.
@@ -9999,6 +10165,7 @@ private fun TextOnPhotoScreen(
                         colors = ButtonDefaults.buttonColors(containerColor = SkyBlue, contentColor = Color.White),
                         shape = RoundedCornerShape(14.dp)
                     ) { Text("Process", fontWeight = FontWeight.Bold) }   // v0.16.6: no confusing "Process again" - edits invalidate the result, so this is always the one first step
+                    }
                     if (resultBytes != null) {
                         Spacer(Modifier.height(8.dp))
                         Card(colors = CardDefaults.cardColors(containerColor = SoftGrey), shape = RoundedCornerShape(12.dp), modifier = Modifier.fillMaxWidth()) {
@@ -10027,7 +10194,9 @@ private fun TextOnPhotoScreen(
                             Triple("Image Size", Icons.Default.PhotoSizeSelectLarge, { sheetLevel = "size" }),
                             Triple("Layers", Icons.Default.Collections, { sheetLevel = "layers" }),
                             Triple("Filters", Icons.Default.Tune, { sheetLevel = "filters" }),
-                            Triple("Process", Icons.Default.CheckCircle, { sheetLevel = "save" })
+                            Triple("Process", Icons.Default.CheckCircle, { sheetLevel = "save"; if (resultBytes == null && !busy) onProcess() }),   // v0.16.7: ONE tap - tile opens the level AND runs processing
+                            Triple("Pick Colour", Icons.Default.Colorize, { sheetLevel = "pickcolour" }),
+                            Triple("Flip & Clone", Icons.Default.Flip, { sheetLevel = "flipclone" })
                         ).chunked(3).forEach { rowItems ->
                             Row(Modifier.fillMaxWidth().padding(bottom = 8.dp)) {
                                 rowItems.forEach { (label, icon, action) ->

@@ -74,7 +74,8 @@ object TextOverlayUtils {
         var curved: Boolean = false,
         var arcSweep: Float = 160f,           // degrees of arc the text spans when curved
         var letterSpacing: Float = 0f,        // em fraction (0..0.3)
-        var lineSpacing: Float = 0f           // extra line gap as a fraction (0..1)
+        var lineSpacing: Float = 0f,          // extra line gap as a fraction (0..1)
+        var flipH: Boolean = false          // v0.16.7: mirror horizontally
     )
 
     /**
@@ -90,7 +91,8 @@ object TextOverlayUtils {
         var cy: Float = 0.5f,
         var widthFrac: Float = 0.4f,   // width as a fraction of image width; height keeps the bitmap's aspect
         var rotation: Float = 0f,      // degrees, clockwise
-        var opacity: Float = 1f        // 0..1
+        var opacity: Float = 1f,       // 0..1
+        var flipH: Boolean = false   // v0.16.7: mirror horizontally
     )
 
     /** Drawn size of an image layer in image pixels: [w, h]. */
@@ -108,6 +110,7 @@ object TextOverlayUtils {
         val py = layer.cy * imgH
         canvas.save()
         canvas.rotate(layer.rotation, px, py)
+        if (layer.flipH) canvas.scale(-1f, 1f, px, py)
         val p = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG).apply {
             alpha = (layer.opacity.coerceIn(0f, 1f) * 255).toInt()
         }
@@ -279,6 +282,7 @@ object TextOverlayUtils {
         val py = layer.cy * imgH
         canvas.save()
         canvas.rotate(layer.rotation, px, py)
+        if (layer.flipH) canvas.scale(-1f, 1f, px, py)
         val left = px - b.w / 2f
         val top = py - b.h / 2f
         val p = fillPaint(layer, imgW)
@@ -323,6 +327,7 @@ object TextOverlayUtils {
         val lineH = (fm.descent - fm.ascent) * (1.08f + layer.lineSpacing)
         canvas.save()
         canvas.rotate(layer.rotation, px, py)
+        if (layer.flipH) canvas.scale(-1f, 1f, px, py)
         lines(layer).forEachIndexed { i, line ->
             if (line.isEmpty()) return@forEachIndexed
             val textW = p.measureText(line)

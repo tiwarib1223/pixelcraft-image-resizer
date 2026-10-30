@@ -7,6 +7,11 @@ import android.os.Looper
 import android.view.View
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onAllNodesWithContentDescription
+import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.onRoot
+import androidx.compose.ui.test.printToString
+import androidx.compose.ui.test.performClick
 import androidx.test.core.app.ActivityScenario
 import androidx.test.core.app.ApplicationProvider
 import org.junit.Rule
@@ -97,6 +102,48 @@ class TextPhotoPhoneSizeTest {
             waitForText("Zoom")
             waitForText("Drag your photo to position it. Use the slider to zoom in or out.")
             shot(sc, "v0166_phone_position")
+            sc.close()
+        }
+    }
+
+    @Test
+    fun phoneWindowCornerHandles() {
+        // v0.16.7 (his "Use all"): the selected layer shows the X delete handle + the orange
+        // resize/rotate handle, pro-app style.
+        launch("pixelcraft.test.textlayer" to "1").use { sc ->
+            waitForText("Quick edits")
+            pump()
+            if (composeRule.onAllNodesWithContentDescription("Delete layer").fetchSemanticsNodes().isEmpty()) throw AssertionError("delete handle missing")
+            if (composeRule.onAllNodesWithContentDescription("Resize and rotate").fetchSemanticsNodes().isEmpty()) throw AssertionError("resize handle missing")
+            shot(sc, "v0167_phone_handles")
+            sc.close()
+        }
+    }
+
+    @Test
+    fun phoneWindowFlipClone() {
+        // v0.16.7 (hook-pinned level): Flip & Clone renders; Duplicate Layer clones the selected
+        // layer (hook count goes 1 -> 2) and the clone shows offset in the preview.
+        launch("pixelcraft.test.textlayer" to "1", "pixelcraft.test.sheetlevel" to "flipclone").use { sc ->
+            waitForText("Flip Horizontal")
+            waitForText("hook:layers=1")
+            shot(sc, "v0167_phone_flipclone")
+            composeRule.onNodeWithText("Duplicate Layer").performClick()
+            pump()
+            waitForText("hook:layers=2")
+            shot(sc, "v0167_phone_cloned")
+            sc.close()
+        }
+    }
+
+    @Test
+    fun phoneWindowPickColour() {
+        // v0.16.7 eyedropper (hook-pinned level): both targets + Start picking render.
+        launch("pixelcraft.test.textlayer" to "1", "pixelcraft.test.sheetlevel" to "pickcolour").use { sc ->
+            waitForText("Text colour")
+            waitForText("Background")
+            waitForText("Start picking")
+            shot(sc, "v0167_phone_pickcolour")
             sc.close()
         }
     }
