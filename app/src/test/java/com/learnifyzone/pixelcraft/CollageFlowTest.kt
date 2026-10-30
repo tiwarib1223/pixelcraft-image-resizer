@@ -4,9 +4,13 @@ import android.content.Intent
 import android.os.Looper
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.SemanticsMatcher
+import androidx.compose.ui.test.performSemanticsAction
+import androidx.compose.ui.semantics.SemanticsActions
 import androidx.test.core.app.ActivityScenario
 import androidx.test.core.app.ApplicationProvider
 import org.junit.Rule
@@ -63,6 +67,45 @@ class CollageFlowTest {
             bmp.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, File(dir, "$name.png").outputStream())
         }
         pump()
+    }
+
+    @Test
+    fun collageResetStartsFromZeroWithNewImageOption() {
+        // His report (v0.18.2): Reset must wipe edits AND the loaded photos.
+        launchRaw("pixelcraft.test.collage" to "1", "pixelcraft.test.collagelevel" to "edit").use { sc ->
+            waitForText("Spacing between photos (8)")
+            // Move the spacing slider off its default through its real semantics action.
+            composeRule.onAllNodes(SemanticsMatcher.keyIsDefined(SemanticsActions.SetProgress))[0]
+                .performSemanticsAction(SemanticsActions.SetProgress) { it(24f) }
+            pump(); pump()
+            waitForText("Spacing between photos (24)")
+            shot(sc, "v0183_phone_collage_spacing24")
+            composeRule.onNodeWithText("Reset").performClick()
+            pump(); pump()
+            // Full wipe: collage home with the photo picker and no photos loaded.
+            waitForText("Photo Collage Maker")
+            waitForText("Add your photos (0/20)")
+            shot(sc, "v0183_phone_collage_reset")
+            sc.close()
+        }
+    }
+
+    @Test
+    fun collageBackToHomeWipesState() {
+        // His report: "when I close and open again same things shows" - leaving the tool must
+        // not carry the old session into the next open (every other tool already resets on exit).
+        launchRaw("pixelcraft.test.collage" to "1", "pixelcraft.test.collagelevel" to "edit").use { sc ->
+            waitForText("Spacing between photos (8)")
+            composeRule.onNodeWithContentDescription("Back").performClick()
+            pump(); pump()
+            waitForText("Your creator toolkit")
+            composeRule.onNodeWithText("Collage Maker").performScrollTo().performClick()
+            pump(); pump()
+            // Fresh session: no photos carried over from the previous one.
+            waitForText("Add your photos (0/20)")
+            shot(sc, "v0183_phone_collage_reopen_fresh")
+            sc.close()
+        }
     }
 
     @Test

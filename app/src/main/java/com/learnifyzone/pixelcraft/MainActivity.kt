@@ -3965,6 +3965,8 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                                 Screen.PrintHome -> { resetPrint(); screen = Screen.Home }
                                 Screen.TextPhoto -> { resetTextPhoto(); screen = Screen.Home }
                                 Screen.CompressHome -> { resetCompress(); screen = Screen.Home }
+                                Screen.Collage -> { collage.resetToNewPhotos(); screen = Screen.Home }
+                                Screen.PhotoAdjust -> { adjust.resetToNewPhoto(); screen = Screen.Home }
                                 else -> screen = Screen.Home
                             }
                         }) {
@@ -5085,10 +5087,17 @@ private class CollageUiState {
     fun undo() { if (undoStack.isNotEmpty()) { redoStack.add(snapshot()); applySnap(undoStack.removeAt(undoStack.lastIndex)) } }
     fun redo() { if (redoStack.isNotEmpty()) { undoStack.add(snapshot()); applySnap(redoStack.removeAt(redoStack.lastIndex)) } }
 
-    fun resetEdits() {
-        push()
-        photos.forEach { it.zoom = 1f; it.panX = 0f; it.panY = 0f; it.rotation = 0f; it.flipH = false; it.flipV = false; it.borderPx = -1 }
-        gapPx = 8f; marginPx = 0f; radiusPx = 0f; borderPx = 0f; bgLabel = "White"; selected = -1
+    /** v0.18.3 (his words): Reset starts from zero with a new-image option. Full wipe. */
+    fun resetToNewPhotos() {
+        uris.clear(); photos.clear()
+        family = CollageMaker.LayoutFamily.GRID
+        level = "home"
+        canvasW = 1080; canvasH = 1080; canvasLabel = "Square 1080"
+        gapPx = 8f; marginPx = 0f; radiusPx = 0f; borderPx = 0f; borderColor = 0xFFFFFFFF.toInt()
+        bgLabel = "White"; bgCustom = 0xFF3D5AFE.toInt(); gradientLabel = "Sunset"
+        selected = -1
+        format = "JPG"; quality = 90f; resLabel = "Standard"; customResW = "1600"
+        undoStack.clear(); redoStack.clear()
         tick++; saved = false
     }
 }
@@ -5278,7 +5287,7 @@ private fun CollageEditScreen(modifier: Modifier, state: CollageUiState, onRepla
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             OutlinedButton(onClick = { state.undo() }, enabled = state.undoStack.isNotEmpty(), modifier = Modifier.weight(1f), shape = RoundedCornerShape(10.dp)) { Text("Undo", color = DeepNavy, fontSize = 13.sp) }
             OutlinedButton(onClick = { state.redo() }, enabled = state.redoStack.isNotEmpty(), modifier = Modifier.weight(1f), shape = RoundedCornerShape(10.dp)) { Text("Redo", color = DeepNavy, fontSize = 13.sp) }
-            OutlinedButton(onClick = { state.resetEdits() }, modifier = Modifier.weight(1f), shape = RoundedCornerShape(10.dp)) { Text("Reset", color = DeepNavy, fontSize = 13.sp) }
+            OutlinedButton(onClick = { state.resetToNewPhotos() }, modifier = Modifier.weight(1f), shape = RoundedCornerShape(10.dp)) { Text("Reset", color = DeepNavy, fontSize = 13.sp) }
         }
         Spacer(Modifier.height(10.dp))
 
@@ -5635,10 +5644,13 @@ private class AdjustUiState {
     fun undo() { if (undoStack.isNotEmpty()) { redoStack.add(snapshot()); applySnap(undoStack.removeAt(undoStack.lastIndex)) } }
     fun redo() { if (redoStack.isNotEmpty()) { undoStack.add(snapshot()); applySnap(redoStack.removeAt(redoStack.lastIndex)) } }
 
-    fun resetAll() {
-        push()
+    /** v0.18.3 (his words): Reset starts from zero with a new-image option. Full wipe. */
+    fun resetToNewPhoto() {
+        uri = null; base = null; origW = 0; origH = 0
         params.copyFrom(PhotoAdjust.Params())
-        filterId = "normal"
+        filterId = "normal"; panel = "adjust"; compare = false
+        format = "JPG"; quality = 90f; resLabel = "Original"; customW = "1600"
+        undoStack.clear(); redoStack.clear()
         tick++; saved = false
     }
 }
@@ -5729,7 +5741,7 @@ private fun PhotoAdjustScreen(
             OutlinedButton(onClick = { state.undo() }, enabled = state.undoStack.isNotEmpty(), modifier = Modifier.weight(1f), shape = RoundedCornerShape(10.dp), contentPadding = PaddingValues(horizontal = 2.dp)) { Text("Undo", color = DeepNavy, fontSize = 12.sp, maxLines = 1, softWrap = false) }
             OutlinedButton(onClick = { state.redo() }, enabled = state.redoStack.isNotEmpty(), modifier = Modifier.weight(1f), shape = RoundedCornerShape(10.dp), contentPadding = PaddingValues(horizontal = 2.dp)) { Text("Redo", color = DeepNavy, fontSize = 12.sp, maxLines = 1, softWrap = false) }
             OutlinedButton(onClick = { state.compare = !state.compare }, modifier = Modifier.weight(1f), shape = RoundedCornerShape(10.dp), contentPadding = PaddingValues(horizontal = 2.dp)) { Text(if (state.compare) "Edited" else "Compare", color = if (state.compare) Orange else DeepNavy, fontSize = 11.sp, maxLines = 1, softWrap = false) }
-            OutlinedButton(onClick = { state.resetAll() }, modifier = Modifier.weight(1f), shape = RoundedCornerShape(10.dp), contentPadding = PaddingValues(horizontal = 2.dp)) { Text("Reset", color = DeepNavy, fontSize = 12.sp, maxLines = 1, softWrap = false) }
+            OutlinedButton(onClick = { state.resetToNewPhoto() }, modifier = Modifier.weight(1f), shape = RoundedCornerShape(10.dp), contentPadding = PaddingValues(horizontal = 2.dp)) { Text("Reset", color = DeepNavy, fontSize = 12.sp, maxLines = 1, softWrap = false) }
         }
 
         Spacer(Modifier.height(10.dp))

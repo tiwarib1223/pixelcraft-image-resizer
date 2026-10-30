@@ -7,6 +7,9 @@ import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.SemanticsMatcher
+import androidx.compose.ui.test.performSemanticsAction
+import androidx.compose.ui.semantics.SemanticsActions
 import androidx.test.core.app.ActivityScenario
 import androidx.test.core.app.ApplicationProvider
 import org.junit.Rule
@@ -106,6 +109,38 @@ class PhotoAdjustFlowTest {
             composeRule.onNodeWithText("B&W").performClick()
             waitForText("Warm")
             shot(sc, "v0180_phone_adjust_filters")
+            sc.close()
+        }
+    }
+
+    @Test
+    fun adjustResetStartsFromZeroWithNewImageOption() {
+        // His report (v0.18.2): "Reset button not working ... it should start from zero with
+        // new image option". Set a slider through its real semantics action, then Reset.
+        launchRaw("pixelcraft.test.adjust" to "1").use { sc ->
+            waitForText("Brightness")
+            composeRule.onAllNodes(SemanticsMatcher.keyIsDefined(SemanticsActions.SetProgress))[0]
+                .performSemanticsAction(SemanticsActions.SetProgress) { it(80f) }
+            pump(); pump()
+            // Value label shows the set value (exact match - "800 x 600" must not false-pass).
+            run {
+                val deadline = System.currentTimeMillis() + 30_000
+                while (System.currentTimeMillis() < deadline) {
+                    pump()
+                    if (composeRule.onAllNodesWithText("80").fetchSemanticsNodes().isNotEmpty()) break
+                    Thread.sleep(60)
+                }
+                assert(composeRule.onAllNodesWithText("80").fetchSemanticsNodes().isNotEmpty()) { "slider value 80 not shown" }
+            }
+            shot(sc, "v0183_phone_adjust_set80")
+            composeRule.onNodeWithText("Reset").performClick()
+            pump(); pump()
+            // Full wipe: new-image option, no photo, no edit controls left on screen.
+            waitForText("Adjust your photo")
+            waitForText("Choose a photo")
+            composeRule.onNodeWithText("Reset").assertDoesNotExist()
+            composeRule.onNodeWithText("Undo").assertDoesNotExist()
+            shot(sc, "v0183_phone_adjust_reset")
             sc.close()
         }
     }

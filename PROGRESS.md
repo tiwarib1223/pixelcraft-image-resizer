@@ -1,5 +1,13 @@
 # PixelCraft Image Resizer — Progress
 
+## v0.18.3 (versionCode 64): FIX - Reset now starts from zero with a new-image option (his report + his definition)
+- His report (v0.18.2, both tools): "Reset button not working. And when I close and open again same things shows." Then: "When we click reset it should start from zero with new image option."
+- Root causes: (1) Reset only zeroed slider/style values - it kept the loaded photos, so with values already at defaults (or in Compare view) a tap looked like nothing happened; (2) unlike every other tool, Collage Maker and Photo Adjustments did NOT wipe their state when leaving to Home, so the old session was still there on reopen.
+- Photo Adjustments: Reset now wipes everything - photo, all 12 sliders, filter, compare, save settings, undo/redo - and shows "Choose a photo" again.
+- Collage Maker: Reset now wipes everything - photos, layout edits, canvas, background, frames, spacing, undo/redo - and returns to the collage home with "Add your photos (0/20)". A project saved with "Save project" is untouched (explicit save stays explicit).
+- Leaving either tool with the back arrow now also wipes the session (same rule as Convert, Print, Compress and Text on Photo already had).
+- Tests +3 (real flows, per his rule): adjust - set Brightness to 80 via the slider's own semantics action, Reset, verify zeroed + "Choose a photo"; collage - set spacing to 24, Reset, verify "Add your photos (0/20)"; collage - back to Home, reopen, verify no photos carried over. Screenshots v0183_phone_adjust_set80 / _reset, v0183_phone_collage_spacing24 / _reset, v0183_phone_collage_reopen_fresh.
+
 ## v0.18.2 (versionCode 63): Audit fixes round 2 - dead editor chips hidden (parent decision)
 - Settings version line now reads from the build itself (BuildConfig), so it can never go stale again.
 - The editor tool row no longer shows "Presets" (it navigated away mid-edit to the still-empty Presets tab) or "Format" (it only showed a "planned for a later stage" snackbar). Both return when they open something real. The tools row is now: Resize, Crop & Rotate, Background, Circle Cutter.
