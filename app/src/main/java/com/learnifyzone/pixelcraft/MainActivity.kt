@@ -21,6 +21,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
+import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.activity.result.IntentSenderRequest
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
@@ -34,6 +35,7 @@ import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.background
+import androidx.compose.ui.res.painterResource
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
@@ -48,6 +50,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.height
@@ -65,6 +68,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.KeyboardArrowDown
@@ -97,6 +101,13 @@ import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.CropSquare
 import androidx.compose.material.icons.filled.Transform
 import androidx.compose.material.icons.filled.EmojiEmotions
+import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material.icons.filled.Description
+import androidx.compose.material.icons.filled.DarkMode
+import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.MailOutline
 import androidx.compose.material.icons.filled.Title
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -225,6 +236,7 @@ private val SuccessGreen = Color(0xFF1E9E50)
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
+        if (!android.os.Build.FINGERPRINT.contains("robolectric", ignoreCase = true)) installSplashScreen()   // v0.20.0: branded splash (his confirmed feature)
         super.onCreate(savedInstanceState)
         setContent { PixelCraftApp() }
     }
@@ -244,8 +256,38 @@ private data class AdaptRequest(val width: Int, val height: Int)
 private fun PixelCraftApp() {
     var darkMode by rememberSaveable { mutableStateOf(false) }
     val colors = if (darkMode) darkColorScheme(primary = SkyBlue, secondary = Orange, background = Color(0xFF101A2B), surface = Color(0xFF17243A), onPrimary = DeepNavy) else lightColorScheme(primary = SkyBlue, secondary = Orange, background = Color.White, surface = Color.White, onPrimary = DeepNavy, onBackground = DeepNavy, onSurface = DeepNavy)
+    // v0.20.0: branded opening moment - his official logo + POWERED BY BITTY (his v3 splash design), then the app.
+    // Skipped on the Robolectric host: its paused frame clock never runs the effect that dismisses the intro.
+    val testHost = android.os.Build.FINGERPRINT.contains("robolectric", ignoreCase = true)
+    var showIntro by remember { mutableStateOf(!testHost) }
+    LaunchedEffect(Unit) { kotlinx.coroutines.delay(1400); showIntro = false }
     MaterialTheme(colorScheme = colors) {
-        PixelCraftRoot(darkMode = darkMode, onDarkMode = { darkMode = it })
+        if (showIntro) {
+            IntroScreen()
+        } else {
+            PixelCraftRoot(darkMode = darkMode, onDarkMode = { darkMode = it })
+        }
+    }
+}
+
+/** v0.20.0: the branded opening moment - matches his approved splash design (a2z_opening_v3):
+ *  starry navy background, his official logo, POWERED BY BITTY at the bottom. */
+@Composable
+internal fun IntroScreen() {
+    Box(Modifier.fillMaxSize().background(Color(0xFF030B1E))) {
+        Image(
+            painter = painterResource(R.drawable.splash_logo),
+            contentDescription = "A2Z Image Craft",
+            modifier = Modifier.align(Alignment.Center).fillMaxWidth(0.68f)
+        )
+        Text(
+            "POWERED BY BITTY",
+            color = Color(0xFFC9D4E6),
+            fontSize = 13.sp,
+            fontWeight = FontWeight.Medium,
+            letterSpacing = 2.5.sp,
+            modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 52.dp)
+        )
     }
 }
 
@@ -256,6 +298,8 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
     val scope = rememberCoroutineScope()
     val snackbar = remember { SnackbarHostState() }
     var tab by rememberSaveable { mutableStateOf(MainTab.Home) }
+    var drawerOpen by remember { mutableStateOf(false) }   // v0.20.0: home side drawer (his reference app)
+    var settingsDoc by remember { mutableStateOf<String?>(null) }   // v0.20.0: terms/privacy in-app pages
     var screen by rememberSaveable { mutableStateOf(Screen.Home) }
     var tool by rememberSaveable { mutableStateOf(Tool.Resize) }
 
@@ -3855,6 +3899,8 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
             fromQueue = photoQueue.size > 1,
             initialUnit = sizeUnit,
             initialDpi = resizeDpi,
+            initialCustomW = inputWidth,
+            initialCustomH = inputHeight,
             onDismiss = { showDimensionsSheet = false },
             onApply = { choice ->
                 showDimensionsSheet = false
@@ -3925,6 +3971,26 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
             },
             dismissButton = { TextButton(onClick = { discardPdfPages() }) { Text("Cancel", color = Slate) } }
         )
+    }
+
+    // v0.20.0: Rate us + Share the app (his drawer/settings steering). The store page resolves once the app is published.
+    fun openPlayStorePage() {
+        try { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("market://details?id=" + context.packageName))) }
+        catch (e: Exception) { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://play.google.com/store/apps/details?id=" + context.packageName))) }
+    }
+    // v0.20.0: "Need support? Email us" - his confirmed support address (11:29).
+    fun emailSupport() {
+        val mail = Intent(Intent.ACTION_SENDTO, Uri.parse("mailto:bittyjee1223@gmail.com")).apply {
+            putExtra(Intent.EXTRA_SUBJECT, "A2Z Image Craft support")
+        }
+        try { context.startActivity(mail) } catch (e: Exception) { scope.launch { snackbar.showSnackbar("No email app found on this phone.") } }
+    }
+    fun shareApp() {
+        val send = Intent(Intent.ACTION_SEND).apply {
+            type = "text/plain"
+            putExtra(Intent.EXTRA_TEXT, "Check out A2Z Image Craft - a free photo toolkit: resize, crop, convert, collage, text on photo and more, all on your phone.\nhttps://play.google.com/store/apps/details?id=" + context.packageName)
+        }
+        context.startActivity(Intent.createChooser(send, "Share A2Z Image Craft"))
     }
 
     Scaffold(
@@ -4105,6 +4171,8 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
             Screen.Home -> when (tab) {
                 MainTab.Home -> HomeScreen(
                     modifier = Modifier.padding(padding),
+                    onOpenDrawer = { drawerOpen = true },
+                    onOpenSettings = { tab = MainTab.Settings },
                     recents = recents,
                     recentThumbs = recentThumbs,
                     onSelectPhotos = { pickPhotos() },
@@ -4188,7 +4256,16 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                         }
                     }
                 )
-                MainTab.Settings -> SettingsScreen(Modifier.padding(padding), darkMode = darkMode, onDarkMode = onDarkMode)
+                MainTab.Settings -> SettingsScreen(
+                    Modifier.padding(padding),
+                    darkMode = darkMode,
+                    onDarkMode = onDarkMode,
+                    doc = settingsDoc,
+                    onOpenDoc = { settingsDoc = it },
+                    onEmail = { emailSupport() },
+                    onRate = { openPlayStorePage() },
+                    onShare = { shareApp() }
+                )
             }
             Screen.QueueOverview -> QueueOverviewScreen(
                 modifier = Modifier.padding(padding),
@@ -4851,6 +4928,18 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                 }
             )
         }
+    }
+
+    // v0.20.0 (his steering): hamburger on Home opens this side drawer over whatever tab is showing.
+    if (drawerOpen) {
+        HomeDrawer(
+            onClose = { drawerOpen = false },
+            onEmail = { emailSupport() },
+            onRate = { openPlayStorePage() },
+            onShare = { shareApp() },
+            onTerms = { drawerOpen = false; tab = MainTab.Settings; settingsDoc = "terms" },
+            onPrivacy = { drawerOpen = false; tab = MainTab.Settings; settingsDoc = "privacy" }
+        )
     }
 
     adaptRequest?.let { request ->
@@ -5893,6 +5982,8 @@ private fun PhotoAdjustScreen(
 @Composable
 private fun HomeScreen(
     modifier: Modifier,
+    onOpenDrawer: () -> Unit,
+    onOpenSettings: () -> Unit,
     recents: List<Uri>,
     recentThumbs: Map<String, ImageBitmap?>,
     onSelectPhotos: () -> Unit,
@@ -5917,11 +6008,13 @@ private fun HomeScreen(
     )
     Column(modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).padding(horizontal = 16.dp).verticalScroll(rememberScrollState())) {
         Row(Modifier.fillMaxWidth().padding(top = 12.dp, bottom = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+            // v0.20.0 (his reference app): hamburger top-left opens the side drawer, gear top-right opens Settings.
+            IconButton(onClick = onOpenDrawer) { Icon(Icons.Default.Menu, contentDescription = "Menu", tint = DeepNavy, modifier = Modifier.size(26.dp)) }
             Column(Modifier.weight(1f)) {
                 Text("A2Z Image Craft", color = DeepNavy, fontSize = 25.sp, fontWeight = FontWeight.Bold)
                 Text("PHOTO TOOLKIT", color = SkyBlue, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 2.sp)
             }
-            Icon(Icons.Default.Tune, contentDescription = "Settings", tint = DeepNavy, modifier = Modifier.size(26.dp))
+            IconButton(onClick = onOpenSettings) { Icon(Icons.Default.Settings, contentDescription = "Settings", tint = DeepNavy, modifier = Modifier.size(26.dp)) }
         }
         Card(colors = CardDefaults.cardColors(containerColor = PaleBlue), shape = RoundedCornerShape(22.dp), modifier = Modifier.fillMaxWidth()) {
             Column(Modifier.padding(18.dp)) {
@@ -6019,7 +6112,7 @@ private fun SheetRadioRow(label: String, info: String, selected: Boolean, onSele
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun DimensionsSheet(
+internal fun DimensionsSheet(
     title: String,
     baseWidth: Int,
     baseHeight: Int,
@@ -6031,6 +6124,8 @@ private fun DimensionsSheet(
     fromQueue: Boolean,
     initialUnit: String = "px",
     initialDpi: String = "300",
+    initialCustomW: String = "",
+    initialCustomH: String = "",
     onDismiss: () -> Unit,
     onApply: (SheetChoice) -> Unit
 ) {
@@ -6047,15 +6142,18 @@ private fun DimensionsSheet(
     val fileSizes = listOf(50 to "50 kB", 100 to "100 kB", 250 to "250 kB", 500 to "500 kB", 750 to "750 kB", 1024 to "1 MB", 1536 to "1.5 MB", 2048 to "2 MB", 2560 to "2.5 MB")
     val resPresets = if (baseWidth <= 0 || baseHeight <= 0) emptyList()
         else listOf(480, 600, 768, 1024, 1152, 1536, 2048, 3072).filter { it < baseWidth }.map { w -> w to maxOf(1, (w.toDouble() * baseHeight / baseWidth).toInt()) }
-    var choice by rememberSaveable { mutableStateOf("") }
+    // v0.20.0: a tapped platform preset (Presets tab) arms the editor's target size; the sheet opens
+    // with that exact size prefilled and preselected under Resolution > Custom, one tap from done.
+    val hasInitialSize = initialCustomW.isNotBlank() && initialCustomH.isNotBlank()
+    var choice by rememberSaveable { mutableStateOf(if (hasInitialSize) "rescustom" else "") }
     var lastExpanded by rememberSaveable { mutableStateOf(false) }
-    var easyExpanded by rememberSaveable { mutableStateOf(true) }
+    var easyExpanded by rememberSaveable { mutableStateOf(!hasInitialSize) }
     var pctExpanded by rememberSaveable { mutableStateOf(false) }
-    var resExpanded by rememberSaveable { mutableStateOf(false) }
+    var resExpanded by rememberSaveable { mutableStateOf(hasInitialSize) }
     var fsExpanded by rememberSaveable { mutableStateOf(false) }
     var customPct by rememberSaveable { mutableStateOf("45") }
-    var customW by rememberSaveable { mutableStateOf("") }
-    var customH by rememberSaveable { mutableStateOf("") }
+    var customW by rememberSaveable { mutableStateOf(initialCustomW) }
+    var customH by rememberSaveable { mutableStateOf(initialCustomH) }
     // Plain remember keyed on the carried-in unit: every time this sheet opens it
     // starts on the editor's CURRENT unit (rememberSaveable kept the first-ever value).
     var customUnit by remember(initialUnit) { mutableStateOf(initialUnit) }
@@ -7810,28 +7908,207 @@ private fun PresetsScreen(
 }
 
 @Composable
-private fun SettingsScreen(modifier: Modifier, darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
+private fun SettingsScreen(
+    modifier: Modifier,
+    darkMode: Boolean,
+    onDarkMode: (Boolean) -> Unit,
+    doc: String?,
+    onOpenDoc: (String?) -> Unit,
+    onEmail: () -> Unit,
+    onRate: () -> Unit,
+    onShare: () -> Unit
+) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val scope = rememberCoroutineScope()
+    var recentsCount by remember { mutableStateOf(-1) }
+    var showClearConfirm by remember { mutableStateOf(false) }
+    var clearedTick by remember { mutableStateOf(0) }
+    LaunchedEffect(clearedTick) { recentsCount = withContext(Dispatchers.IO) { RecentsStore.list(context).size } }
+    // v0.20.0: Terms & Conditions / Privacy Policy open as simple in-app pages (honest on-device wording).
+    if (doc != null) {
+        Column(modifier.fillMaxSize().padding(18.dp).verticalScroll(rememberScrollState())) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                IconButton(onClick = { onOpenDoc(null) }) { Icon(Icons.Default.ArrowBack, contentDescription = "Back", tint = DeepNavy) }
+                Text(if (doc == "terms") "Terms & Conditions" else "Privacy Policy", color = DeepNavy, fontSize = 22.sp, fontWeight = FontWeight.Bold)
+            }
+            Text(
+                if (doc == "terms") TERMS_TEXT else PRIVACY_TEXT,
+                color = Slate, fontSize = 13.sp, lineHeight = 19.sp, modifier = Modifier.padding(top = 10.dp)
+            )
+        }
+        return
+    }
     Column(modifier.fillMaxSize().padding(18.dp).verticalScroll(rememberScrollState())) {
         Text("Settings", color = DeepNavy, fontSize = 26.sp, fontWeight = FontWeight.Bold)
-        Spacer(Modifier.height(18.dp))
-        Text("Appearance", color = DeepNavy, fontWeight = FontWeight.SemiBold)
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(if (darkMode) "Dark mode" else "Light mode", modifier = Modifier.weight(1f), color = DeepNavy)
-            Checkbox(checked = darkMode, onCheckedChange = onDarkMode)
+        Spacer(Modifier.height(8.dp))
+
+        SettingsSection("Appearance") {
+            SettingsRow(
+                icon = { Icon(Icons.Default.DarkMode, null, tint = SkyBlue, modifier = Modifier.size(20.dp)) },
+                title = "Dark mode",
+                subtitle = if (darkMode) "On - easier on the eyes" else "Off - light theme"
+            ) {
+                Switch(checked = darkMode, onCheckedChange = onDarkMode, colors = SwitchDefaults.colors(checkedTrackColor = SkyBlue))
+            }
         }
-        Spacer(Modifier.height(14.dp))
-        Text("Privacy", color = DeepNavy, fontWeight = FontWeight.SemiBold)
-        Text(
-            "Your photos stay on this phone. A2Z Image Craft asks for no account, uploads nothing, and requests no photo-library permission: you pick each photo yourself. 'Recently edited' remembers only photos you opened, stored on this device.",
-            color = Slate,
-            fontSize = 13.sp,
-            lineHeight = 18.sp,
-            modifier = Modifier.padding(top = 6.dp)
+
+        SettingsSection("Privacy") {
+            SettingsRow(
+                icon = { Icon(Icons.Default.Lock, null, tint = SkyBlue, modifier = Modifier.size(20.dp)) },
+                title = "Your photos stay on this phone",
+                subtitle = "No account, no uploads, no photo-library permission - you pick each photo yourself."
+            )
+            SettingsRow(
+                icon = { Icon(Icons.Default.Delete, null, tint = SkyBlue, modifier = Modifier.size(20.dp)) },
+                title = "Clear recently edited",
+                subtitle = if (recentsCount > 0) recentsCount.toString() + " photo(s) remembered on this phone" else "Nothing remembered right now",
+                onClick = if (recentsCount > 0) ({ showClearConfirm = true }) else null
+            )
+        }
+
+        SettingsSection("Support") {
+            SettingsRow(
+                icon = { Icon(Icons.Default.MailOutline, null, tint = SkyBlue, modifier = Modifier.size(20.dp)) },
+                title = "Need support? Email us",
+                subtitle = "Tell us what you'd like to see, or bugs you found",
+                onClick = onEmail
+            )
+            SettingsRow(
+                icon = { Icon(Icons.Default.Star, null, tint = SkyBlue, modifier = Modifier.size(20.dp)) },
+                title = "Rate us",
+                subtitle = "Like the app? Support it with 5 stars on Google Play",
+                onClick = onRate
+            )
+            SettingsRow(
+                icon = { Icon(Icons.Default.Share, null, tint = SkyBlue, modifier = Modifier.size(20.dp)) },
+                title = "Share",
+                subtitle = "Tell a friend about A2Z Image Craft",
+                onClick = onShare
+            )
+            SettingsRow(
+                icon = { Icon(Icons.Default.Description, null, tint = SkyBlue, modifier = Modifier.size(20.dp)) },
+                title = "Terms & Conditions",
+                subtitle = "The simple rules for using the app",
+                onClick = { onOpenDoc("terms") }
+            )
+            SettingsRow(
+                icon = { Icon(Icons.Default.Lock, null, tint = SkyBlue, modifier = Modifier.size(20.dp)) },
+                title = "Privacy Policy",
+                subtitle = "How your photos and data are treated",
+                onClick = { onOpenDoc("privacy") }
+            )
+        }
+
+        SettingsSection("About") {
+            SettingsRow(
+                icon = { Icon(Icons.Default.Info, null, tint = SkyBlue, modifier = Modifier.size(20.dp)) },
+                title = "A2Z Image Craft",
+                subtitle = "Version " + BuildConfig.VERSION_NAME.removeSuffix("-debug") + " · Bitty"
+            )
+            Text(
+                "Resize, crop, convert, compress, print, collage, text, stickers, frames and photo adjustments. Every tool runs fully on this phone - no account, no uploads, no photo-library permission.",
+                color = Slate, fontSize = 12.sp, lineHeight = 17.sp, modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp)
+            )
+        }
+        Spacer(Modifier.height(16.dp))
+    }
+    if (showClearConfirm) {
+        AlertDialog(
+            onDismissRequest = { showClearConfirm = false },
+            title = { Text("Clear recently edited?") },
+            text = { Text("This removes the photos shown under Recently edited on the Home tab. Your original photos are not touched.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    showClearConfirm = false
+                    scope.launch(Dispatchers.IO) {
+                        RecentsStore.clear(context)
+                        withContext(Dispatchers.Main) { clearedTick++ }
+                    }
+                }) { Text("Clear", color = Orange) }
+            },
+            dismissButton = { TextButton(onClick = { showClearConfirm = false }) { Text("Cancel") } }
         )
-        Spacer(Modifier.height(14.dp))
-        Text("A2Z Image Craft", color = DeepNavy, fontWeight = FontWeight.SemiBold)
-        Text("Version ${BuildConfig.VERSION_NAME.removeSuffix("-debug")} · Learnify Zone", color = Slate, fontSize = 13.sp)
-        Text("Resize, crop, convert, compress, print, collage, text, stickers and photo adjustments. Every tool runs fully on this phone - no account, no uploads, no photo-library permission.", color = Slate, fontSize = 12.sp, lineHeight = 17.sp, modifier = Modifier.padding(top = 14.dp))
+    }
+}
+
+/** v0.20.0 (his reference app): side drawer - app header + Rate / Share / Terms / Privacy over a scrim. No ads, no email row (his call). */
+@Composable
+private fun HomeDrawer(onClose: () -> Unit, onEmail: () -> Unit, onRate: () -> Unit, onShare: () -> Unit, onTerms: () -> Unit, onPrivacy: () -> Unit) {
+    Box(Modifier.fillMaxSize()) {
+        Box(Modifier.fillMaxSize().background(Color(0x99061722)).clickable { onClose() })
+        Column(Modifier.fillMaxHeight().fillMaxWidth(0.82f).background(Color.White).verticalScroll(rememberScrollState())) {
+            Column(Modifier.fillMaxWidth().background(DeepNavy).padding(horizontal = 20.dp, vertical = 24.dp)) {
+                Text("A2Z Image Craft", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Bold)
+                Text("PHOTO TOOLKIT", color = SkyBlue, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 2.sp, modifier = Modifier.padding(top = 4.dp))
+            }
+            DrawerRow({ Icon(Icons.Default.MailOutline, null, tint = SkyBlue, modifier = Modifier.size(22.dp)) }, "Need support? Email us", "Tell us what you'd like to see, or bugs you found") { onEmail() }
+            DrawerRow({ Icon(Icons.Default.Star, null, tint = SkyBlue, modifier = Modifier.size(22.dp)) }, "Rate us", "Support the app with 5 stars") { onRate() }
+            DrawerRow({ Icon(Icons.Default.Share, null, tint = SkyBlue, modifier = Modifier.size(22.dp)) }, "Share", "Tell a friend about A2Z Image Craft") { onShare() }
+            DrawerRow({ Icon(Icons.Default.Description, null, tint = SkyBlue, modifier = Modifier.size(22.dp)) }, "Terms & Conditions", "The simple rules for using the app") { onTerms() }
+            DrawerRow({ Icon(Icons.Default.Lock, null, tint = SkyBlue, modifier = Modifier.size(22.dp)) }, "Privacy Policy", "How your photos and data are treated") { onPrivacy() }
+        }
+    }
+}
+
+@Composable
+private fun DrawerRow(icon: @Composable () -> Unit, title: String, subtitle: String, onClick: () -> Unit) {
+    Row(Modifier.fillMaxWidth().clickable { onClick() }.padding(horizontal = 20.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
+        icon()
+        Column(Modifier.padding(start = 14.dp)) {
+            Text(title, color = DeepNavy, fontWeight = FontWeight.SemiBold, fontSize = 15.sp)
+            Text(subtitle, color = Slate, fontSize = 12.sp)
+        }
+    }
+}
+
+private const val TERMS_TEXT = "These Terms & Conditions govern your use of A2Z Image Craft, developed and published by Bitty.\n\n" +
+    "1. Free of charge. The app is free: no advertising, no subscriptions, no in-app purchases.\n\n" +
+    "2. Your content. You keep every right to your photos. All editing runs on your device; nothing is uploaded, and images are saved or shared only when you choose to do so.\n\n" +
+    "3. Acceptable use. You are responsible for the images you edit and share. Do not use the app to infringe copyrights, privacy or other rights of third parties, or for any unlawful purpose.\n\n" +
+    "4. No warranty. The app is provided as is. Every tool is tested carefully, but uninterrupted or error-free operation cannot be guaranteed, and no liability is accepted for how exported images are used.\n\n" +
+    "5. Changes. These terms may be updated with new versions of the app; the current version is always shown on this page."
+
+private const val PRIVACY_TEXT = "A2Z Image Craft is private by design. This page explains, in plain words, how the app treats your data.\n\n" +
+    "What the app does not do:\n" +
+    "- No account and no sign-in.\n" +
+    "- No uploads. Your photos never leave your phone: every tool - resize, crop, convert, compress, collage, text, frames, adjustments - runs entirely on your device.\n" +
+    "- No photo-library access. The app holds no gallery permission; you hand it each photo yourself through the Android system picker.\n" +
+    "- No analytics, no tracking, no advertising.\n\n" +
+    "What stays on your phone:\n" +
+    "- Recently edited: a list of photos you opened, with small thumbnails, stored locally. Clear it any time under Settings > Privacy.\n" +
+    "- Your own text styles, stored locally.\n" +
+    "- Exports, written only when you tap Save, to the folders the app shows you.\n\n" +
+    "If a future version ever changes these principles, this page will say so before the change ships."
+
+/** v0.20.0: one titled group on the Settings page. */
+@Composable
+private fun SettingsSection(title: String, content: @Composable () -> Unit) {
+    Text(title, color = Slate, fontSize = 12.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 10.dp, bottom = 6.dp))
+    Card(colors = CardDefaults.cardColors(containerColor = PaleBlue), shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth()) {
+        Column { content() }
+    }
+}
+
+/** v0.20.0: one icon + title + subtitle row inside a Settings section.
+ *  With onClick the WHOLE row is tappable and shows a chevron; otherwise an optional trailing action composable. */
+@Composable
+private fun SettingsRow(
+    icon: @Composable () -> Unit,
+    title: String,
+    subtitle: String,
+    onClick: (() -> Unit)? = null,
+    action: (@Composable () -> Unit)? = null
+) {
+    val rowMod = if (onClick != null) Modifier.fillMaxWidth().clickable { onClick() } else Modifier.fillMaxWidth()
+    Row(rowMod.padding(horizontal = 14.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+        Box(Modifier.size(34.dp).clip(CircleShape).background(Color.White), contentAlignment = Alignment.Center) { icon() }
+        Column(Modifier.weight(1f).padding(start = 12.dp)) {
+            Text(title, color = DeepNavy, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
+            Text(subtitle, color = Slate, fontSize = 12.sp, lineHeight = 16.sp)
+        }
+        if (onClick != null) {
+            Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, null, tint = Slate, modifier = Modifier.size(20.dp))
+        } else if (action != null) action()
     }
 }
 
@@ -8746,7 +9023,7 @@ private fun formatBytes(bytes: Long): String {
     return "${DecimalFormat("#,##0.##").format(kb / 1024.0)} MB"
 }
 
-private sealed class SheetChoice {
+internal sealed class SheetChoice {
     data class Absolute(val w: Int, val h: Int) : SheetChoice()
     data class Longest(val side: Int, val label: String) : SheetChoice()
     data class Percent(val p: Int) : SheetChoice()

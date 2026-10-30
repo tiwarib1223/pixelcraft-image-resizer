@@ -8,4 +8,11 @@
         <item name="android:windowLightNavigationBar">true</item>
         <item name="android:colorAccent">#42BFEF</item>
     </style>
+
+    <!-- v0.20.0: branded launch splash (his confirmed feature) - his design: dark navy + his A2Z logo card (extracted from his own splash video), then the app theme. -->
+    <style name="Theme.PixelCraft.Splash" parent="Theme.SplashScreen">
+        <item name="windowSplashScreenBackground">#030B1E</item>
+        <item name="windowSplashScreenAnimatedIcon">@drawable/splash_logo</item>
+        <item name="postSplashScreenTheme">@style/Theme.PixelCraft</item>
+    </style>
 </resources>

@@ -124,6 +124,13 @@ object RecentsStore {
     }
 
     /** Forget a photo whose source can no longer be read (dead picker grant, deleted file). */
+    /** v0.20.0: Settings "Clear recently edited" - wipe the list and every cached thumbnail. */
+    fun clear(context: Context) {
+        val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        prefs.edit().putString(KEY_ORDER, "").apply()
+        thumbDir(context).listFiles()?.forEach { it.delete() }
+    }
+
     fun remove(context: Context, uri: Uri) {
         val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         val kept = list(context).map { it.toString() }.filter { it != uri.toString() }
