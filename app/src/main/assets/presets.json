@@ -17,6 +17,32 @@
       "status": "verified"
     },
     {
+      "platform": "Gumroad",
+      "category": "shop",
+      "name": "Cover image",
+      "width": 1280,
+      "height": 720,
+      "ratio": "16:9",
+      "format": "PNG / JPG / GIF",
+      "notes": "Gumroad's rule of thumb: 1280 x 720 at least 72 DPI. Covers can be any shape; keep under 50 MB.",
+      "sourceUrl": "https://gumroad.com/help/article/60-adding-a-cover-image",
+      "dateVerified": "2026-10-30",
+      "status": "verified"
+    },
+    {
+      "platform": "Gumroad",
+      "category": "shop",
+      "name": "Thumbnail",
+      "width": 600,
+      "height": 600,
+      "ratio": "1:1",
+      "format": "PNG / JPG / GIF",
+      "notes": "Shown in customer libraries, Gumroad Discover and your profile page. Gumroad says make it at least 600 x 600.",
+      "sourceUrl": "https://gumroad.com/help/article/60-adding-a-cover-image",
+      "dateVerified": "2026-10-30",
+      "status": "verified"
+    },
+    {
       "platform": "Instagram",
       "category": "social",
       "name": "Post (square)",

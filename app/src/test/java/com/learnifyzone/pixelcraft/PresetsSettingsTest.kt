@@ -103,7 +103,7 @@ class PresetsSettingsTest {
             waitForText("Social media")
             waitForText("Instagram · Post (square)")
             waitForText("YouTube · Thumbnail")
-            waitForText("Verified")
+            waitForText("Official size")
             shot(sc, "v0200_phone_presets_list")
         }
     }
@@ -127,7 +127,7 @@ class PresetsSettingsTest {
     fun c_everyPresetIsVerifiedWithSource() {
         val ctx = ApplicationProvider.getApplicationContext<android.content.Context>()
         val presets = PresetStore.load(ctx)
-        assertEquals("13 verified presets ship in v0.20.0", 13, presets.size)
+        assertEquals("15 verified presets ship in v1.0.1 (13 + Gumroad cover + thumbnail)", 15, presets.size)
         presets.forEach { p ->
             assertTrue(p.platform + " width", p.width > 0)
             assertTrue(p.platform + " height", p.height > 0)
@@ -136,7 +136,7 @@ class PresetsSettingsTest {
             assertEquals(p.platform + " date", "2026-10-30", p.dateVerified)
         }
         val platforms = presets.map { it.platform }.toSet()
-        assertTrue(platforms.containsAll(setOf("Etsy", "Instagram", "Facebook", "Pinterest", "YouTube", "X")))
+        assertTrue(platforms.containsAll(setOf("Etsy", "Gumroad", "Instagram", "Facebook", "Pinterest", "YouTube", "X")))
     }
 
     @Test
@@ -174,7 +174,7 @@ class PresetsSettingsTest {
             waitForText("A2Z Image Craft")
             waitForText("PHOTO TOOLKIT")
             // gear top-right -> Settings tab
-            composeRule.onNodeWithContentDescription("Settings").performClick()
+            composeRule.onNodeWithText("Settings").performClick()  // v1.0.1: the top-bar gear was removed (his call); Settings opens from the bottom bar
             waitForText("Appearance")
             // back to Home, hamburger top-left -> drawer
             composeRule.onNodeWithText("Home").performClick()
@@ -206,7 +206,7 @@ class PresetsSettingsTest {
             waitForText("Open-source licences")
             clickText("Help & tips")
             waitForText("Remove Background")
-            waitForText("Circle Cutter")
+            waitForText("Shape Cutter")
             shot(sc, "v100_phone_help")
             composeRule.onNodeWithContentDescription("Back").performClick()
             waitForText("Appearance")
@@ -220,7 +220,7 @@ class PresetsSettingsTest {
             waitForText("Appearance")
             // Settings > About rows open their doc pages.
             clickText("What's new")
-            waitForText("What's new in version 1.0.0")
+            waitForText("What's new in version 1.0.1")
             shot(sc, "v100_phone_whatsnew")
             composeRule.onNodeWithContentDescription("Back").performClick()
             waitForText("Appearance")

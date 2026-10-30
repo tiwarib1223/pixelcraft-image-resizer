@@ -80,6 +80,8 @@ import androidx.compose.material.icons.filled.Undo
 import androidx.compose.material.icons.filled.ContentCut
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Collections
+import androidx.compose.material.icons.filled.Compress
+import androidx.compose.material.icons.filled.Crop
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Delete
@@ -93,7 +95,12 @@ import androidx.compose.material.icons.filled.RotateRight
 import androidx.compose.material.icons.filled.SwapHoriz
 import androidx.compose.material.icons.filled.SwapVert
 import androidx.compose.material.icons.filled.Sync
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Storefront
+import androidx.compose.material.icons.filled.Style
+import androidx.compose.material.icons.filled.SyncAlt
+import androidx.compose.material.icons.filled.TextFields
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Refresh
@@ -108,9 +115,13 @@ import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.AspectRatio
+import androidx.compose.material.icons.filled.AutoFixHigh
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.GridOn
+import androidx.compose.material.icons.filled.Interests
 import androidx.compose.material.icons.filled.MenuBook
 import androidx.compose.material.icons.filled.NewReleases
+import androidx.compose.material.icons.filled.Print
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.MailOutline
 import androidx.compose.material.icons.filled.Title
@@ -129,8 +140,10 @@ import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
@@ -249,12 +262,12 @@ class MainActivity : ComponentActivity() {
 
 private enum class MainTab { Home, MyPhotos, Presets, Settings }
 private enum class Screen { Home, Editor, Export, PrintHome, PrintSetup, PrintPreview, PrintExport, Success, QueueOverview, QueueResult, SocialHome, SocialPlatform, SocialEdit, ShopHome, ShopOther, ShopPlatform, ShopEdit, ShopCollage, ConvertHome, ConvertEdit, ConvertResult, CompressHome, CompressSettings, CompressResult, TextPhoto, Collage, PhotoAdjust }
-private enum class Tool(val label: String) { Resize("Resize"), Presets("Presets"), Crop("Crop & Rotate"), Background("Background"), Circle("Circle Cutter"), Format("Format") }
+private enum class Tool(val label: String) { Resize("Resize"), Presets("Presets"), Crop("Crop & Rotate"), Background("Background"), Circle("Shape Cutter"), Format("Format") }
 
 private enum class CropTransform { LEFT, RIGHT, FLIP_H, FLIP_V }
 private enum class BgChoice(val label: String) { TRANSPARENT("Transparent"), WHITE("White"), CUSTOM("Custom Color") }
 private enum class AdaptMode(val label: String) { FIT("Fit"), CROP("Crop"), STRETCH("Stretch") }
-private data class Feature(val title: String, val description: String, val icon: String, val active: Boolean = false)
+private data class Feature(val title: String, val description: String, val icon: androidx.compose.ui.graphics.vector.ImageVector, val active: Boolean = false)
 private data class AdaptRequest(val width: Int, val height: Int)
 
 @Composable
@@ -4389,11 +4402,19 @@ snackbar.showSnackbar("This phone ran out of memory. Try a smaller size or fewer
         },
         bottomBar = {
             if (screen == Screen.Home) {
+                // v1.0.1 (his call): sky-blue selection instead of the default purple, Presets gets its own icon.
+                val navItemColors = NavigationBarItemDefaults.colors(
+                    selectedIconColor = DeepNavy,
+                    selectedTextColor = DeepNavy,
+                    indicatorColor = SkyBlue.copy(alpha = 0.30f),
+                    unselectedIconColor = Slate,
+                    unselectedTextColor = Slate
+                )
                 NavigationBar(containerColor = MaterialTheme.colorScheme.surface) {
-                    NavigationBarItem(selected = tab == MainTab.Home, onClick = { tab = MainTab.Home }, icon = { Icon(Icons.Default.Home, null) }, label = { Text("Home") })
-                    NavigationBarItem(selected = tab == MainTab.MyPhotos, onClick = { tab = MainTab.MyPhotos }, icon = { Icon(Icons.Default.PhotoLibrary, null) }, label = { Text("My Photos") })
-                    NavigationBarItem(selected = tab == MainTab.Presets, onClick = { tab = MainTab.Presets }, icon = { Icon(Icons.Default.AspectRatio, null) }, label = { Text("Presets") })
-                    NavigationBarItem(selected = tab == MainTab.Settings, onClick = { tab = MainTab.Settings }, icon = { Icon(Icons.Default.Settings, null) }, label = { Text("Settings") })
+                    NavigationBarItem(selected = tab == MainTab.Home, onClick = { tab = MainTab.Home }, icon = { Icon(Icons.Default.Home, null) }, label = { Text("Home") }, colors = navItemColors)
+                    NavigationBarItem(selected = tab == MainTab.MyPhotos, onClick = { tab = MainTab.MyPhotos }, icon = { Icon(Icons.Default.PhotoLibrary, null) }, label = { Text("My Photos") }, colors = navItemColors)
+                    NavigationBarItem(selected = tab == MainTab.Presets, onClick = { tab = MainTab.Presets }, icon = { Icon(Icons.Default.Style, null) }, label = { Text("Presets") }, colors = navItemColors)
+                    NavigationBarItem(selected = tab == MainTab.Settings, onClick = { tab = MainTab.Settings }, icon = { Icon(Icons.Default.Settings, null) }, label = { Text("Settings") }, colors = navItemColors)
                 }
             }
         }
@@ -4436,7 +4457,7 @@ snackbar.showSnackbar("This phone ran out of memory. Try a smaller size or fewer
                                 if (workingBitmap != null) { screen = Screen.Editor; tool = Tool.Crop; cropAspect = "Free"; cropRect = CropMath.defaultRect() }
                                 else { pendingCropTool = true; pickPhotos() }
                             }
-                            "Circle Cutter" -> {
+                            "Shape Cutter" -> {
                                 val src = workingBitmap
                                 if (src != null) { screen = Screen.Editor; tool = Tool.Circle; circleShape = "Circle"; circleRect = CropMath.maxRectForAspect("1:1", src.width, src.height) }
                                 else { pendingCircleTool = true; pickPhotos() }
@@ -6227,18 +6248,18 @@ private fun HomeScreen(
     onFeature: (String) -> Unit
 ) {
     val features = listOf(
-        Feature("Resize", "Change image dimensions", "↔", true),
-        Feature("Remove Background", "Cut out a product or person", "✦"),
-        Feature("Crop & Rotate", "Adjust framing and angle", "⌗"),
-        Feature("Circle Cutter", "Cut photos into shapes", "◯"),
-        Feature("Social Media Sizes", "Creator-ready dimensions", "▦"),
-        Feature("Online Shop Sizes", "Marketplace-ready images", "▣"),
-        Feature("Format Converter", "Any format to any format", "⇄"),
-        Feature("Compress", "Reduce file size", "↓"),
-        Feature("Text on Photo", "Add text to images", "T"),
-        Feature("Collage Maker", "Combine 2-20 photos", "⊞"),
-        Feature("Photo Adjustments", "Light, colour & detail sliders", "◐"),
-        Feature("Print Size & DPI", "Ready images for printing", "◉")
+        Feature("Resize", "Change image dimensions", Icons.Default.PhotoSizeSelectLarge, true),
+        Feature("Remove Background", "Cut out any subject", Icons.Default.AutoFixHigh),
+        Feature("Crop & Rotate", "Adjust framing and angle", Icons.Default.Crop),
+        Feature("Shape Cutter", "Cut photos into shapes", Icons.Default.Interests),
+        Feature("Social Media Sizes", "Exact sizes for every platform", Icons.Default.Share),
+        Feature("Online Shop Sizes", "Marketplace-ready images", Icons.Default.Storefront),
+        Feature("Format Converter", "JPG, PNG, WebP & PDF", Icons.Default.SyncAlt),
+        Feature("Compress", "Reduce file size", Icons.Default.Compress),
+        Feature("Text on Photo", "Add text to images", Icons.Default.TextFields),
+        Feature("Collage Maker", "Combine 2-20 photos", Icons.Default.GridOn),
+        Feature("Photo Adjustments", "Light, colour & detail sliders", Icons.Default.Tune),
+        Feature("Print Size & DPI", "Ready images for printing", Icons.Default.Print)
     )
     Column(modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).padding(horizontal = 16.dp).verticalScroll(rememberScrollState())) {
         Row(Modifier.fillMaxWidth().padding(top = 12.dp, bottom = 12.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -6248,11 +6269,10 @@ private fun HomeScreen(
                 Text("A2Z Image Craft", color = DeepNavy, fontSize = 25.sp, fontWeight = FontWeight.Bold)
                 Text("PHOTO TOOLKIT", color = SkyBlue, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 2.sp)
             }
-            IconButton(onClick = onOpenSettings) { Icon(Icons.Default.Settings, contentDescription = "Settings", tint = DeepNavy, modifier = Modifier.size(26.dp)) }
         }
         Card(colors = CardDefaults.cardColors(containerColor = PaleBlue), shape = RoundedCornerShape(22.dp), modifier = Modifier.fillMaxWidth()) {
             Column(Modifier.padding(18.dp)) {
-                Text("Resize. Remove. Convert. Create.", color = DeepNavy, fontSize = 20.sp, fontWeight = FontWeight.Bold, lineHeight = 26.sp)
+                Text("Resize. Remove. Convert. Create.", color = DeepNavy, fontSize = 17.sp, fontWeight = FontWeight.Bold, maxLines = 1)
                 Spacer(Modifier.height(14.dp))
                 Button(onClick = onSelectPhotos, modifier = Modifier.fillMaxWidth().height(52.dp), colors = ButtonDefaults.buttonColors(containerColor = Orange, contentColor = Color.White), shape = RoundedCornerShape(14.dp)) {
                     Icon(Icons.Default.Image, contentDescription = null); Spacer(Modifier.width(8.dp)); Text("Select Photos", fontWeight = FontWeight.Bold)
@@ -6296,8 +6316,8 @@ private fun HomeScreen(
                         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
                         elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
                     ) {
-                        Column(Modifier.padding(12.dp).height(106.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
-                            Box(Modifier.size(34.dp).clip(CircleShape).background(PaleBlue), contentAlignment = Alignment.Center) { Text(feature.icon, color = SkyBlue, fontWeight = FontWeight.Bold, fontSize = 19.sp) }
+                        Column(Modifier.padding(12.dp).height(116.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
+                            Box(Modifier.size(44.dp).clip(CircleShape).background(PaleBlue), contentAlignment = Alignment.Center) { Icon(feature.icon, contentDescription = null, tint = SkyBlue, modifier = Modifier.size(26.dp)) }
                             Text(feature.title, color = DeepNavy, fontWeight = FontWeight.SemiBold, fontSize = 14.sp, lineHeight = 17.sp)
                             Text(feature.description, color = Slate, fontSize = 11.sp, lineHeight = 14.sp)
                         }
@@ -8072,7 +8092,7 @@ private fun PresetsScreen(
     }
     Column(modifier.fillMaxSize().padding(16.dp).verticalScroll(rememberScrollState())) {
         Text("Presets", color = DeepNavy, fontSize = 26.sp, fontWeight = FontWeight.Bold)
-        Text("Your text styles · Shop & creator · Social media", color = Slate, modifier = Modifier.padding(top = 4.dp, bottom = 14.dp))
+        Text("Ready-made sizes for shops and social media", color = Slate, modifier = Modifier.padding(top = 4.dp, bottom = 14.dp))
         if (textStyles.isNotEmpty()) {
             Text("My text styles", color = DeepNavy, fontWeight = FontWeight.Bold, fontSize = 16.sp, modifier = Modifier.padding(bottom = 6.dp))
             textStyles.forEach { style ->
@@ -8097,7 +8117,7 @@ private fun PresetsScreen(
             }
             Text("Tap a style to open Text on Photo with it applied.", color = Slate, fontSize = 11.sp, modifier = Modifier.padding(bottom = 10.dp))
         }
-        OutlinedTextField(value = search, onValueChange = { search = it }, modifier = Modifier.fillMaxWidth(), label = { Text("Search presets") }, singleLine = true)
+        OutlinedTextField(value = search, onValueChange = { search = it }, modifier = Modifier.fillMaxWidth(), label = { Text("Search presets") }, singleLine = true, leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, tint = SkyBlue) }, colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = SkyBlue, unfocusedBorderColor = SkyBlue))
         Spacer(Modifier.height(12.dp))
         val list = presets
         if (list == null) {
@@ -8136,9 +8156,9 @@ private fun PresetsScreen(
                                 Column(Modifier.weight(1f).padding(start = 12.dp)) {
                                     Text("${preset.platform} · ${preset.name}", color = DeepNavy, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
                                     Text("${preset.width} × ${preset.height} px · ${preset.ratio}", color = Slate, fontSize = 12.sp)
-                                }
-                                if (preset.status == "verified") {
-                                    Text("Verified", color = SuccessGreen, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                                    if (preset.status == "verified") {
+                                        Text("Official size", color = SuccessGreen, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                                    }
                                 }
                             }
                         }
@@ -8181,16 +8201,31 @@ private fun SettingsScreen(
                     color = DeepNavy, fontSize = 22.sp, fontWeight = FontWeight.Bold
                 )
             }
-            Text(
-                when (doc) {
-                    "terms" -> TERMS_TEXT
-                    "privacy" -> PRIVACY_TEXT
-                    "licences" -> LICENCES_TEXT
-                    "help" -> HELP_TEXT
-                    else -> WHATS_NEW_TEXT
-                },
-                color = Slate, fontSize = 13.sp, lineHeight = 19.sp, modifier = Modifier.padding(top = 10.dp)
-            )
+            when (doc) {
+                "terms" -> Text(TERMS_TEXT, color = DocBody, fontSize = 15.sp, lineHeight = 22.sp, modifier = Modifier.padding(top = 10.dp))
+                "privacy" -> Text(PRIVACY_TEXT, color = DocBody, fontSize = 15.sp, lineHeight = 22.sp, modifier = Modifier.padding(top = 10.dp))
+                "licences" -> {
+                    Text(LICENCES_INTRO, color = DocBody, fontSize = 15.sp, lineHeight = 22.sp, modifier = Modifier.padding(top = 10.dp))
+                    LICENCE_ENTRIES.forEach { entry ->
+                        Text(entry.heading, color = DeepNavy, fontSize = 15.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 12.dp))
+                        Text(entry.body, color = DocBody, fontSize = 15.sp, lineHeight = 22.sp, modifier = Modifier.padding(top = 2.dp))
+                    }
+                    Text(LICENCES_OUTRO, color = DocBody, fontSize = 13.sp, lineHeight = 19.sp, modifier = Modifier.padding(top = 14.dp))
+                }
+                "help" -> HELP_ENTRIES.forEach { entry ->
+                    Text(entry.heading, color = DeepNavy, fontSize = 15.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 12.dp))
+                    Text(entry.body, color = DocBody, fontSize = 15.sp, lineHeight = 22.sp, modifier = Modifier.padding(top = 2.dp))
+                }
+                else -> {
+                    Text("What's new in version " + BuildConfig.VERSION_NAME.removeSuffix("-debug"), color = DocBody, fontSize = 15.sp, lineHeight = 22.sp, modifier = Modifier.padding(top = 10.dp))
+                    Text("Welcome to A2Z Image Craft - a complete photo toolkit that works entirely on your phone.", color = DocBody, fontSize = 15.sp, lineHeight = 22.sp, modifier = Modifier.padding(top = 8.dp))
+                    Column(Modifier.padding(top = 10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        WHATS_NEW_ITEMS.forEach { item ->
+                            Text("- " + item, color = DocBody, fontSize = 15.sp, lineHeight = 22.sp)
+                        }
+                    }
+                }
+            }
         }
         return
     }
@@ -8384,58 +8419,52 @@ private const val PRIVACY_TEXT = "A2Z Image Craft - Privacy Policy\n\n" +
     "Bitty, Bruges, Belgium\n\n" +
     "Email: bittyjee1223@gmail.com\n"
 
-private const val LICENCES_TEXT = "A2Z Image Craft is built with these open-source components. Thank you to their authors.\n\n" +
-    "U-2-Net (u2netp model) - background removal By Xuebin Qin and contributors. Licensed under the Apache License, Version 2.0. https://github.com/xuebinqin/U-2-Net\n\n" +
-    "ONNX Runtime - runs the background removal model Copyright (c) Microsoft Corporation. Licensed under the MIT License. https://github.com/microsoft/onnxruntime\n\n" +
-    "Android Jetpack and Jetpack Compose (AndroidX) Copyright The Android Open Source Project. Licensed under the Apache License, Version 2.0.\n\n" +
-    "Kotlin and kotlinx.coroutines Copyright JetBrains s.r.o. and Kotlin Programming Language contributors. Licensed under the Apache License, Version 2.0.\n\n" +
-    "Google ML Kit (subject segmentation) is provided by Google under the ML Kit Terms of Service: https://developers.google.com/ml-kit/terms\n\n" +
-    "Apache License, Version 2.0: https://www.apache.org/licenses/LICENSE-2.0 MIT License: https://opensource.org/licenses/MIT\n"
+// v1.0.1 (his polish): doc pages render with bold dark headings and bigger, darker body text.
+private val DocBody = Color(0xFF3B4A63)
 
-private const val HELP_TEXT = "Resize\n\n" +
-    "Pick a photo, choose a size in pixels, percent, inches or millimetres, then tap Process. If the new size changes the shape of the photo, the app asks how to adapt it: Fit, Crop or Stretch.\n\n" +
-    "Remove Background\n\n" +
-    "Works best with one clear subject (a person, product or pet) and good light. Check the edges before saving. Save as PNG to keep the background transparent.\n\n" +
-    "Crop & Rotate\n\n" +
-    "Drag the corners to choose the area. Use rotate and mirror to straighten or flip the photo.\n\n" +
-    "Circle Cutter\n\n" +
-    "Cut your photo into a circle or other shape - great for profile pictures. Save as PNG to keep the corners transparent.\n\n" +
-    "Social Media Sizes\n\n" +
-    "Choose a platform and post type, and the app sets the exact recommended size for you.\n\n" +
-    "Online Shop Sizes\n\n" +
-    "Ready-made sizes for shop listings such as Etsy. Platforms can change their rules, so check their latest guidance for important listings.\n\n" +
-    "Format Converter\n\n" +
-    "Change between JPG, PNG, WebP and PDF. JPG is smallest for photos, PNG keeps transparency and sharp text, PDF is best for documents.\n\n" +
-    "Image & PDF Compressor\n\n" +
-    "Make files smaller for email or upload. A lower quality gives a smaller file. Always keep your original.\n\n" +
-    "Print Size & DPI\n\n" +
-    "Shows how big a photo can print sharply. 300 DPI is best for prints; 150 DPI is fine for posters seen from a distance. Make a test print first.\n\n" +
-    "Text on Photo\n\n" +
-    "Add text, stickers, frames, effects and perspective. Tap a layer to edit it, drag to move it, and use Reset to start again.\n\n" +
-    "Collage Maker\n\n" +
-    "Pick several photos and choose a layout. Hold a photo and drop it on another frame to swap them, and adjust spacing and background.\n\n" +
-    "Photo Adjustments\n\n" +
-    "Brightness, contrast, warmth and filters. Tap Compare to see the original photo.\n\n" +
-    "Presets\n\n" +
-    "Tap a preset to open the resize tool with that exact size ready - one tap to finish.\n\n" +
-    "Saving and sharing\n\n" +
-    "Edited photos are saved to Pictures/PixelCraft (or the folder you choose). Your original photo is never changed unless you choose \"Replace original\".\n\n" +
-    "Privacy\n\n" +
-    "Everything happens on your phone. Your photos are never uploaded.\n"
+private data class DocEntry(val heading: String, val body: String)
 
-private const val WHATS_NEW_TEXT = "What's new in version 1.0.0\n\n" +
-    "Welcome to A2Z Image Craft - a complete photo toolkit that works entirely on your phone.\n\n" +
-    "- Resize photos by pixels, percent, inches or mm\n\n" +
-    "- Remove backgrounds with one tap\n\n" +
-    "- Crop, rotate, mirror and cut photos into shapes\n\n" +
-    "- Exact sizes for social media and online shops\n\n" +
-    "- Convert between JPG, PNG, WebP and PDF\n\n" +
-    "- Compress images and PDFs\n\n" +
-    "- Print Size & DPI calculator\n\n" +
-    "- Text on Photo with stickers, frames, effects and perspective\n\n" +
-    "- Collage Maker\n\n" +
-    "- Photo Adjustments with filters\n\n" +
-    "- No account, no uploads - your photos stay on your phone\n"
+private const val LICENCES_INTRO = "A2Z Image Craft is built with these open-source components. Thank you to their authors."
+private val LICENCE_ENTRIES = listOf(
+    DocEntry("U-2-Net (u2netp model)", "Background removal. By Xuebin Qin and contributors. Licensed under the Apache License, Version 2.0. https://github.com/xuebinqin/U-2-Net"),
+    DocEntry("ONNX Runtime", "Runs the background removal model. Copyright (c) Microsoft Corporation. Licensed under the MIT License. https://github.com/microsoft/onnxruntime"),
+    DocEntry("Android Jetpack and Jetpack Compose (AndroidX)", "Copyright The Android Open Source Project. Licensed under the Apache License, Version 2.0."),
+    DocEntry("Kotlin and kotlinx.coroutines", "Copyright JetBrains s.r.o. and Kotlin Programming Language contributors. Licensed under the Apache License, Version 2.0."),
+    DocEntry("Google ML Kit (subject segmentation)", "Provided by Google under the ML Kit Terms of Service: https://developers.google.com/ml-kit/terms")
+)
+private const val LICENCES_OUTRO = "Apache License, Version 2.0: https://www.apache.org/licenses/LICENSE-2.0\nMIT License: https://opensource.org/licenses/MIT"
+
+private val HELP_ENTRIES = listOf(
+    DocEntry("Resize", "Pick a photo, choose a size in pixels, percent, inches or millimetres, then tap Process. If the new size changes the shape of the photo, the app asks how to adapt it: Fit, Crop or Stretch."),
+    DocEntry("Remove Background", "Works best with one clear subject (a person, product or pet) and good light. Check the edges before saving. Save as PNG to keep the background transparent."),
+    DocEntry("Crop & Rotate", "Drag the corners to choose the area. Use rotate and mirror to straighten or flip the photo."),
+    DocEntry("Shape Cutter", "Cut your photo into a circle, square, rounded or heart shape - great for profile pictures. Save as PNG to keep the corners transparent."),
+    DocEntry("Social Media Sizes", "Choose a platform and post type, and the app sets the exact recommended size for you."),
+    DocEntry("Online Shop Sizes", "Ready-made sizes for shop listings such as Etsy. Platforms can change their rules, so check their latest guidance for important listings."),
+    DocEntry("Format Converter", "Change between JPG, PNG, WebP and PDF. JPG is smallest for photos, PNG keeps transparency and sharp text, PDF is best for documents."),
+    DocEntry("Image & PDF Compressor", "Make files smaller for email or upload. A lower quality gives a smaller file. Always keep your original."),
+    DocEntry("Print Size & DPI", "Shows how big a photo can print sharply. 300 DPI is best for prints; 150 DPI is fine for posters seen from a distance. Make a test print first."),
+    DocEntry("Text on Photo", "Add text, stickers, frames, effects and perspective. Tap a layer to edit it, drag to move it, and use Reset to start again."),
+    DocEntry("Collage Maker", "Pick several photos and choose a layout. Hold a photo and drop it on another frame to swap them, and adjust spacing and background."),
+    DocEntry("Photo Adjustments", "Brightness, contrast, warmth and filters. Tap Compare to see the original photo."),
+    DocEntry("Presets", "Tap a preset to open the resize tool with that exact size ready - one tap to finish."),
+    DocEntry("Saving and sharing", "Edited photos are saved to Pictures/PixelCraft (or the folder you choose). Your original photo is never changed unless you choose \"Replace original\"."),
+    DocEntry("Privacy", "Everything happens on your phone. Your photos are never uploaded.")
+)
+
+private val WHATS_NEW_ITEMS = listOf(
+    "Resize photos by pixels, percent, inches or mm",
+    "Remove backgrounds with one tap",
+    "Crop, rotate, mirror and cut photos into shapes",
+    "Exact sizes for social media and online shops",
+    "Convert between JPG, PNG, WebP and PDF",
+    "Compress images and PDFs",
+    "Print Size & DPI calculator",
+    "Text on Photo with stickers, frames, effects and perspective",
+    "Collage Maker",
+    "Photo Adjustments with filters",
+    "No account, no uploads - your photos stay on your phone"
+)
 
 @Composable
 private fun SettingsSection(title: String, content: @Composable () -> Unit) {

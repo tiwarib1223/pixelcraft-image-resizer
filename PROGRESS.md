@@ -588,3 +588,10 @@ Part F - safety checks run before delivery:
 - F4: Help & tips text verified against the real behaviour of every tool (resize has no aspect lock, collage swaps by holding and dropping a photo onto another frame, the cutter is called Circle Cutter and offers Circle/Square/Rounded/Heart shapes).
 - F5: every release library is covered by the Open-source licences page.
 - F6: policy greps - no rating prompts asking for stars, no premium/ads/payments remnants anywhere in the app.
+
+## v1.0.1 (versionCode 74) - his polish batch (three lists, "Now that's it")
+
+Doc pages: Help & tips shows each tool name as a bold dark heading with the text below; Open-source licences shows each component name bold on its own line; every doc page (Help, Licences, What's new, Terms, Privacy) has bigger, darker body text; What's new is a tidy list with small gaps. "Circle Cutter" is renamed "Shape Cutter" everywhere in the UI (it offers Circle/Square/Rounded/Heart).
+Home: top-right settings gear removed (Settings stays in the bottom bar); "Resize. Remove. Convert. Create." always fits one line; all tool icons are real Material icons, bigger and clearer (Crop, Print, Compress, Share, Storefront, AutoFixHigh magic wand, Tune sliders, TextFields; picks for the unnamed three: Resize = PhotoSizeSelectLarge, Shape Cutter = Interests, Collage = GridOn - vetoable); small texts updated ("Cut out any subject", "JPG, PNG, WebP & PDF", "Exact sizes for every platform").
+Bottom bar: purple selection highlight changed to light sky blue; Presets tab has its own icon (Style, vetoable).
+Presets page: top line is now "Ready-made sizes for shops and social media"; the green badge moved under the size line and is renamed "Official size" so long titles never touch it; the search box has a search icon and a sky-blue border; Gumroad Cover image (1280 x 720) and Gumroad Thumbnail (600 x 600) added under "Shop & creator" from the official Gumroad help page. Payhip was checked too: its official help says it recommends no exact dimensions (aspect-ratio guidance only), so nothing was added for Payhip.
