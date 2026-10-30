@@ -74,6 +74,15 @@ Stage 3 v0.10.1 (built on Stage 2E v0.8.1): queue overview screen, the full "Sel
 
 
 
+## v0.16.5 - His three v0.16.4 errors + Menu button (live phone feedback)
+
+- Preview too small (his "When I select image it is very small"): the sheet layout squeezed the preview to ~200dp on a real phone, so a square photo rendered as a tiny centered square. Fixed chrome: decorative subtitle hidden once a photo is loaded, slimmer photo card, Position moved into the sheet header (with Original beside it), sheet height 340 -> 300dp, undo/redo compact in the header. The preview now gets the real remaining space and the photo fills its width. Regression guard: new TextPhotoPhoneSizeTest renders at a REAL phone window (w360dp-h640dp) - the tall review window had masked this.
+- Text background not working on curved text (his screenshot: Black selected, nothing drawn): drawCurved checked bgColorArgb but never painted it (pre-existing engine bug, straight text was fine). Curved text now draws a proper ribbon background that follows the arc behind the glyphs. Regression test: curvedTextBackgroundDrawsRibbon (pixel-count assertion).
+- Process greyed out with no layers (his "When I click to save option it show like this"): was enabled only with text layers. Now enabled whenever a photo is loaded - zoom/crop + save without adding text is a real flow.
+- Menu back control is now a bold, proper button (his '"Menu" make more bold with button').
+- FILTERS (his "Its possible to add Filter" - placed in the Create menu next to Save, Save moved to last): new Filters level with 8 live thumbnail previews of HIS photo (Normal, B&W, Warm, Cool, Vintage, Bright, Fade, Vivid). ColorMatrix-based - instant live preview, composes with crop/position/layers, baked into the export. Filter change invalidates the processed result; Reset clears back to Normal.
+- Pinch-zoom in the Position/crop flow confirmed intact (his "Dont forget to zoom option when crop image") - gesture code untouched by the preview resize.
+
 ## v0.16.4 - Text on Photo bottom-sheet redesign (his design direction: "we dont need to scroll up and down many times")
 
 - Bottom sheet editor (his core ask): the long scrolling editing screen is gone when a photo is loaded. The photo stays on screen ALWAYS (his "easy to look live edit") and all controls live in a fixed bottom sheet with two-level navigation, exactly like his reference app but in our light style: root menu (Add Text, Add Image, Image Size, Layers, Save) -> tap one to open its options -> Back arrow returns to the menu. Undo/Redo sit in the sheet header.

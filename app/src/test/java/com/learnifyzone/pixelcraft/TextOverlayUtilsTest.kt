@@ -42,6 +42,18 @@ class TextOverlayUtilsTest {
     }
 
     @Test
+    fun curvedTextBackgroundDrawsRibbon() {
+        // His v0.16.4 report: Black background selected on curved text showed nothing.
+        val layer = TextLayer(1, text = "banking", colorArgb = Color.WHITE, bgColorArgb = Color.BLACK, curved = true)
+        val bmp = draw(layer)
+        var dark = 0
+        for (y in 0 until bmp.height) for (x in 0 until bmp.width) {
+            if (Color.red(bmp.getPixel(x, y)) < 80) dark++
+        }
+        assertTrue("curved background must paint a dark ribbon behind the text, got $dark dark px", dark > 800)
+    }
+
+    @Test
     fun straightTextDrawsInk() {
         val bmp = draw(TextLayer(1, text = "Hello", colorArgb = Color.BLACK))
         val (minX, minY, maxX, maxY) = inkBounds(bmp)

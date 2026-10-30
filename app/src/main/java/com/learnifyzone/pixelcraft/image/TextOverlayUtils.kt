@@ -341,18 +341,32 @@ object TextOverlayUtils {
                 Align.CENTER -> ((arcLen - textW) / 2f).coerceAtLeast(0f)
                 Align.RIGHT -> (arcLen - textW).coerceAtLeast(0f)
             }
-            if (layer.bgColorArgb != 0 || layer.outlineFrac > 0f) {
-                // Outlined pass first so the fill sits crisply on top.
-                if (layer.outlineFrac > 0f) {
-                    val stroke = Paint(p).apply {
-                        style = Paint.Style.STROKE
-                        strokeWidth = layer.outlineFrac * p.textSize
-                        color = layer.outlineColorArgb
-                        alpha = (layer.opacity.coerceIn(0f, 1f) * 255).toInt()
-                        strokeJoin = Paint.Join.ROUND
-                    }
-                    canvas.drawTextOnPath(line, path, hOff, 0f, stroke)
+            // His v0.16.4 report "Text background not working" (curved text): the old code checked
+            // bgColorArgb but never drew it. Ribbon background: stroke the text's arc segment behind
+            // the glyphs, centred on the glyph box, full line height + padding.
+            if (layer.bgColorArgb != 0) {
+                val pm = android.graphics.PathMeasure(path, false)
+                val seg = Path()
+                pm.getSegment(hOff, (hOff + textW).coerceAtMost(pm.length), seg, true)
+                seg.offset(0f, (fm.descent + fm.ascent) / 2f)
+                val ribbon = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    style = Paint.Style.STROKE
+                    strokeWidth = (fm.descent - fm.ascent) + p.textSize * 0.36f
+                    color = layer.bgColorArgb
+                    alpha = (layer.opacity.coerceIn(0f, 1f) * 255).toInt()
                 }
+                canvas.drawPath(seg, ribbon)
+            }
+            if (layer.outlineFrac > 0f) {
+                // Outlined pass first so the fill sits crisply on top.
+                val stroke = Paint(p).apply {
+                    style = Paint.Style.STROKE
+                    strokeWidth = layer.outlineFrac * p.textSize
+                    color = layer.outlineColorArgb
+                    alpha = (layer.opacity.coerceIn(0f, 1f) * 255).toInt()
+                    strokeJoin = Paint.Join.ROUND
+                }
+                canvas.drawTextOnPath(line, path, hOff, 0f, stroke)
             }
             canvas.drawTextOnPath(line, path, hOff, 0f, p)
         }
