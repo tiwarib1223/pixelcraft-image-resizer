@@ -4420,7 +4420,9 @@ snackbar.showSnackbar("This phone ran out of memory. Try a smaller size or fewer
         }
     ) { padding ->
         when (screen) {
-            Screen.Home -> when (tab) {
+            Screen.Home -> if (settingsDoc != null) {
+                DocPage(Modifier.padding(padding), doc = settingsDoc!!, onBack = { settingsDoc = null })
+            } else when (tab) {
                 MainTab.Home -> HomeScreen(
                     modifier = Modifier.padding(padding),
                     onOpenDrawer = { drawerOpen = true },
@@ -4511,11 +4513,7 @@ snackbar.showSnackbar("This phone ran out of memory. Try a smaller size or fewer
                 MainTab.Settings -> SettingsScreen(
                     Modifier.padding(padding),
                     darkMode = darkMode,
-                    onDarkMode = onDarkMode,
-                    doc = settingsDoc,
-                    onOpenDoc = { settingsDoc = it },
-                    onEmail = { emailSupport() },
-                    onRate = { openPlayStorePage() }
+                    onDarkMode = onDarkMode
                 )
             }
             Screen.QueueOverview -> QueueOverviewScreen(
@@ -5190,11 +5188,11 @@ snackbar.showSnackbar("This phone ran out of memory. Try a smaller size or fewer
             onEmail = { emailSupport() },
             onRate = { openPlayStorePage() },
             onShare = { shareApp() },
-            onHelp = { drawerOpen = false; tab = MainTab.Settings; settingsDoc = "help" },
-            onTerms = { drawerOpen = false; tab = MainTab.Settings; settingsDoc = "terms" },
-            onPrivacy = { drawerOpen = false; tab = MainTab.Settings; settingsDoc = "privacy" },
-            onLicences = { drawerOpen = false; tab = MainTab.Settings; settingsDoc = "licences" },
-            onWhatsNew = { drawerOpen = false; tab = MainTab.Settings; settingsDoc = "whatsnew" }
+            onHelp = { drawerOpen = false; settingsDoc = "help" },
+            onTerms = { drawerOpen = false; settingsDoc = "terms" },
+            onPrivacy = { drawerOpen = false; settingsDoc = "privacy" },
+            onLicences = { drawerOpen = false; settingsDoc = "licences" },
+            onWhatsNew = { drawerOpen = false; settingsDoc = "whatsnew" }
         )
     }
 
@@ -8170,15 +8168,58 @@ private fun PresetsScreen(
     }
 }
 
+/** v1.0.3 (his bug report): doc pages (Help, Terms, Privacy, Licences, What's new) render
+ *  at the ROOT level over the current tab, so the back arrow returns to the screen the user
+ *  came from - not to the Settings page. */
+@Composable
+private fun DocPage(modifier: Modifier, doc: String, onBack: () -> Unit) {
+Column(modifier.fillMaxSize().padding(18.dp).verticalScroll(rememberScrollState())) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = { onBack() }) { Icon(Icons.Default.ArrowBack, contentDescription = "Back", tint = DeepNavy) }
+            Text(
+                when (doc) {
+                    "terms" -> "Terms & Conditions"
+                    "privacy" -> "Privacy Policy"
+                    "licences" -> "Open-source licences"
+                    "help" -> "Help & tips"
+                    else -> "What's new"
+                },
+                color = DeepNavy, fontSize = 22.sp, fontWeight = FontWeight.Bold
+            )
+        }
+        when (doc) {
+            "terms" -> Text(TERMS_TEXT, color = DocBody, fontSize = 15.sp, lineHeight = 22.sp, modifier = Modifier.padding(top = 10.dp))
+            "privacy" -> Text(PRIVACY_TEXT, color = DocBody, fontSize = 15.sp, lineHeight = 22.sp, modifier = Modifier.padding(top = 10.dp))
+            "licences" -> {
+                Text(LICENCES_INTRO, color = DocBody, fontSize = 15.sp, lineHeight = 22.sp, modifier = Modifier.padding(top = 10.dp))
+                LICENCE_ENTRIES.forEach { entry ->
+                    Text(entry.heading, color = DeepNavy, fontSize = 15.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 12.dp))
+                    Text(entry.body, color = DocBody, fontSize = 15.sp, lineHeight = 22.sp, modifier = Modifier.padding(top = 2.dp))
+                }
+                Text(LICENCES_OUTRO, color = DocBody, fontSize = 13.sp, lineHeight = 19.sp, modifier = Modifier.padding(top = 14.dp))
+            }
+            "help" -> HELP_ENTRIES.forEach { entry ->
+                Text(entry.heading, color = DeepNavy, fontSize = 15.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 12.dp))
+                Text(entry.body, color = DocBody, fontSize = 15.sp, lineHeight = 22.sp, modifier = Modifier.padding(top = 2.dp))
+            }
+            else -> {
+                Text("What's new in version " + BuildConfig.VERSION_NAME.removeSuffix("-debug"), color = DocBody, fontSize = 15.sp, lineHeight = 22.sp, modifier = Modifier.padding(top = 10.dp))
+                Text("Welcome to A2Z Image Craft - a complete photo toolkit that works entirely on your phone.", color = DocBody, fontSize = 15.sp, lineHeight = 22.sp, modifier = Modifier.padding(top = 8.dp))
+                Column(Modifier.padding(top = 10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    WHATS_NEW_ITEMS.forEach { item ->
+                        Text("- " + item, color = DocBody, fontSize = 15.sp, lineHeight = 22.sp)
+                    }
+                }
+            }
+        }
+    }
+}
+
 @Composable
 private fun SettingsScreen(
     modifier: Modifier,
     darkMode: Boolean,
-    onDarkMode: (Boolean) -> Unit,
-    doc: String?,
-    onOpenDoc: (String?) -> Unit,
-    onEmail: () -> Unit,
-    onRate: () -> Unit
+    onDarkMode: (Boolean) -> Unit
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
     val scope = rememberCoroutineScope()
@@ -8186,50 +8227,6 @@ private fun SettingsScreen(
     var showClearConfirm by remember { mutableStateOf(false) }
     var clearedTick by remember { mutableStateOf(0) }
     LaunchedEffect(clearedTick) { recentsCount = withContext(Dispatchers.IO) { RecentsStore.list(context).size } }
-    // v0.20.0: Terms & Conditions / Privacy Policy open as simple in-app pages (honest on-device wording).
-    if (doc != null) {
-        Column(modifier.fillMaxSize().padding(18.dp).verticalScroll(rememberScrollState())) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                IconButton(onClick = { onOpenDoc(null) }) { Icon(Icons.Default.ArrowBack, contentDescription = "Back", tint = DeepNavy) }
-                Text(
-                    when (doc) {
-                        "terms" -> "Terms & Conditions"
-                        "privacy" -> "Privacy Policy"
-                        "licences" -> "Open-source licences"
-                        "help" -> "Help & tips"
-                        else -> "What's new"
-                    },
-                    color = DeepNavy, fontSize = 22.sp, fontWeight = FontWeight.Bold
-                )
-            }
-            when (doc) {
-                "terms" -> Text(TERMS_TEXT, color = DocBody, fontSize = 15.sp, lineHeight = 22.sp, modifier = Modifier.padding(top = 10.dp))
-                "privacy" -> Text(PRIVACY_TEXT, color = DocBody, fontSize = 15.sp, lineHeight = 22.sp, modifier = Modifier.padding(top = 10.dp))
-                "licences" -> {
-                    Text(LICENCES_INTRO, color = DocBody, fontSize = 15.sp, lineHeight = 22.sp, modifier = Modifier.padding(top = 10.dp))
-                    LICENCE_ENTRIES.forEach { entry ->
-                        Text(entry.heading, color = DeepNavy, fontSize = 15.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 12.dp))
-                        Text(entry.body, color = DocBody, fontSize = 15.sp, lineHeight = 22.sp, modifier = Modifier.padding(top = 2.dp))
-                    }
-                    Text(LICENCES_OUTRO, color = DocBody, fontSize = 13.sp, lineHeight = 19.sp, modifier = Modifier.padding(top = 14.dp))
-                }
-                "help" -> HELP_ENTRIES.forEach { entry ->
-                    Text(entry.heading, color = DeepNavy, fontSize = 15.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 12.dp))
-                    Text(entry.body, color = DocBody, fontSize = 15.sp, lineHeight = 22.sp, modifier = Modifier.padding(top = 2.dp))
-                }
-                else -> {
-                    Text("What's new in version " + BuildConfig.VERSION_NAME.removeSuffix("-debug"), color = DocBody, fontSize = 15.sp, lineHeight = 22.sp, modifier = Modifier.padding(top = 10.dp))
-                    Text("Welcome to A2Z Image Craft - a complete photo toolkit that works entirely on your phone.", color = DocBody, fontSize = 15.sp, lineHeight = 22.sp, modifier = Modifier.padding(top = 8.dp))
-                    Column(Modifier.padding(top = 10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        WHATS_NEW_ITEMS.forEach { item ->
-                            Text("- " + item, color = DocBody, fontSize = 15.sp, lineHeight = 22.sp)
-                        }
-                    }
-                }
-            }
-        }
-        return
-    }
     Column(modifier.fillMaxSize().padding(18.dp).verticalScroll(rememberScrollState())) {
         Text("Settings", color = DeepNavy, fontSize = 26.sp, fontWeight = FontWeight.Bold)
         Spacer(Modifier.height(8.dp))

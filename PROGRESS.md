@@ -601,3 +601,7 @@ Presets page: top line is now "Ready-made sizes for shops and social media"; the
 "Setting page only mode and clear recently edited": the Settings page keeps ONLY Appearance (Dark mode) and Privacy (Clear recently edited). The Support section (Email us, Help & tips, Rate us) and About section (Open-source licences, What's new) added in v1.0.0 were removed from Settings; every one of those links stays in the side menu exactly as it was, so nothing was lost - this overrides the launch spec's "in Settings" placement.
 
 Addendum (approved while building): the What's new page would have become unreachable after slimming Settings, so one "What's new" row was added to the side menu below Open-source licences. Terms section 11 was corrected to say the licences are listed in the app menu (they are no longer in Settings).
+
+## v1.0.3 (versionCode 76) - his bug: doc pages stole the back arrow
+
+His report: opening Help & tips (or Terms, etc.) from the side menu and tapping the top back arrow landed on the Settings page. Cause: drawer doc pages were rendered inside the Settings tab. Fix: doc pages now render over the CURRENT tab, so the back arrow (and the system back button) returns to the screen the user came from - Home when the drawer was opened from Home. Verified for all five doc pages: Help & tips, Terms & Conditions, Privacy Policy, Open-source licences, What's new.

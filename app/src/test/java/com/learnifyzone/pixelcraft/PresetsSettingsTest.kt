@@ -179,12 +179,12 @@ class PresetsSettingsTest {
             waitForText("Privacy Policy")
             waitForText(com.learnifyzone.pixelcraft.BuildConfig.VERSION_NAME.removeSuffix("-debug"))   // version footer in the drawer - follows the shipped version
             shot(sc, "v0202_phone_drawer")
-            // drawer Terms row -> Terms doc page (renders on the Settings tab, back-safe since v0.20.1)
+            // drawer Terms row -> Terms doc page (v1.0.3: renders over the current tab; back returns to Home)
             clickText("Terms & Conditions")
             waitForText("developed and published by Bitty")
             shot(sc, "v0202_phone_terms")
             composeRule.onNodeWithContentDescription("Back").performClick()
-            waitForText("Appearance")
+            waitForText("PHOTO TOOLKIT")
         }
     }
 
@@ -201,7 +201,7 @@ class PresetsSettingsTest {
             waitForText("Shape Cutter")
             shot(sc, "v100_phone_help")
             composeRule.onNodeWithContentDescription("Back").performClick()
-            waitForText("Appearance")
+            waitForText("PHOTO TOOLKIT")
             composeRule.onNodeWithText("Home").performClick()
             waitForText("PHOTO TOOLKIT")
             composeRule.onNodeWithContentDescription("Menu").performClick()
@@ -209,16 +209,16 @@ class PresetsSettingsTest {
             waitForText("U-2-Net")
             shot(sc, "v100_phone_licences")
             composeRule.onNodeWithContentDescription("Back").performClick()
-            waitForText("Appearance")
+            waitForText("PHOTO TOOLKIT")
             // v1.0.2: What's new moved to the drawer (below Open-source licences).
             composeRule.onNodeWithText("Home").performClick()
             waitForText("PHOTO TOOLKIT")
             composeRule.onNodeWithContentDescription("Menu").performClick()
             clickText("What's new")
-            waitForText("What's new in version 1.0.2")
+            waitForText("What's new in version 1.0.3")
             shot(sc, "v100_phone_whatsnew")
             composeRule.onNodeWithContentDescription("Back").performClick()
-            waitForText("Appearance")
+            waitForText("PHOTO TOOLKIT")
         }
     }
 
@@ -235,9 +235,9 @@ class PresetsSettingsTest {
             clickText("Terms & Conditions")
             waitForText("developed and published by Bitty")
             shot(sc, "v0202_phone_terms_back")
-            // 1) the page's own back arrow returns to Settings
+            // 1) the page's own back arrow returns to where the user was (Home)
             composeRule.onNodeWithContentDescription("Back").performClick()
-            waitForText("Appearance")
+            waitForText("PHOTO TOOLKIT")
             // 2) system back on the doc page returns to Settings too - the v0.20.0 bug was an app EXIT here
             composeRule.onNodeWithText("Home").performClick()
             waitForText("PHOTO TOOLKIT")
@@ -251,8 +251,10 @@ class PresetsSettingsTest {
             }
             pump()
             assertTrue("system back on a doc page must NOT finish the activity", !finishingAfterDocBack)
-            waitForText("Appearance")
+            waitForText("PHOTO TOOLKIT")
             // 3) system back on the Settings tab returns to the Home tab
+            composeRule.onNodeWithText("Settings").performClick()
+            waitForText("Appearance")
             var finishingAfterTabBack = false
             sc.onActivity { act ->
                 act.onBackPressedDispatcher.onBackPressed()
