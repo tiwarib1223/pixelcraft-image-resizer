@@ -97,27 +97,22 @@ class ExportScreenPolishTest {
     @Test
     fun qualitySliderStaysInsideScreen() {
         launchOnExport().use { sc ->
-            waitForText("Quality:", substring = true)
+            waitForText("Smaller file")
             val root = composeRule.onRoot().fetchSemanticsNode().boundsInRoot
-            val sliders = composeRule.onAllNodes(SemanticsMatcher.expectValue(
-                androidx.compose.ui.semantics.SemanticsProperties.ProgressBarRangeInfo,
-                androidx.compose.ui.semantics.ProgressBarRangeInfo(90f, 10f..100f)
-            )).fetchSemanticsNodes()
-            val sliderNode = if (sliders.isNotEmpty()) sliders.first()
-                else composeRule.onAllNodes(SemanticsMatcher.keyIsDefined(
-                    androidx.compose.ui.semantics.SemanticsProperties.ProgressBarRangeInfo
-                )).fetchSemanticsNodes().first()
+            val sliderNode = composeRule.onAllNodes(SemanticsMatcher.keyIsDefined(
+                androidx.compose.ui.semantics.SemanticsProperties.ProgressBarRangeInfo
+            )).fetchSemanticsNodes().first()
             val b = sliderNode.boundsInRoot
             assertTrue("slider left ${b.left} outside root left ${root.left}", b.left >= root.left - 1f)
             assertTrue("slider right ${b.right} overflows root right ${root.right} (his v0.20.3 report)", b.right <= root.right + 1f)
-            shot(sc, "v0204_phone_export")
+            shot(sc, "v0205_phone_export")
             // Scroll the Quality row into view for the visual proof shot (his screenshot showed it cut off).
             val sliderInteraction = composeRule.onAllNodes(SemanticsMatcher.keyIsDefined(
                 androidx.compose.ui.semantics.SemanticsProperties.ProgressBarRangeInfo
             ))[0]
             sliderInteraction.performScrollTo()
             pump()
-            shot(sc, "v0204_phone_export_slider")
+            shot(sc, "v0205_phone_export_slider")
         }
     }
 

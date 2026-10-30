@@ -574,6 +574,8 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
     var pendingLaunch by remember { mutableStateOf<String?>(null) }
     // In-app overwrite confirmation (his approved reference flow): shown before the system consent dialog.
     var confirmReplaceCount by remember { mutableStateOf(0) }
+    // MediaStore-resolved URIs the system consent dialog is shown for (picker URIs are rejected by it).
+    var replaceTargets by remember { mutableStateOf<List<Uri>>(emptyList()) }
     var chosenFormat by rememberSaveable { mutableStateOf("original") }
     var sizeUnit by rememberSaveable { mutableStateOf("px") }
     var resizeDpi by rememberSaveable { mutableStateOf("300") }
@@ -762,7 +764,6 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                 // so gating busy on it left the Process button spinning for ~4s after every load.
                 busy = false
                 busyLabel = ""
-                snackbar.showSnackbar("Photo loaded (${loaded.width} × ${loaded.height} px).")
             } catch (e: Exception) {
                 snackbar.showSnackbar("Couldn't open this image. Try another photo.")
             } finally {
@@ -2391,7 +2392,6 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                 // closing the size sheet must not drop the user back on the editor.
                 exportReturnToSocial = false; exportReturnToShop = false; exportReturnToCollage = false
                 screen = Screen.Export
-                snackbar.showSnackbar("Processed: $targetW × $targetH px.")
             } catch (e: Exception) {
                 snackbar.showSnackbar("Couldn't process this image. Try smaller dimensions.")
             } finally {
@@ -2423,7 +2423,6 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                 saveLastUsedTarget(context, fit.first.width, fit.first.height)
                 exportReturnToSocial = false; exportReturnToShop = false; exportReturnToCollage = false
                 screen = Screen.Export
-                snackbar.showSnackbar("Processed: ${fit.first.width} × ${fit.first.height} px · ${formatBytes(fit.second)}.")
             } catch (e: Exception) {
                 snackbar.showSnackbar("Couldn't reach that file size. Try a larger target.")
             } finally {
@@ -2502,7 +2501,7 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
     }
 
     fun performBatchReplace() {
-        val uris = photoQueue
+        val uris = if (replaceTargets.size == photoQueue.size && replaceTargets.isNotEmpty()) replaceTargets else photoQueue
         if (uris.isEmpty()) return
         busy = true
         busyLabel = "Replacing originals…"
@@ -2721,7 +2720,7 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
     }
 
     fun performReplace() {
-        val uri = sourceUri ?: return
+        val uri = replaceTargets.firstOrNull() ?: sourceUri ?: return
         busy = true
         busyLabel = "Replacing original…"
         scope.launch {
@@ -3687,12 +3686,21 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                 val uri = sourceUri
                 try {
                     if (uri != null && Build.VERSION.SDK_INT >= 30) {
-                        val pendingIntent = MediaStore.createWriteRequest(context.contentResolver, listOf(uri))
-                        writeConsent.launch(IntentSenderRequest.Builder(pendingIntent.intentSender).build())
+                        // The photo picker hands out content://media/picker/... URIs, which
+                        // createWriteRequest rejects ("no requested volume"). Resolve the real
+                        // MediaStore item (same row id) so the system consent dialog appears,
+                        // exactly like the reference apps do.
+                        val target = SaveUtils.replaceTargetFor(context, uri)
+                        if (target == null) {
+                            scope.launch { snackbar.showSnackbar("Replace isn't available for this photo. Use 'Save as new file' instead.") }
+                        } else {
+                            replaceTargets = listOf(target)
+                            val pendingIntent = MediaStore.createWriteRequest(context.contentResolver, listOf(target))
+                            writeConsent.launch(IntentSenderRequest.Builder(pendingIntent.intentSender).build())
+                        }
                     }
                 } catch (e: Exception) {
-                    // A non-MediaStore source (e.g. photo picker on some phones) makes createWriteRequest throw;
-                    // never let that kill the app - offer the always-safe path instead.
+                    // Never let a consent-flow failure kill the app - offer the always-safe path instead.
                     scope.launch { snackbar.showSnackbar("Replace isn't available for this photo. Use 'Save as new file' instead.") }
                 }
             }
@@ -3713,8 +3721,15 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
             "replaceBatch" -> {
                 try {
                     if (Build.VERSION.SDK_INT >= 30 && photoQueue.isNotEmpty()) {
-                        val pendingIntent = MediaStore.createWriteRequest(context.contentResolver, photoQueue)
-                        writeConsentBatch.launch(IntentSenderRequest.Builder(pendingIntent.intentSender).build())
+                        val resolved = photoQueue.map { SaveUtils.replaceTargetFor(context, it) }
+                        if (resolved.any { it == null }) {
+                            scope.launch { snackbar.showSnackbar("Replace isn't available for these photos. Use 'Save as new files' instead.") }
+                        } else {
+                            val targets = resolved.filterNotNull()
+                            replaceTargets = targets
+                            val pendingIntent = MediaStore.createWriteRequest(context.contentResolver, targets)
+                            writeConsentBatch.launch(IntentSenderRequest.Builder(pendingIntent.intentSender).build())
+                        }
                     }
                 } catch (e: Exception) {
                     scope.launch { snackbar.showSnackbar("Replace isn't available for these photos. Use 'Save as new files' instead.") }
@@ -4097,7 +4112,18 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
-        snackbarHost = { SnackbarHost(snackbar) },
+        snackbarHost = {
+            SnackbarHost(snackbar) { data ->
+                Surface(
+                    shape = RoundedCornerShape(14.dp),
+                    color = Color.White,
+                    shadowElevation = 8.dp,
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp)
+                ) {
+                    Text(data.visuals.message, color = DeepNavy, fontSize = 13.sp, lineHeight = 18.sp, modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp))
+                }
+            }
+        },
         topBar = {
             if (screen == Screen.Editor || screen == Screen.Export || screen == Screen.PrintHome || screen == Screen.PrintSetup || screen == Screen.PrintPreview || screen == Screen.PrintExport || screen == Screen.QueueOverview || screen == Screen.QueueResult || screen == Screen.Success || screen == Screen.SocialHome || screen == Screen.SocialPlatform || screen == Screen.SocialEdit || screen == Screen.ShopHome || screen == Screen.ShopOther || screen == Screen.ShopPlatform || screen == Screen.ShopEdit || screen == Screen.ShopCollage || screen == Screen.ConvertHome || screen == Screen.ConvertEdit || screen == Screen.ConvertResult || screen == Screen.CompressHome || screen == Screen.CompressSettings || screen == Screen.CompressResult || screen == Screen.Collage || screen == Screen.PhotoAdjust) {
                 TopAppBar(
@@ -7407,18 +7433,24 @@ private fun ExportScreen(
             Text("PDF files are saved to the Download/PixelCraft folder. The quality slider does not apply.", color = Slate, fontSize = 11.sp, lineHeight = 15.sp, modifier = Modifier.padding(top = 6.dp))
         }
         if (format != ExportFormat.PNG && format != ExportFormat.PDF && processed != null) {
-            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 4.dp)) {
-                Text("Quality: $quality%", color = DeepNavy, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
-                Slider(
-                    value = quality.toFloat(),
-                    onValueChange = { onQuality(it.toInt()) },
-                    onValueChangeFinished = onQualitySettled,
-                    valueRange = 10f..100f,
-                    steps = 89,
-                    modifier = Modifier.weight(1f).padding(start = 12.dp)
-                )
+            // Same proven layout as the Compress screen: label row on top, full-width slider below.
+            // (v0.20.5 - the old label+slider Row read as "cut off" on his phone.)
+            Row(Modifier.fillMaxWidth().padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text("Quality", fontWeight = FontWeight.Bold, color = DeepNavy, fontSize = 15.sp, modifier = Modifier.weight(1f))
+                Text("$quality%", fontWeight = FontWeight.Bold, color = SkyBlue, fontSize = 16.sp)
             }
-            Text("Lower quality makes a smaller file. The estimate updates when you stop moving the slider.", color = Slate, fontSize = 11.sp, lineHeight = 15.sp)
+            Slider(
+                value = quality.toFloat(),
+                onValueChange = { onQuality(it.toInt()) },
+                onValueChangeFinished = onQualitySettled,
+                valueRange = 10f..100f,
+                modifier = Modifier.fillMaxWidth()
+            )
+            Row(Modifier.fillMaxWidth()) {
+                Text("Smaller file", fontSize = 12.sp, color = Slate, modifier = Modifier.weight(1f))
+                Text("Higher quality", fontSize = 12.sp, color = Slate)
+            }
+            Text("The estimate updates when you stop moving the slider.", color = Slate, fontSize = 11.sp, lineHeight = 15.sp)
         }
         Button(
             onClick = onSaveNew,
