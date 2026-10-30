@@ -91,6 +91,8 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Colorize
 import androidx.compose.material.icons.filled.Flip
+import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.EmojiEmotions
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -137,6 +139,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -2791,6 +2794,37 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
         textTick++
     }
 
+    /** v0.16.8: emoji from the Stickers tab - added as an editable text layer (resize/rotate/effects all work). */
+    fun addEmojiTextLayer(emoji: String) {
+        recordTextUndo()
+        var newId = System.currentTimeMillis()
+        while (textLayers.any { it.id == newId } || textImageLayers.any { it.id == newId }) newId++
+        val layer = TextOverlayUtils.TextLayer(id = newId)
+        layer.text = emoji
+        layer.sizeFrac = 0.16f
+        textLayers.add(layer)
+        textSelectedId = layer.id
+        textImageSelectedId = null
+        textResultBytes = null
+        textSaved = false
+        textTick++
+    }
+
+    /** v0.16.8: drawn shape sticker (heart/star/arrow/burst) - added as an image layer under the text. */
+    fun addStickerLayer(kind: TextOverlayUtils.StickerKind, colorArgb: Int) {
+        recordTextUndo()
+        val bmp = TextOverlayUtils.makeStickerBitmap(kind, 512, colorArgb)
+        var newId = System.currentTimeMillis()
+        while (textLayers.any { it.id == newId } || textImageLayers.any { it.id == newId }) newId++
+        val layer = TextOverlayUtils.ImageLayer(newId, bmp, cx = 0.5f, cy = 0.4f, widthFrac = 0.3f)
+        textImageLayers.add(layer)
+        textImageSelectedId = layer.id
+        textSelectedId = null
+        textResultBytes = null
+        textSaved = false
+        textTick++
+    }
+
     fun refreshTextStylePresets() {
         scope.launch(Dispatchers.IO) {
             val list = TextStylePresetsStore.load(context)
@@ -4076,6 +4110,8 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                 onPickColourAt = { x, y, t -> pickColourAt(x, y, t) },
                 onFlipSelected = { flipSelectedLayer() },
                 onCloneSelected = { cloneSelectedLayer() },
+                onAddEmoji = { e -> addEmojiTextLayer(e) },
+                onAddSticker = { k, c -> addStickerLayer(k, c) },
                 stylePresets = textStylePresets,
                 onLoadStyles = { refreshTextStylePresets() },
                 onApplyStyle = { p -> applyTextStylePreset(p) },
@@ -9319,6 +9355,8 @@ private fun TextOnPhotoScreen(
     onPickColourAt: (Float, Float, String) -> Boolean,
     onFlipSelected: () -> Unit,
     onCloneSelected: () -> Unit,
+    onAddEmoji: (String) -> Unit,
+    onAddSticker: (TextOverlayUtils.StickerKind, Int) -> Unit,
     stylePresets: List<TextStylePreset>,
     onLoadStyles: () -> Unit,
     onApplyStyle: (TextStylePreset) -> Unit,
@@ -10143,6 +10181,121 @@ private fun TextOnPhotoScreen(
                     Button(onClick = onCloneSelected, enabled = selected != null || selectedImage != null, modifier = Modifier.fillMaxWidth().height(46.dp), colors = ButtonDefaults.buttonColors(containerColor = Orange, contentColor = Color.White), shape = RoundedCornerShape(14.dp)) { Text("Duplicate Layer", fontWeight = FontWeight.Bold) }
                     if (testSheetLevel != null) Text("hook:layers=" + layers.size + ",images=" + imageLayers.size, fontSize = 8.sp, color = BorderGrey)
                     }
+                    "effects" -> {
+                    // v0.16.8 Text Effects Pack (his "Yes all 8"): gradient, neon/glow, hollow + ready-made styles.
+                    Text("Text Effects", color = DeepNavy, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                    Spacer(Modifier.height(4.dp))
+                    Text(if (selected == null) "Tap a text layer on the photo first, then come back here." else "One tap changes the whole look. The preview on your photo is exactly what gets saved.", color = Slate, fontSize = 11.sp)
+                    Spacer(Modifier.height(8.dp))
+                    Text("Ready-made styles", color = DeepNavy, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                    Spacer(Modifier.height(6.dp))
+                    TextOverlayUtils.EFFECT_TEMPLATES.chunked(2).forEach { rowItems ->
+                        Row(Modifier.fillMaxWidth().padding(bottom = 8.dp)) {
+                            rowItems.forEach { tpl ->
+                                OutlinedButton(
+                                    onClick = { onMutate(0L) { l -> TextOverlayUtils.applyTemplate(l, tpl.name) } },
+                                    enabled = selected != null,
+                                    shape = RoundedCornerShape(12.dp),
+                                    modifier = Modifier.weight(1f).padding(end = 8.dp)
+                                ) {
+                                    Text("Ag", color = Color(tpl.previewArgb), fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                                    Spacer(Modifier.width(6.dp))
+                                    Text(tpl.name, color = DeepNavy, fontSize = 12.sp, maxLines = 1)
+                                }
+                            }
+                            repeat(2 - rowItems.size) { Spacer(Modifier.weight(1f).padding(end = 8.dp)) }
+                        }
+                    }
+                    Spacer(Modifier.height(4.dp))
+                    Text("Effect", color = DeepNavy, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                    Spacer(Modifier.height(6.dp))
+                    Row(Modifier.horizontalScroll(rememberScrollState())) {
+                        TextOverlayUtils.TextEffect.values().forEach { eff ->
+                            val selEff = selected?.effect == eff
+                            OutlinedButton(
+                                onClick = { onMutate(0L) { l -> l.effect = eff } },
+                                enabled = selected != null,
+                                shape = RoundedCornerShape(10.dp),
+                                colors = ButtonDefaults.outlinedButtonColors(containerColor = if (selEff) SkyBlue else Color.Transparent, contentColor = if (selEff) Color.White else DeepNavy),
+                                modifier = Modifier.padding(end = 8.dp)
+                            ) { Text(eff.label, fontSize = 12.sp) }
+                        }
+                    }
+                    if (selected?.effect == TextOverlayUtils.TextEffect.GRADIENT) {
+                        Spacer(Modifier.height(8.dp))
+                        Text("Gradient colours", color = DeepNavy, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                        Spacer(Modifier.height(6.dp))
+                        Row(Modifier.horizontalScroll(rememberScrollState())) {
+                            TextOverlayUtils.GRADIENT_PRESETS.forEach { gp ->
+                                val selG = selected?.gradientStartArgb == gp.startArgb && selected?.gradientEndArgb == gp.endArgb
+                                Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(end = 10.dp).clickable { onMutate(0L) { l -> l.gradientStartArgb = gp.startArgb; l.gradientEndArgb = gp.endArgb } }) {
+                                    Box(Modifier.size(44.dp).clip(RoundedCornerShape(10.dp)).background(Brush.linearGradient(listOf(Color(gp.startArgb), Color(gp.endArgb)))).border(if (selG) 3.dp else 1.dp, if (selG) SkyBlue else BorderGrey, RoundedCornerShape(10.dp)))
+                                    Spacer(Modifier.height(2.dp))
+                                    Text(gp.label, color = if (selG) SkyBlue else DeepNavy, fontSize = 11.sp)
+                                }
+                            }
+                        }
+                    }
+                    if (selected?.effect == TextOverlayUtils.TextEffect.NEON) {
+                        Spacer(Modifier.height(8.dp))
+                        Text("Glow colour", color = DeepNavy, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                        Spacer(Modifier.height(6.dp))
+                        Row(Modifier.horizontalScroll(rememberScrollState())) {
+                            (TextOverlayUtils.QUICK_COLORS + TextOverlayUtils.EXTRA_COLORS.take(6)).forEach { c ->
+                                val selC = selected?.glowColorArgb == c
+                                Box(Modifier.padding(end = 10.dp).size(34.dp).clip(RoundedCornerShape(17.dp)).background(Color(c)).border(if (selC) 3.dp else 1.dp, if (selC) SkyBlue else BorderGrey, RoundedCornerShape(17.dp)).clickable { onMutate(0L) { l -> l.glowColorArgb = c } })
+                            }
+                        }
+                    }
+                    if (testSheetLevel != null) Text("hook:effect=" + (selected?.effect?.name ?: "none"), fontSize = 8.sp, color = BorderGrey)
+                    }
+                    "stickers" -> {
+                    // v0.16.8 (his "Yes all 8"): stickers & emoji - tap to add, then drag/resize/rotate on the photo.
+                    Text("Stickers & Emoji", color = DeepNavy, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                    Spacer(Modifier.height(4.dp))
+                    Text("Tap to add one - then drag, resize or rotate it on the photo. Shapes sit under your text; emoji act like text.", color = Slate, fontSize = 11.sp)
+                    Spacer(Modifier.height(8.dp))
+                    Text("Shapes", color = DeepNavy, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                    Spacer(Modifier.height(6.dp))
+                    Row(Modifier.horizontalScroll(rememberScrollState())) {
+                        TextOverlayUtils.STICKERS.forEach { st ->
+                            val stickerBmp = remember(st.kind) { TextOverlayUtils.makeStickerBitmap(st.kind, 128, st.colorArgb) }
+                            OutlinedButton(
+                                onClick = { onAddSticker(st.kind, st.colorArgb) },
+                                shape = RoundedCornerShape(12.dp),
+                                modifier = Modifier.padding(end = 8.dp)
+                            ) {
+                                Image(bitmap = stickerBmp.asImageBitmap(), contentDescription = st.label, modifier = Modifier.size(28.dp))
+                                Spacer(Modifier.width(6.dp))
+                                Text(st.label, color = DeepNavy, fontSize = 12.sp)
+                            }
+                        }
+                    }
+                    Spacer(Modifier.height(10.dp))
+                    Text("Emoji", color = DeepNavy, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                    Spacer(Modifier.height(6.dp))
+                    var emojiCat by remember { mutableStateOf(0) }
+                    Row(Modifier.horizontalScroll(rememberScrollState())) {
+                        TextOverlayUtils.EMOJI_CATEGORIES.forEachIndexed { i, cat ->
+                            OutlinedButton(
+                                onClick = { emojiCat = i },
+                                shape = RoundedCornerShape(10.dp),
+                                colors = ButtonDefaults.outlinedButtonColors(containerColor = if (emojiCat == i) SkyBlue else Color.Transparent, contentColor = if (emojiCat == i) Color.White else DeepNavy),
+                                modifier = Modifier.padding(end = 8.dp)
+                            ) { Text(cat.first, fontSize = 12.sp) }
+                        }
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    TextOverlayUtils.EMOJI_CATEGORIES[emojiCat.coerceIn(0, TextOverlayUtils.EMOJI_CATEGORIES.size - 1)].second.chunked(5).forEach { rowItems ->
+                        Row(Modifier.fillMaxWidth().padding(bottom = 4.dp)) {
+                            rowItems.forEach { emoji ->
+                                Text(emoji, fontSize = 26.sp, textAlign = androidx.compose.ui.text.style.TextAlign.Center, modifier = Modifier.weight(1f).clickable { onAddEmoji(emoji) })
+                            }
+                            repeat(5 - rowItems.size) { Spacer(Modifier.weight(1f)) }
+                        }
+                    }
+                    if (testSheetLevel != null) Text("hook:layers=" + layers.size + ",images=" + imageLayers.size, fontSize = 8.sp, color = BorderGrey)
+                    }
                     "save" -> {
                     // ---- Save Photo ----
                     Text("Process & Save", color = DeepNavy, fontWeight = FontWeight.Bold, fontSize = 16.sp)
@@ -10196,7 +10349,9 @@ private fun TextOnPhotoScreen(
                             Triple("Filters", Icons.Default.Tune, { sheetLevel = "filters" }),
                             Triple("Process", Icons.Default.CheckCircle, { sheetLevel = "save"; if (resultBytes == null && !busy) onProcess() }),   // v0.16.7: ONE tap - tile opens the level AND runs processing
                             Triple("Pick Colour", Icons.Default.Colorize, { sheetLevel = "pickcolour" }),
-                            Triple("Flip & Clone", Icons.Default.Flip, { sheetLevel = "flipclone" })
+                            Triple("Flip & Clone", Icons.Default.Flip, { sheetLevel = "flipclone" }),
+                            Triple("Effects", Icons.Default.AutoAwesome, { sheetLevel = "effects" }),
+                            Triple("Stickers", Icons.Default.EmojiEmotions, { sheetLevel = "stickers" })
                         ).chunked(3).forEach { rowItems ->
                             Row(Modifier.fillMaxWidth().padding(bottom = 8.dp)) {
                                 rowItems.forEach { (label, icon, action) ->

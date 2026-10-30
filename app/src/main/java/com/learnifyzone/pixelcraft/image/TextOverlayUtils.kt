@@ -4,6 +4,8 @@ import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.DashPathEffect
+import android.graphics.LinearGradient
+import android.graphics.Shader
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.RectF
@@ -36,6 +38,87 @@ object TextOverlayUtils {
     }
 
     enum class Align(val label: String) { LEFT("Left"), CENTER("Centre"), RIGHT("Right") }
+
+    /** v0.16.8 Text Effects Pack (his "Yes all 8"): whole-layer looks, drawn in the shared path. */
+    enum class TextEffect(val label: String) { NONE("None"), GRADIENT("Gradient"), NEON("Neon"), HOLLOW("Hollow") }
+
+    data class GradientPreset(val label: String, val startArgb: Int, val endArgb: Int)
+
+    val GRADIENT_PRESETS = listOf(
+        GradientPreset("Sunset", 0xFFFF8A32.toInt(), 0xFFF95F6A.toInt()),
+        GradientPreset("Ocean", 0xFF42BFEF.toInt(), 0xFF3ECF8E.toInt()),
+        GradientPreset("Candy", 0xFFF95F6A.toInt(), 0xFF9B5DE5.toInt()),
+        GradientPreset("Gold", 0xFFFFE066.toInt(), 0xFFFF8A32.toInt()),
+        GradientPreset("Sky", 0xFF42BFEF.toInt(), 0xFF9B5DE5.toInt())
+    )
+
+    data class EffectTemplate(val name: String, val previewArgb: Int)
+
+    /** Ready-made one-tap styles (v0.16.8) - each applies a full look to the selected layer. */
+    val EFFECT_TEMPLATES = listOf(
+        EffectTemplate("Sunset Fade", 0xFFF95F6A.toInt()),
+        EffectTemplate("Ocean Fade", 0xFF42BFEF.toInt()),
+        EffectTemplate("Candy Fade", 0xFF9B5DE5.toInt()),
+        EffectTemplate("Neon Pink", 0xFFF95F6A.toInt()),
+        EffectTemplate("Neon Blue", 0xFF42BFEF.toInt()),
+        EffectTemplate("Neon Green", 0xFF3ECF8E.toInt()),
+        EffectTemplate("Hollow White", 0xFFFFFFFF.toInt()),
+        EffectTemplate("Hollow Gold", 0xFFF5B942.toInt())
+    )
+
+    /** Apply a v0.16.8 ready-made style template (name from EFFECT_TEMPLATES). */
+    fun applyTemplate(layer: TextLayer, name: String) {
+        when (name) {
+            "Sunset Fade" -> {
+                layer.effect = TextEffect.GRADIENT
+                layer.gradientStartArgb = 0xFFFF8A32.toInt(); layer.gradientEndArgb = 0xFFF95F6A.toInt()
+                layer.font = FontChoice.Sans; layer.bold = true; layer.italic = false
+                layer.shadow = false; layer.outlineFrac = 0f; layer.bgColorArgb = 0; layer.opacity = 1f
+            }
+            "Ocean Fade" -> {
+                layer.effect = TextEffect.GRADIENT
+                layer.gradientStartArgb = 0xFF42BFEF.toInt(); layer.gradientEndArgb = 0xFF3ECF8E.toInt()
+                layer.font = FontChoice.Sans; layer.bold = true; layer.italic = false
+                layer.shadow = false; layer.outlineFrac = 0f; layer.bgColorArgb = 0; layer.opacity = 1f
+            }
+            "Candy Fade" -> {
+                layer.effect = TextEffect.GRADIENT
+                layer.gradientStartArgb = 0xFFF95F6A.toInt(); layer.gradientEndArgb = 0xFF9B5DE5.toInt()
+                layer.font = FontChoice.Sans; layer.bold = true; layer.italic = false
+                layer.shadow = false; layer.outlineFrac = 0f; layer.bgColorArgb = 0; layer.opacity = 1f
+            }
+            "Neon Pink" -> {
+                layer.effect = TextEffect.NEON
+                layer.glowColorArgb = 0xFFF95F6A.toInt(); layer.colorArgb = 0xFFFFFFFF.toInt()
+                layer.font = FontChoice.Sans; layer.bold = true; layer.italic = false
+                layer.shadow = false; layer.outlineFrac = 0f; layer.bgColorArgb = 0; layer.opacity = 1f
+            }
+            "Neon Blue" -> {
+                layer.effect = TextEffect.NEON
+                layer.glowColorArgb = 0xFF42BFEF.toInt(); layer.colorArgb = 0xFFFFFFFF.toInt()
+                layer.font = FontChoice.Sans; layer.bold = true; layer.italic = false
+                layer.shadow = false; layer.outlineFrac = 0f; layer.bgColorArgb = 0; layer.opacity = 1f
+            }
+            "Neon Green" -> {
+                layer.effect = TextEffect.NEON
+                layer.glowColorArgb = 0xFF3ECF8E.toInt(); layer.colorArgb = 0xFFFFFFFF.toInt()
+                layer.font = FontChoice.Sans; layer.bold = true; layer.italic = false
+                layer.shadow = false; layer.outlineFrac = 0f; layer.bgColorArgb = 0; layer.opacity = 1f
+            }
+            "Hollow White" -> {
+                layer.effect = TextEffect.HOLLOW
+                layer.colorArgb = 0xFFFFFFFF.toInt(); layer.outlineFrac = 0f
+                layer.font = FontChoice.Sans; layer.bold = true; layer.italic = false
+                layer.shadow = false; layer.bgColorArgb = 0; layer.opacity = 1f
+            }
+            "Hollow Gold" -> {
+                layer.effect = TextEffect.HOLLOW
+                layer.colorArgb = 0xFFF5B942.toInt(); layer.outlineFrac = 0f
+                layer.font = FontChoice.Serif; layer.bold = true; layer.italic = false
+                layer.shadow = false; layer.bgColorArgb = 0; layer.opacity = 1f
+            }
+        }
+    }
 
     /** The 6-colour quick palette from his mockup: white, black, blue, gold, red/pink, green. */
     val QUICK_COLORS = listOf(
@@ -75,7 +158,11 @@ object TextOverlayUtils {
         var arcSweep: Float = 160f,           // degrees of arc the text spans when curved
         var letterSpacing: Float = 0f,        // em fraction (0..0.3)
         var lineSpacing: Float = 0f,          // extra line gap as a fraction (0..1)
-        var flipH: Boolean = false          // v0.16.7: mirror horizontally
+        var flipH: Boolean = false,         // v0.16.7: mirror horizontally
+        var effect: TextEffect = TextEffect.NONE,       // v0.16.8: gradient / neon / hollow
+        var gradientStartArgb: Int = 0xFFFF8A32.toInt(),// v0.16.8: gradient top colour
+        var gradientEndArgb: Int = 0xFFF95F6A.toInt(),  // v0.16.8: gradient bottom colour
+        var glowColorArgb: Int = 0xFFF95F6A.toInt()     // v0.16.8: neon glow colour
     )
 
     /**
@@ -288,6 +375,9 @@ object TextOverlayUtils {
         val p = fillPaint(layer, imgW)
         val fm = p.fontMetrics
         val pad = b.textSize * 0.18f
+        if (layer.effect == TextEffect.GRADIENT) {
+            p.shader = LinearGradient(0f, top, 0f, top + b.h, layer.gradientStartArgb, layer.gradientEndArgb, Shader.TileMode.CLAMP)
+        }
         if (layer.bgColorArgb != 0) {
             val bg = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                 color = layer.bgColorArgb
@@ -304,17 +394,7 @@ object TextOverlayUtils {
                 Align.RIGHT -> left + (b.w - lineW)
             }
             val baseline = top - fm.ascent + i * b.lineH
-            if (layer.outlineFrac > 0f) {
-                val stroke = Paint(p).apply {
-                    style = Paint.Style.STROKE
-                    strokeWidth = layer.outlineFrac * b.textSize
-                    color = layer.outlineColorArgb
-                    alpha = (layer.opacity.coerceIn(0f, 1f) * 255).toInt()
-                    strokeJoin = Paint.Join.ROUND
-                }
-                canvas.drawText(line, x, baseline, stroke)
-            }
-            canvas.drawText(line, x, baseline, p)
+            drawLineWithEffect(layer, p, b.textSize) { lp -> canvas.drawText(line, x, baseline, lp) }
         }
         canvas.restore()
     }
@@ -325,6 +405,9 @@ object TextOverlayUtils {
         val p = fillPaint(layer, imgW)
         val fm = p.fontMetrics
         val lineH = (fm.descent - fm.ascent) * (1.08f + layer.lineSpacing)
+        if (layer.effect == TextEffect.GRADIENT) {
+            p.shader = LinearGradient(0f, py - p.textSize, 0f, py + p.textSize * 2f, layer.gradientStartArgb, layer.gradientEndArgb, Shader.TileMode.CLAMP)
+        }
         canvas.save()
         canvas.rotate(layer.rotation, px, py)
         if (layer.flipH) canvas.scale(-1f, 1f, px, py)
@@ -362,21 +445,145 @@ object TextOverlayUtils {
                 }
                 canvas.drawPath(seg, ribbon)
             }
-            if (layer.outlineFrac > 0f) {
-                // Outlined pass first so the fill sits crisply on top.
-                val stroke = Paint(p).apply {
-                    style = Paint.Style.STROKE
-                    strokeWidth = layer.outlineFrac * p.textSize
-                    color = layer.outlineColorArgb
-                    alpha = (layer.opacity.coerceIn(0f, 1f) * 255).toInt()
-                    strokeJoin = Paint.Join.ROUND
-                }
-                canvas.drawTextOnPath(line, path, hOff, 0f, stroke)
-            }
-            canvas.drawTextOnPath(line, path, hOff, 0f, p)
+            drawLineWithEffect(layer, p, p.textSize) { lp -> canvas.drawTextOnPath(line, path, hOff, 0f, lp) }
         }
         canvas.restore()
     }
+
+    /**
+     * v0.16.8: draw ONE line with the layer's effect. [draw] renders the line with the given
+     * paint at the caller's position (drawText or drawTextOnPath - same effect logic for both).
+     * NEON = widening soft strokes in the glow colour under a bright core (no blur filters, so
+     * it is identical on every phone); HOLLOW = stroke only; GRADIENT = shader already on [base];
+     * NONE = the classic optional-outline + fill path.
+     */
+    private fun drawLineWithEffect(layer: TextLayer, base: Paint, textSize: Float, draw: (Paint) -> Unit) {
+        when (layer.effect) {
+            TextEffect.NEON -> {
+                val op = layer.opacity.coerceIn(0f, 1f)
+                listOf(0.36f to 46, 0.22f to 78, 0.11f to 120).forEach { (w, a) ->
+                    val glow = Paint(base).apply {
+                        style = Paint.Style.STROKE
+                        strokeWidth = w * textSize
+                        color = layer.glowColorArgb
+                        alpha = (a * op).toInt()
+                        strokeJoin = Paint.Join.ROUND
+                        strokeCap = Paint.Cap.ROUND
+                        shader = null
+                        clearShadowLayer()
+                    }
+                    draw(glow)
+                }
+                draw(base)
+            }
+            TextEffect.HOLLOW -> {
+                val stroke = Paint(base).apply {
+                    style = Paint.Style.STROKE
+                    strokeWidth = (if (layer.outlineFrac > 0f) layer.outlineFrac else 0.055f) * textSize
+                    color = if (layer.outlineFrac > 0f) layer.outlineColorArgb else layer.colorArgb
+                    alpha = (layer.opacity.coerceIn(0f, 1f) * 255).toInt()
+                    strokeJoin = Paint.Join.ROUND
+                    clearShadowLayer()
+                }
+                draw(stroke)
+            }
+            else -> {
+                if (layer.outlineFrac > 0f) {
+                    val stroke = Paint(base).apply {
+                        style = Paint.Style.STROKE
+                        strokeWidth = layer.outlineFrac * textSize
+                        color = layer.outlineColorArgb
+                        alpha = (layer.opacity.coerceIn(0f, 1f) * 255).toInt()
+                        strokeJoin = Paint.Join.ROUND
+                    }
+                    draw(stroke)
+                }
+                draw(base)
+            }
+        }
+    }
+
+    // ---- Stickers (v0.16.8, his "Yes all 8"): simple drawn shapes - fully on-device, no assets. ----
+
+    enum class StickerKind { HEART, STAR, ARROW, BURST }
+
+    data class StickerOption(val kind: StickerKind, val label: String, val colorArgb: Int)
+
+    val STICKERS = listOf(
+        StickerOption(StickerKind.HEART, "Heart", 0xFFF95F6A.toInt()),
+        StickerOption(StickerKind.STAR, "Star", 0xFFF5B942.toInt()),
+        StickerOption(StickerKind.ARROW, "Arrow", 0xFF42BFEF.toInt()),
+        StickerOption(StickerKind.BURST, "Burst", 0xFF9B5DE5.toInt())
+    )
+
+    /** Draw a solid-colour shape sticker on a transparent bitmap (added as an image layer). */
+    fun makeStickerBitmap(kind: StickerKind, sizePx: Int, colorArgb: Int): Bitmap {
+        val bmp = Bitmap.createBitmap(sizePx, sizePx, Bitmap.Config.ARGB_8888)
+        val c = Canvas(bmp)
+        val s = sizePx.toFloat()
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = colorArgb; style = Paint.Style.FILL }
+        val path = Path()
+        when (kind) {
+            StickerKind.HEART -> {
+                path.moveTo(0.50f * s, 0.88f * s)
+                path.cubicTo(0.05f * s, 0.62f * s, 0.08f * s, 0.22f * s, 0.30f * s, 0.16f * s)
+                path.cubicTo(0.40f * s, 0.13f * s, 0.47f * s, 0.20f * s, 0.50f * s, 0.28f * s)
+                path.cubicTo(0.53f * s, 0.20f * s, 0.60f * s, 0.13f * s, 0.70f * s, 0.16f * s)
+                path.cubicTo(0.92f * s, 0.22f * s, 0.95f * s, 0.62f * s, 0.50f * s, 0.88f * s)
+                path.close()
+                c.drawPath(path, paint)
+            }
+            StickerKind.STAR -> {
+                val cx = s / 2f; val cy = s / 2f
+                val rO = s * 0.46f; val rI = s * 0.20f
+                for (i in 0 until 10) {
+                    val r = if (i % 2 == 0) rO else rI
+                    val ang = Math.toRadians((-90 + i * 36).toDouble())
+                    val x = cx + (r * Math.cos(ang)).toFloat()
+                    val y = cy + (r * Math.sin(ang)).toFloat()
+                    if (i == 0) path.moveTo(x, y) else path.lineTo(x, y)
+                }
+                path.close()
+                c.drawPath(path, paint)
+            }
+            StickerKind.ARROW -> {
+                path.moveTo(0.12f * s, 0.38f * s)
+                path.lineTo(0.60f * s, 0.38f * s)
+                path.lineTo(0.60f * s, 0.18f * s)
+                path.lineTo(0.92f * s, 0.50f * s)
+                path.lineTo(0.60f * s, 0.82f * s)
+                path.lineTo(0.60f * s, 0.62f * s)
+                path.lineTo(0.12f * s, 0.62f * s)
+                path.close()
+                c.drawPath(path, paint)
+            }
+            StickerKind.BURST -> {
+                val cx = s / 2f; val cy = s / 2f
+                val rO = s * 0.46f; val rI = s * 0.30f
+                for (i in 0 until 24) {
+                    val r = if (i % 2 == 0) rO else rI
+                    val ang = Math.toRadians((i * 15).toDouble())
+                    val x = cx + (r * Math.cos(ang)).toFloat()
+                    val y = cy + (r * Math.sin(ang)).toFloat()
+                    if (i == 0) path.moveTo(x, y) else path.lineTo(x, y)
+                }
+                path.close()
+                c.drawPath(path, paint)
+            }
+        }
+        return bmp
+    }
+
+    // ---- Emoji sets (v0.16.8): a tap adds the emoji as an editable text layer. ----
+
+    val EMOJI_CATEGORIES: List<Pair<String, List<String>>> = listOf(
+        "Smileys" to listOf("😀", "😂", "😍", "😎", "🤩", "😜", "🥳", "😇", "🤗", "😴"),
+        "Hearts" to listOf("❤️", "🧡", "💛", "💚", "💙", "💜", "🖤", "💖", "💕", "✨"),
+        "Gestures" to listOf("👍", "👏", "🙌", "💪", "✌️", "🤞", "👌", "🙏", "👋", "☝️"),
+        "Party" to listOf("🎉", "🎂", "🎁", "🎈", "🍾", "🥂", "🎵", "🔥", "💯", "⭐"),
+        "Food" to listOf("🍕", "🍔", "🍟", "🍦", "🍩", "🍫", "☕", "🍺", "🍓", "🥑"),
+        "Animals" to listOf("🐶", "🐱", "🦁", "🐼", "🦊", "🐸", "🐵", "🦄", "🐝", "🦋")
+    )
 
     private fun drawSelection(canvas: Canvas, layer: TextLayer, imgW: Int, imgH: Int) {
         val b = measure(layer, imgW)

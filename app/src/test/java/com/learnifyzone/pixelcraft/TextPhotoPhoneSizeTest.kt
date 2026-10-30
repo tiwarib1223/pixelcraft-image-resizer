@@ -156,4 +156,36 @@ class TextPhotoPhoneSizeTest {
             sc.close()
         }
     }
+
+    @Test
+    fun phoneWindowEffects() {
+        // v0.16.8 (his "Yes all 8"): Text Effects level renders; applying the Neon Pink template
+        // flips the layer effect NONE -> NEON (hook line) and the glow shows on the preview.
+        launch("pixelcraft.test.textlayer" to "1", "pixelcraft.test.sheetlevel" to "effects").use { sc ->
+            waitForText("Ready-made styles")
+            waitForText("hook:effect=NONE")
+            shot(sc, "v0168_phone_effects")
+            composeRule.onNodeWithText("Neon Pink").performClick()
+            pump()
+            waitForText("hook:effect=NEON")
+            shot(sc, "v0168_phone_neon")
+            sc.close()
+        }
+    }
+
+    @Test
+    fun phoneWindowStickers() {
+        // v0.16.8: Stickers & Emoji level renders; tapping the Heart shape adds an image layer
+        // (hook count images 0 -> 1) and the sticker shows on the preview.
+        launch("pixelcraft.test.textlayer" to "1", "pixelcraft.test.sheetlevel" to "stickers").use { sc ->
+            waitForText("Stickers & Emoji")
+            waitForText("hook:layers=1,images=0")
+            shot(sc, "v0168_phone_stickers")
+            composeRule.onNodeWithText("Heart").performClick()
+            pump()
+            waitForText("hook:layers=1,images=1")
+            shot(sc, "v0168_phone_sticker_added")
+            sc.close()
+        }
+    }
 }

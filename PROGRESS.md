@@ -375,3 +375,11 @@ Not added on purpose (later stages or out of scope): target file size in KB, rat
 
 ## Next stage
 Stage 2B: research official platform documentation and populate presets.json only with verified sizes (source URL + verification date each).
+
+## v0.16.8 (56) - Text Effects Pack (his "Yes all 8", 2026-10-30)
+- New "Effects" Create tab: 8 ready-made one-tap styles (Sunset/Ocean/Candy Fade, Neon Pink/Blue/Green, Hollow White/Gold), effect chips (None/Gradient/Neon/Hollow), gradient colour presets, neon glow colour picker. (VETOABLE: template set + gradient presets are my picks.)
+- Effects render in the shared draw path (straight + curved) - preview = export. Neon = layered soft strokes under a bright core (no blur filters, identical on every phone); Hollow = stroke only; Gradient = top-to-bottom fade.
+- New "Stickers" Create tab: drawn shapes (Heart/Star/Arrow/Burst) as image layers under text, 6 emoji categories (60 emoji) as editable text layers. (VETOABLE: shapes + colours + emoji set.)
+- Create grid now 10 tiles: Add Text, Add Image, Image Size, Layers, Filters, Process, Pick Colour, Flip & Clone, Effects, Stickers.
+- Known gap: saved text styles (user-created presets) do not carry the new effect fields.
+- Tests +7 (129 total): gradient direction, neon glow spread, hollow centre, template fields, sticker ink, effects-level UI + Neon Pink click, stickers level + Heart click.
