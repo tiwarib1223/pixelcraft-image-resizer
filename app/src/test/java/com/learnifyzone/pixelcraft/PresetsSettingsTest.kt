@@ -140,7 +140,7 @@ class PresetsSettingsTest {
     }
 
     @Test
-    fun d_settingsPageHasModeClearSupportAndAbout() {
+    fun d_settingsPageKeepsOnlyModeAndClearRecent() {
         launch().use { sc ->
             waitForText("Settings")
             composeRule.onNodeWithText("Settings").performClick()
@@ -148,23 +148,15 @@ class PresetsSettingsTest {
             waitForText("Dark mode")
             waitForText("Privacy")
             waitForText("Clear recently edited")
-            // v1.0.0 launch spec: Settings gains Support (Email us, Help & tips, Rate us)
-            // and About (Open-source licences, What's new) sections.
-            waitForText("Support")
-            waitForText("Need support? Email us")
-            waitForText("Help & tips")
-            waitForText("Rate us")
-            waitForText("About")
-            waitForText("Open-source licences")
-            waitForText("What's new")
-            // Terms & Privacy Policy stay in the drawer, not as Settings rows.
-            listOf("Terms & Conditions", "Privacy Policy").forEach { gone ->
+            // v1.0.2 (his call, overriding the v1.0.0 launch spec): Settings = mode + clear
+            // recently edited ONLY - Support and About links live in the drawer.
+            listOf("Support", "Rate us", "Share", "About", "Open-source licences", "What's new", "Need support? Email us", "Help & tips", "Terms & Conditions", "Privacy Policy").forEach { gone ->
                 val leaked = composeRule.onAllNodesWithText(gone).fetchSemanticsNodes()
                 assertTrue("Settings must not show: $gone", leaked.isEmpty())
             }
             val stale = composeRule.onAllNodesWithText("Learnify Zone", substring = true).fetchSemanticsNodes()
             assertTrue("no Learnify Zone may remain in the UI", stale.isEmpty())
-            shot(sc, "v100_phone_settings")
+            shot(sc, "v102_phone_settings")
         }
     }
 
@@ -218,9 +210,12 @@ class PresetsSettingsTest {
             shot(sc, "v100_phone_licences")
             composeRule.onNodeWithContentDescription("Back").performClick()
             waitForText("Appearance")
-            // Settings > About rows open their doc pages.
+            // v1.0.2: What's new moved to the drawer (below Open-source licences).
+            composeRule.onNodeWithText("Home").performClick()
+            waitForText("PHOTO TOOLKIT")
+            composeRule.onNodeWithContentDescription("Menu").performClick()
             clickText("What's new")
-            waitForText("What's new in version 1.0.1")
+            waitForText("What's new in version 1.0.2")
             shot(sc, "v100_phone_whatsnew")
             composeRule.onNodeWithContentDescription("Back").performClick()
             waitForText("Appearance")

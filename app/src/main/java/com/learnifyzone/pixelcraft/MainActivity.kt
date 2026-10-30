@@ -5193,7 +5193,8 @@ snackbar.showSnackbar("This phone ran out of memory. Try a smaller size or fewer
             onHelp = { drawerOpen = false; tab = MainTab.Settings; settingsDoc = "help" },
             onTerms = { drawerOpen = false; tab = MainTab.Settings; settingsDoc = "terms" },
             onPrivacy = { drawerOpen = false; tab = MainTab.Settings; settingsDoc = "privacy" },
-            onLicences = { drawerOpen = false; tab = MainTab.Settings; settingsDoc = "licences" }
+            onLicences = { drawerOpen = false; tab = MainTab.Settings; settingsDoc = "licences" },
+            onWhatsNew = { drawerOpen = false; tab = MainTab.Settings; settingsDoc = "whatsnew" }
         )
     }
 
@@ -6252,7 +6253,7 @@ private fun HomeScreen(
         Feature("Remove Background", "Cut out any subject", Icons.Default.AutoFixHigh),
         Feature("Crop & Rotate", "Adjust framing and angle", Icons.Default.Crop),
         Feature("Shape Cutter", "Cut photos into shapes", Icons.Default.Interests),
-        Feature("Social Media Sizes", "Exact sizes for every platform", Icons.Default.Share),
+        Feature("Social Media Sizes", "Exact platform sizes", Icons.Default.Share),
         Feature("Online Shop Sizes", "Marketplace-ready images", Icons.Default.Storefront),
         Feature("Format Converter", "JPG, PNG, WebP & PDF", Icons.Default.SyncAlt),
         Feature("Compress", "Reduce file size", Icons.Default.Compress),
@@ -6316,7 +6317,7 @@ private fun HomeScreen(
                         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
                         elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
                     ) {
-                        Column(Modifier.padding(12.dp).height(116.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
+                        Column(Modifier.padding(12.dp).height(128.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
                             Box(Modifier.size(44.dp).clip(CircleShape).background(PaleBlue), contentAlignment = Alignment.Center) { Icon(feature.icon, contentDescription = null, tint = SkyBlue, modifier = Modifier.size(26.dp)) }
                             Text(feature.title, color = DeepNavy, fontWeight = FontWeight.SemiBold, fontSize = 14.sp, lineHeight = 17.sp)
                             Text(feature.description, color = Slate, fontSize = 11.sp, lineHeight = 14.sp)
@@ -8252,42 +8253,6 @@ private fun SettingsScreen(
             )
         }
 
-        SettingsSection("Support") {
-            SettingsRow(
-                icon = { Icon(Icons.Default.MailOutline, null, tint = SkyBlue, modifier = Modifier.size(20.dp)) },
-                title = "Need support? Email us",
-                subtitle = "Tell us what you'd like to see, or bugs you found",
-                onClick = onEmail
-            )
-            SettingsRow(
-                icon = { Icon(Icons.Default.Info, null, tint = SkyBlue, modifier = Modifier.size(20.dp)) },
-                title = "Help & tips",
-                subtitle = "How to get the best results from each tool",
-                onClick = { onOpenDoc("help") }
-            )
-            SettingsRow(
-                icon = { Icon(Icons.Default.Star, null, tint = SkyBlue, modifier = Modifier.size(20.dp)) },
-                title = "Rate us",
-                subtitle = "Enjoying the app? Rate it on Google Play",
-                onClick = onRate
-            )
-        }
-
-        SettingsSection("About") {
-            SettingsRow(
-                icon = { Icon(Icons.Default.MenuBook, null, tint = SkyBlue, modifier = Modifier.size(20.dp)) },
-                title = "Open-source licences",
-                subtitle = "Credits for the components the app is built with",
-                onClick = { onOpenDoc("licences") }
-            )
-            SettingsRow(
-                icon = { Icon(Icons.Default.NewReleases, null, tint = SkyBlue, modifier = Modifier.size(20.dp)) },
-                title = "What's new",
-                subtitle = "See what's in this version",
-                onClick = { onOpenDoc("whatsnew") }
-            )
-        }
-
         Spacer(Modifier.height(16.dp))
     }
     if (showClearConfirm) {
@@ -8313,7 +8278,7 @@ private fun SettingsScreen(
  *  the drawer is now the info page - Email us / Rate us / Share / Terms & Conditions / Privacy Policy, with the
  *  app version as small footer text. Nothing here also shows in Settings. */
 @Composable
-private fun HomeDrawer(onClose: () -> Unit, onHelp: () -> Unit, onEmail: () -> Unit, onRate: () -> Unit, onShare: () -> Unit, onTerms: () -> Unit, onPrivacy: () -> Unit, onLicences: () -> Unit) {
+private fun HomeDrawer(onClose: () -> Unit, onHelp: () -> Unit, onEmail: () -> Unit, onRate: () -> Unit, onShare: () -> Unit, onTerms: () -> Unit, onPrivacy: () -> Unit, onLicences: () -> Unit, onWhatsNew: () -> Unit) {
     Box(Modifier.fillMaxSize()) {
         Box(Modifier.fillMaxSize().background(Color(0x99061722)).clickable { onClose() })
         Column(Modifier.fillMaxHeight().fillMaxWidth(0.82f).background(Color.White).verticalScroll(rememberScrollState())) {
@@ -8328,6 +8293,7 @@ private fun HomeDrawer(onClose: () -> Unit, onHelp: () -> Unit, onEmail: () -> U
             DrawerRow({ Icon(Icons.Default.Description, null, tint = SkyBlue, modifier = Modifier.size(22.dp)) }, "Terms & Conditions", "The simple rules for using the app") { onTerms() }
             DrawerRow({ Icon(Icons.Default.Lock, null, tint = SkyBlue, modifier = Modifier.size(22.dp)) }, "Privacy Policy", "How your photos and data are treated") { onPrivacy() }
             DrawerRow({ Icon(Icons.Default.MenuBook, null, tint = SkyBlue, modifier = Modifier.size(22.dp)) }, "Open-source licences", "Credits for the components the app is built with") { onLicences() }
+            DrawerRow({ Icon(Icons.Default.NewReleases, null, tint = SkyBlue, modifier = Modifier.size(22.dp)) }, "What's new", "See what's in this version") { onWhatsNew() }
             Spacer(Modifier.height(18.dp))
             Text(
                 "A2Z Image Craft · Version " + BuildConfig.VERSION_NAME.removeSuffix("-debug") + " · Bitty",
@@ -8375,7 +8341,7 @@ private const val TERMS_TEXT = "A2Z Image Craft - Terms & Conditions\n\n" +
     "8. Updates and availability We may update, change or remove features of the app, and we may stop offering the app. We will try to keep the app working well, but we cannot promise it will always be available or error-free.\n\n" +
     "9. No warranty The app is provided \"as is\" and \"as available\". To the extent permitted by law, we give no guarantees that the app will meet your needs or work without interruption or errors.\n\n" +
     "10. Limitation of liability To the extent permitted by law, we are not liable for indirect or consequential losses, such as lost data, lost profits or lost business, arising from your use of the app. Nothing in these Terms limits liability that cannot be limited by law, such as liability for intentional misconduct or gross negligence. If you are a consumer, nothing in these Terms affects your legal rights under the consumer protection laws of your country.\n\n" +
-    "11. Intellectual property The app, its name, logo, design and code belong to us or our licensors. The app includes open-source components, listed in Settings > Open-source licences, which are covered by their own licences.\n\n" +
+    "11. Intellectual property The app, its name, logo, design and code belong to us or our licensors. The app includes open-source components, listed in the app menu under Open-source licences, which are covered by their own licences.\n\n" +
     "12. Ending use You can stop using the app at any time by uninstalling it. We may end your right to use the app if you seriously break these Terms.\n\n" +
     "13. Governing law These Terms are governed by Belgian law. If you are a consumer living in another country, you also keep the protection of the mandatory laws of your own country, and you may bring a claim in the courts where you live.\n\n" +
     "14. Changes to these Terms We may update these Terms when the app changes. The current version is always shown in the app, with the date at the top. If you keep using the app after an update, the new Terms apply.\n\n" +
