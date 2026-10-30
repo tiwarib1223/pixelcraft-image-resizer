@@ -76,3 +76,29 @@ established design-tool references. Encoded in
 | Status | 1080 x 1920 px (9:16) | same |
 
 Any size not listed can be made with the in-app Custom Size (16-12000 px).
+
+## In-app labels (v1.0.4)
+
+Each size card in the app now shows either "Official size" (confirmed on the
+platform's own help/developer pages) or "Common size" (widely used, but not
+published as an exact pixel spec on the platform's official pages at the time
+of checking). The bottom note on the social home screen reads: "Sizes follow
+each platform's official guidance at the time of checking. Platforms can
+change them anytime."
+
+Entries labelled "Common size" in the app:
+- Instagram: Profile picture (320 x 320), Feed ad (1080 x 1080), Story ad (1080 x 1920)
+- Facebook: Profile picture (320 x 320), Post - square (1080 x 1080), Post - portrait (1080 x 1350), Story (1080 x 1920), Feed ad (1080 x 1080)
+- TikTok: all sizes (official pages publish only a 20 x 20 px minimum)
+- Pinterest: Profile picture (165 x 165)
+- X: Post - landscape (1600 x 900), Post - square (1080 x 1080), Post - portrait (1080 x 1350), Website card ad (1200 x 675)
+- WhatsApp: Profile picture, Status
+
+Note on X website card ads: the app keeps 1200 x 675 px. Some current
+third-party 2026 references cite 800 x 418 px as the official website-card
+spec; X's own current ads documentation could not be re-confirmed at audit
+time, so the entry is labelled "Common size".
+
+All other entries show "Official size", backed by help.instagram.com,
+facebook.com/help, developers.facebook.com, support.google.com,
+linkedin.com/help, help.pinterest.com, create.pinterest.com, and help.x.com.

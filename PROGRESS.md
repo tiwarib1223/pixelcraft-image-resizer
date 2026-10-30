@@ -1,4 +1,40 @@
-# PixelCraft Image Resizer — Progress
+# PixelCraft Image Resizer - Progress
+
+## v1.0.4 (versionCode 77): tool-screens polish spec (his PDF, 7 sections)
+1. Format Converter: Home card and Help entry now list the real output formats
+   ("JPG, PNG, WebP, PDF & more" on Home; full JPG/PNG/WebP/PDF/BMP/TIFF in Help and
+   What's new). Tighter line spacing on the format option descriptions.
+2. Image & PDF Compressor: title renamed from "Image Compressor"; headline
+   "Reduce file size. Keep great quality."; selection heading "Add your images";
+   Target File Size option now has a target icon (was a checkmark); tighter line
+   spacing in option cards and the bottom note.
+3. Remove Background: info text now says exactly "Cut the subject out of your photo,
+   right on your phone. Nothing is uploaded, and it works offline." (the bundled
+   remover needs no internet). The internet mention is kept ONLY in the rare error
+   when the backup remover (Google ML Kit) fails on first use - it really needs a
+   one-time model download. Screen title is "Remove Background" (was "Background").
+   The rotate button on the preview is hidden until a photo is selected.
+4. The main action button (Process / Compress / Convert / Cut shape / Continue to
+   Export / Save Compressed / Apply Meme Text / Select Photo) is orange on every tool
+   screen. More space above the editor preview box.
+5. Resize: the DPI field stays for Pixels and is labelled "DPI (for printing, saved
+   in JPG)" - honest: DPI metadata is written into saved JPGs only; the PNG format
+   has no standard DPI tag the library can write. GPS privacy: saved JPGs no longer
+   copy location tags by default (date and camera info are kept). New Settings >
+   Privacy switch "Keep photo location" (off by default) restores the old behaviour.
+   The same sentence was added to the Privacy Policy (section 3).
+6. Shape Cutter: the "Crop" button is now "Cut shape". The Size box shows the live
+   pixel size of the selection while the frame is dragged. The rotate button no
+   longer overlaps the frame's corner handles (hidden in this tool - rotate lives in
+   Crop & Rotate). The tool row scrolls the selected tool chip into view.
+7. Social Media Sizes: every size shows " x " as " × ". Each size card is labelled
+   "Official size" (confirmed on the platform's own help/developer pages) or
+   "Common size" (widely used, not officially published as an exact spec - 19
+   entries, listed in docs/social-media-sizes.md). Headline "Popular platforms. The
+   right size, every time.", the bottom note states sizes follow official guidance
+   at the time of checking. The previous sub-line "the official size" was wrong for
+   the common entries and is now "the right size" (honesty fix).
+
 
 ## v0.20.3 (versionCode 70): seamless opening - the video's own first frame behind everything
 His test of v0.20.2 (screen recording): the dim icon was gone, but the pre-video screen was a plain BLACK frame

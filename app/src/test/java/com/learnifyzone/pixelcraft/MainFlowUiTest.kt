@@ -64,7 +64,7 @@ class MainFlowUiTest {
             waitForText("Pixels")
             waitForText("Inches")
             waitForText("mm")
-            waitForText("DPI - 300 is standard for print")
+            waitForText("DPI (for printing, saved in JPG)")
             waitForText("Export")
         }
     }
@@ -104,7 +104,7 @@ class MainFlowUiTest {
             waitForText("Heart")
             waitForText("Rounded")
             waitForText("Custom Color")
-            waitForText("Crop")
+            waitForText("Cut shape")
             waitForText("DPI - 300 is standard for print")
         }
     }
@@ -120,7 +120,7 @@ class MainFlowUiTest {
             .putExtra("pixelcraft.test.tool", "social")
         ActivityScenario.launch<MainActivity>(intent).use {
             waitForText("Social Media Sizes")
-            waitForText("Every platform. Every image size.")
+            waitForText("Popular platforms. The right size, every time.")
             waitForText("Select Your Image")
             waitForText("Instagram")
             waitForText("YouTube")
@@ -194,8 +194,8 @@ class MainFlowUiTest {
             .putExtra("pixelcraft.test.photo", tmp.absolutePath)
             .putExtra("pixelcraft.test.tool", "compress")
         ActivityScenario.launch<MainActivity>(intent).use {
-            waitForText("Reduce file size. Keep image quality.")
-            waitForText("Select Images")
+            waitForText("Reduce file size. Keep great quality.")
+            waitForText("Add your images")
             waitForText("Quality Compression")
             waitForText("Target File Size")
         }

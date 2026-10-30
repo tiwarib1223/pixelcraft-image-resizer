@@ -117,11 +117,13 @@ import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.AspectRatio
 import androidx.compose.material.icons.filled.AutoFixHigh
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.GpsFixed
 import androidx.compose.material.icons.filled.GridOn
 import androidx.compose.material.icons.filled.Interests
 import androidx.compose.material.icons.filled.MenuBook
 import androidx.compose.material.icons.filled.NewReleases
 import androidx.compose.material.icons.filled.Print
+import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.MailOutline
 import androidx.compose.material.icons.filled.Title
@@ -262,7 +264,7 @@ class MainActivity : ComponentActivity() {
 
 private enum class MainTab { Home, MyPhotos, Presets, Settings }
 private enum class Screen { Home, Editor, Export, PrintHome, PrintSetup, PrintPreview, PrintExport, Success, QueueOverview, QueueResult, SocialHome, SocialPlatform, SocialEdit, ShopHome, ShopOther, ShopPlatform, ShopEdit, ShopCollage, ConvertHome, ConvertEdit, ConvertResult, CompressHome, CompressSettings, CompressResult, TextPhoto, Collage, PhotoAdjust }
-private enum class Tool(val label: String) { Resize("Resize"), Presets("Presets"), Crop("Crop & Rotate"), Background("Background"), Circle("Shape Cutter"), Format("Format") }
+private enum class Tool(val label: String) { Resize("Resize"), Presets("Presets"), Crop("Crop & Rotate"), Background("Remove Background"), Circle("Shape Cutter"), Format("Format") }
 
 private enum class CropTransform { LEFT, RIGHT, FLIP_H, FLIP_V }
 private enum class BgChoice(val label: String) { TRANSPARENT("Transparent"), WHITE("White"), CUSTOM("Custom Color") }
@@ -799,6 +801,7 @@ snackbar.showSnackbar("This phone ran out of memory. Try a smaller size or fewer
         if (!testPath.isNullOrBlank() && sourceUri == null && workingBitmap == null) {
             val testTool = (context as? Activity)?.intent?.getStringExtra("pixelcraft.test.tool")
             if (testTool == "crop") pendingCropTool = true
+            if (testTool == "background") pendingBgTool = true
             if (testTool == "export") pendingExportTest = true
             if (testTool == "circle") pendingCircleTool = true
             if (testTool == "social") pendingSocialTool = true
@@ -843,7 +846,7 @@ snackbar.showSnackbar("This phone ran out of memory. Try a smaller size or fewer
                         } catch (e: OutOfMemoryError) {
 bgError = "This photo is too big for this phone's memory. Try a smaller photo."
                 } catch (e: Exception) {
-                bgError = "Couldn't remove the background. If this is the first use, connect to the internet once so the on-device model can download, then try again."
+                bgError = "Couldn't remove the background. If this is the first use on this phone, the backup remover needs a one-time internet connection to fetch its model - connect once and try again."
             } finally {
                 busy = false
                 busyLabel = ""
@@ -4262,7 +4265,7 @@ snackbar.showSnackbar("This phone ran out of memory. Try a smaller size or fewer
                                 Screen.ConvertHome -> "Format Converter"
                                 Screen.ConvertEdit -> "Format Converter · ${convertTarget.label}"
                                 Screen.ConvertResult -> "Conversion Result"
-                                Screen.CompressHome -> "Image Compressor"
+                                Screen.CompressHome -> "Image & PDF Compressor"
                                 Screen.CompressSettings -> "Compression Settings"
                                 Screen.CompressResult -> "Compression Results"
                                 Screen.PrintHome -> "Print Size & DPI"
@@ -4705,7 +4708,16 @@ snackbar.showSnackbar("This phone ran out of memory. Try a smaller size or fewer
                 circleDpi = circleDpi,
                 circlePreview = circlePreview,
                 onCircleShape = { circleShape = it; circleRect = CropMath.defaultRect() },
-                onCircleRect = { circleRect = it },
+                onCircleRect = { r ->
+                        circleRect = r
+                        val src = workingBitmap
+                        if (src != null) {
+                            val wPx = ((r[2] - r[0]) * src.width).toInt()
+                            val hPx = ((r[3] - r[1]) * src.height).toInt()
+                            val sPx = minOf(wPx, hPx)
+                            if (sPx > 0) circleSize = fmtUnit(sPx.toDouble(), circleUnit, circleDpiValue())
+                        }
+                    },
                 onCircleChoice = { circleChoice = it },
                 onCircleCustomColor = { circleCustomColor = it },
                 onCircleUnit = { convertCircleToUnit(circleUnit, it) },
@@ -5364,7 +5376,7 @@ private fun MemeLevel(testSheetLevel: String?, layerCount: Int, imageCount: Int,
                     Spacer(Modifier.height(8.dp))
                     OutlinedTextField(value = memeBottom, onValueChange = { memeBottom = it }, singleLine = true, label = { Text("Bottom text") }, modifier = Modifier.fillMaxWidth())
                     Spacer(Modifier.height(10.dp))
-                    Button(onClick = { onApplyMeme(memeTop, memeBottom) }, enabled = memeTop.isNotBlank() || memeBottom.isNotBlank(), modifier = Modifier.fillMaxWidth().height(46.dp), colors = ButtonDefaults.buttonColors(containerColor = SkyBlue, contentColor = Color.White), shape = RoundedCornerShape(14.dp)) { Text("Apply Meme Text", fontWeight = FontWeight.Bold) }
+                    Button(onClick = { onApplyMeme(memeTop, memeBottom) }, enabled = memeTop.isNotBlank() || memeBottom.isNotBlank(), modifier = Modifier.fillMaxWidth().height(46.dp), colors = ButtonDefaults.buttonColors(containerColor = Orange, contentColor = Color.White), shape = RoundedCornerShape(14.dp)) { Text("Apply Meme Text", fontWeight = FontWeight.Bold) }
                     if (testSheetLevel != null) Text("hook:layers=" + layerCount + ",images=" + imageCount + " t" + tick, fontSize = 8.sp, color = BorderGrey)}
 
 // ---------------------------------------------------------------------------
@@ -6253,7 +6265,7 @@ private fun HomeScreen(
         Feature("Shape Cutter", "Cut photos into shapes", Icons.Default.Interests),
         Feature("Social Media Sizes", "Exact platform sizes", Icons.Default.Share),
         Feature("Online Shop Sizes", "Marketplace-ready images", Icons.Default.Storefront),
-        Feature("Format Converter", "JPG, PNG, WebP & PDF", Icons.Default.SyncAlt),
+        Feature("Format Converter", "JPG, PNG, WebP, PDF & more", Icons.Default.SyncAlt),
         Feature("Compress", "Reduce file size", Icons.Default.Compress),
         Feature("Text on Photo", "Add text to images", Icons.Default.TextFields),
         Feature("Collage Maker", "Combine 2-20 photos", Icons.Default.GridOn),
@@ -6969,7 +6981,7 @@ private fun EditorScreen(
         // No Before/After tabs here (his request): the comparison lives on the result page.
         // The editor always shows the photo being edited.
         Box(
-            Modifier.fillMaxWidth().padding(vertical = 8.dp).height(260.dp).clip(RoundedCornerShape(18.dp)).background(SoftGrey).border(1.dp, BorderGrey, RoundedCornerShape(18.dp)),
+            Modifier.fillMaxWidth().padding(top = 20.dp, bottom = 8.dp).height(260.dp).clip(RoundedCornerShape(18.dp)).background(SoftGrey).border(1.dp, BorderGrey, RoundedCornerShape(18.dp)),
             contentAlignment = Alignment.Center
         ) {
             val display = if (tool == Tool.Background && bgPreview != null) bgPreview else working
@@ -7008,11 +7020,13 @@ private fun EditorScreen(
                 }
             }
             if (busy) CircularProgressIndicator(color = Orange)
-            IconButton(
-                onClick = onRotate,
-                modifier = Modifier.align(Alignment.TopEnd).padding(8.dp).size(38.dp).clip(CircleShape).background(Color.White.copy(alpha = 0.9f)).border(1.dp, BorderGrey, CircleShape)
-            ) {
-                Icon(Icons.Default.RotateRight, contentDescription = "Rotate 90 degrees", tint = DeepNavy, modifier = Modifier.size(20.dp))
+            if (displayImage != null && tool != Tool.Circle) {
+                IconButton(
+                    onClick = onRotate,
+                    modifier = Modifier.align(Alignment.TopEnd).padding(8.dp).size(38.dp).clip(CircleShape).background(Color.White.copy(alpha = 0.9f)).border(1.dp, BorderGrey, CircleShape)
+                ) {
+                    Icon(Icons.Default.RotateRight, contentDescription = "Rotate 90 degrees", tint = DeepNavy, modifier = Modifier.size(20.dp))
+                }
             }
         }
         val infoText = when {
@@ -7024,10 +7038,19 @@ private fun EditorScreen(
             else -> ""
         }
         Text(infoText, modifier = Modifier.padding(vertical = 8.dp), fontSize = 12.sp, color = Slate)
-        Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())) {
+        val toolRowScroll = rememberScrollState()
+        val toolList = Tool.values().filter { it != Tool.Presets && it != Tool.Format }
+        LaunchedEffect(tool) {
+            // bring the selected tool chip into view (his request)
+            val idx = toolList.indexOf(tool).coerceAtLeast(0)
+            var px = 0f
+            for (i in 0 until idx) px += (28 + toolList[i].label.length * 7f + 6f) * 3f
+            toolRowScroll.animateScrollTo(px.toInt())
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth().horizontalScroll(toolRowScroll)) {
             // v0.18.2 audit fix: hide chips that open nothing real yet (Presets chip navigated away
             // mid-edit; Format chip was a dead-end snackbar). They return when they do something honest.
-            Tool.values().filter { it != Tool.Presets && it != Tool.Format }.forEach { item ->
+            toolList.forEach { item ->
                 val selected = tool == item
                 Surface(modifier = Modifier.clickable { onTool(item) }, shape = RoundedCornerShape(10.dp), color = if (selected) SkyBlue else SoftGrey) {
                     Text(
@@ -7059,7 +7082,7 @@ private fun EditorScreen(
                 value = resizeDpi,
                 onValueChange = onResizeDpi,
                 modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
-                label = { Text("DPI - 300 is standard for print") },
+                label = { Text("DPI (for printing, saved in JPG)") },
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                 singleLine = true
             )
@@ -7072,7 +7095,7 @@ private fun EditorScreen(
         } else if (tool == Tool.Background) {
             if (!bgCutoutReady) {
                 Card(colors = CardDefaults.cardColors(containerColor = PaleBlue), shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth()) {
-                    Text("Cut the subject out of your photo, right on your phone - nothing is uploaded. The first use downloads a small model once (internet needed); after that it works fully offline.", color = Slate, fontSize = 13.sp, lineHeight = 18.sp, modifier = Modifier.padding(16.dp))
+                    Text("Cut the subject out of your photo, right on your phone. Nothing is uploaded, and it works offline.", color = Slate, fontSize = 13.sp, lineHeight = 18.sp, modifier = Modifier.padding(16.dp))
                 }
             }
             Button(
@@ -7131,7 +7154,7 @@ private fun EditorScreen(
                 Button(
                     onClick = onBgExport,
                     modifier = Modifier.fillMaxWidth().padding(top = 10.dp).height(52.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = SkyBlue, contentColor = Color.White),
+                    colors = ButtonDefaults.buttonColors(containerColor = Orange, contentColor = Color.White),
                     shape = RoundedCornerShape(14.dp),
                     enabled = !busy
                 ) {
@@ -7270,7 +7293,7 @@ private fun EditorScreen(
                 if (busy) CircularProgressIndicator(modifier = Modifier.size(20.dp), color = Color.White, strokeWidth = 2.dp) else {
                     Icon(Icons.Default.CheckCircle, contentDescription = null, modifier = Modifier.size(18.dp))
                     Spacer(Modifier.width(8.dp))
-                    Text("Crop", fontWeight = FontWeight.Bold)
+                    Text("Cut shape", fontWeight = FontWeight.Bold)
                 }
             }
         } else {
@@ -7281,7 +7304,7 @@ private fun EditorScreen(
         Button(
             onClick = onProcess,
             modifier = Modifier.fillMaxWidth().height(52.dp),
-            colors = ButtonDefaults.buttonColors(containerColor = SkyBlue, contentColor = Color.White),
+            colors = ButtonDefaults.buttonColors(containerColor = Orange, contentColor = Color.White),
             shape = RoundedCornerShape(14.dp),
             enabled = !busy && working != null
         ) {
@@ -8242,6 +8265,18 @@ private fun SettingsScreen(
         }
 
         SettingsSection("Privacy") {
+            val prefs = remember { context.getSharedPreferences("pixelcraft_state", android.content.Context.MODE_PRIVATE) }
+            var keepLocation by remember { mutableStateOf(prefs.getBoolean("keep_photo_location", false)) }
+            SettingsRow(
+                icon = { Icon(Icons.Default.LocationOn, null, tint = SkyBlue, modifier = Modifier.size(20.dp)) },
+                title = "Keep photo location",
+                subtitle = if (keepLocation) "On - saved JPG photos keep their location" else "Off - location is removed from saved photos"
+            ) {
+                Switch(checked = keepLocation, onCheckedChange = { on ->
+                    keepLocation = on
+                    prefs.edit().putBoolean("keep_photo_location", on).apply()
+                }, colors = SwitchDefaults.colors(checkedTrackColor = SkyBlue))
+            }
             SettingsRow(
                 icon = { Icon(Icons.Default.Delete, null, tint = SkyBlue, modifier = Modifier.size(20.dp)) },
                 title = "Clear recently edited",
@@ -8362,6 +8397,7 @@ private const val PRIVACY_TEXT = "A2Z Image Craft - Privacy Policy\n\n" +
     "- Your saved text styles and drafts from the Text on Photo tool.\n\n" +
     "- Your saved collage project, so you can close the app and keep working on it later.\n\n" +
     "- Your last used resize size, so the Resize tool can offer it again.\n\n" +
+    "- Saved JPG photos keep basic photo information such as the date and camera model. Location is removed unless you turn on 'Keep photo location' in Settings.\n\n" +
     "- Temporary copies made only while you share, print or export. They stay in the app's private cache, which no other app can read, and are removed automatically.\n\n" +
     "- Saved images, written only when you tap Save, to the folder shown in the app. We cannot see any of this data. It is deleted when you clear it in the app, clear the app's storage, or uninstall the app. If you have turned on Android's own backup in your Google account, Android may include the app's settings in that backup, under Google's control.\n\n" +
     "4. Google services used by the app\n\n" +
@@ -8404,7 +8440,7 @@ private val HELP_ENTRIES = listOf(
     DocEntry("Shape Cutter", "Cut your photo into a circle, square, rounded or heart shape - great for profile pictures. Save as PNG to keep the corners transparent."),
     DocEntry("Social Media Sizes", "Choose a platform and post type, and the app sets the exact recommended size for you."),
     DocEntry("Online Shop Sizes", "Ready-made sizes for shop listings such as Etsy. Platforms can change their rules, so check their latest guidance for important listings."),
-    DocEntry("Format Converter", "Change between JPG, PNG, WebP and PDF. JPG is smallest for photos, PNG keeps transparency and sharp text, PDF is best for documents."),
+    DocEntry("Format Converter", "Change between JPG, PNG, WebP, PDF, BMP and TIFF. JPG is smallest for photos, PNG keeps transparency and sharp text, PDF is best for documents, BMP and TIFF suit editing and print."),
     DocEntry("Image & PDF Compressor", "Make files smaller for email or upload. A lower quality gives a smaller file. Always keep your original."),
     DocEntry("Print Size & DPI", "Shows how big a photo can print sharply. 300 DPI is best for prints; 150 DPI is fine for posters seen from a distance. Make a test print first."),
     DocEntry("Text on Photo", "Add text, stickers, frames, effects and perspective. Tap a layer to edit it, drag to move it, and use Reset to start again."),
@@ -8420,7 +8456,7 @@ private val WHATS_NEW_ITEMS = listOf(
     "Remove backgrounds with one tap",
     "Crop, rotate, mirror and cut photos into shapes",
     "Exact sizes for social media and online shops",
-    "Convert between JPG, PNG, WebP and PDF",
+    "Convert between JPG, PNG, WebP, PDF, BMP and TIFF",
     "Compress images and PDFs",
     "Print Size & DPI calculator",
     "Text on Photo with stickers, frames, effects and perspective",
@@ -8787,7 +8823,7 @@ private fun encodeImage(context: Context, exifSource: Uri?, bitmap: Bitmap, form
                     throw IllegalStateException("Image encoding failed")
                 }
             }
-            if (exifSource != null) copyExifBestEffort(context, exifSource, tmp, flat.width, flat.height, dpi)
+            if (exifSource != null) copyExifBestEffort(context, exifSource, tmp, flat.width, flat.height, dpi, keepPhotoLocation(context))
             else if (dpi > 0) writeDpiTags(ExifInterface(tmp.absolutePath), dpi)
             return tmp.readBytes()
         } finally {
@@ -8813,6 +8849,12 @@ private val EXIF_TAGS_TO_COPY = listOf(
     ExifInterface.TAG_FOCAL_LENGTH,
     ExifInterface.TAG_FLASH,
     ExifInterface.TAG_WHITE_BALANCE,
+    ExifInterface.TAG_USER_COMMENT,
+    ExifInterface.TAG_IMAGE_DESCRIPTION
+)
+
+/** Location tags are copied only when the user turns on "Keep photo location" in Settings (off by default). */
+private val EXIF_GPS_TAGS = listOf(
     ExifInterface.TAG_GPS_LATITUDE,
     ExifInterface.TAG_GPS_LATITUDE_REF,
     ExifInterface.TAG_GPS_LONGITUDE,
@@ -8821,10 +8863,11 @@ private val EXIF_TAGS_TO_COPY = listOf(
     ExifInterface.TAG_GPS_ALTITUDE_REF,
     ExifInterface.TAG_GPS_TIMESTAMP,
     ExifInterface.TAG_GPS_DATESTAMP,
-    ExifInterface.TAG_GPS_PROCESSING_METHOD,
-    ExifInterface.TAG_USER_COMMENT,
-    ExifInterface.TAG_IMAGE_DESCRIPTION
+    ExifInterface.TAG_GPS_PROCESSING_METHOD
 )
+
+private fun keepPhotoLocation(context: Context): Boolean =
+    context.getSharedPreferences("pixelcraft_state", Context.MODE_PRIVATE).getBoolean("keep_photo_location", false)
 
 private fun writeDpiTags(dst: ExifInterface, dpi: Int) {
     try {
@@ -8837,12 +8880,17 @@ private fun writeDpiTags(dst: ExifInterface, dpi: Int) {
     }
 }
 
-private fun copyExifBestEffort(context: Context, source: Uri, outFile: File, width: Int, height: Int, dpi: Int = 0) {
+private fun copyExifBestEffort(context: Context, source: Uri, outFile: File, width: Int, height: Int, dpi: Int = 0, keepLocation: Boolean = false) {
     try {
         val src = context.contentResolver.openFileDescriptor(source, "r")?.use { ExifInterface(it.fileDescriptor) } ?: return
         val dst = ExifInterface(outFile.absolutePath)
         for (tag in EXIF_TAGS_TO_COPY) {
             src.getAttribute(tag)?.let { dst.setAttribute(tag, it) }
+        }
+        if (keepLocation) {
+            for (tag in EXIF_GPS_TAGS) {
+                src.getAttribute(tag)?.let { dst.setAttribute(tag, it) }
+            }
         }
         dst.setAttribute(ExifInterface.TAG_IMAGE_WIDTH, width.toString())
         dst.setAttribute(ExifInterface.TAG_IMAGE_LENGTH, height.toString())
@@ -9442,9 +9490,9 @@ private fun SocialHomeScreen(
 ) {
     Column(modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).padding(horizontal = 16.dp).verticalScroll(rememberScrollState())) {
         Spacer(Modifier.height(10.dp))
-        Text("Every platform. Every image size.", fontSize = 22.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onBackground)
+        Text("Popular platforms. The right size, every time.", fontSize = 22.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onBackground)
         Spacer(Modifier.height(4.dp))
-        Text("Pick a platform, choose the official size, and export your photo ready to upload.", fontSize = 14.sp, color = Slate)
+        Text("Pick a platform, choose the right size, and export your photo ready to upload.", fontSize = 14.sp, color = Slate, lineHeight = 18.sp)
         Spacer(Modifier.height(14.dp))
         Card(colors = CardDefaults.cardColors(containerColor = PaleBlue), shape = RoundedCornerShape(16.dp)) {
             Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -9492,8 +9540,8 @@ private fun SocialHomeScreen(
         Spacer(Modifier.height(16.dp))
         Card(colors = CardDefaults.cardColors(containerColor = SoftGrey), shape = RoundedCornerShape(14.dp)) {
             Text(
-                "All sizes follow the official recommendations from each platform. The full sourced table is in the app documentation.",
-                modifier = Modifier.padding(14.dp), fontSize = 13.sp, color = Slate
+                "Sizes follow each platform's official guidance at the time of checking. Platforms can change them anytime.",
+                modifier = Modifier.padding(14.dp), fontSize = 13.sp, color = Slate, lineHeight = 17.sp
             )
         }
         Spacer(Modifier.height(24.dp))
@@ -9518,7 +9566,7 @@ private fun SocialPlatformScreen(
         } else {
             platform.categories.forEach { cat ->
                 Text(cat.label, fontSize = 17.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onBackground)
-                Text(cat.sub, fontSize = 13.sp, color = Slate)
+                Text(cat.sub, fontSize = 13.sp, color = Slate, lineHeight = 17.sp)
                 Spacer(Modifier.height(6.dp))
                 cat.sizes.forEach { size ->
                     Card(
@@ -9528,8 +9576,11 @@ private fun SocialPlatformScreen(
                     ) {
                         Column(Modifier.fillMaxWidth().padding(14.dp)) {
                             Text(size.label, fontWeight = FontWeight.SemiBold, color = DeepNavy, fontSize = 15.sp)
-                            Text(size.sub, fontSize = 13.sp, color = Slate)
-                            if (size.note.isNotEmpty()) Text(size.note, fontSize = 12.sp, color = Slate)
+                            Text(size.sub, fontSize = 13.sp, color = Slate, lineHeight = 17.sp)
+                            // v1.0.4 (his rule): sizes from the platform's own help pages are "Official size";
+                            // anything else is honestly labelled "Common size".
+                            Text(if (size.official) "Official size" else "Common size", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = if (size.official) SuccessGreen else Slate)
+                            if (size.note.isNotEmpty()) Text(size.note, fontSize = 12.sp, color = Slate, lineHeight = 16.sp)
                         }
                     }
                 }
@@ -9849,7 +9900,7 @@ private fun ShopPlatformScreen(
         } else {
             platform.categories.forEach { cat ->
                 Text(cat.label, fontSize = 17.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onBackground)
-                Text(cat.sub, fontSize = 13.sp, color = Slate)
+                Text(cat.sub, fontSize = 13.sp, color = Slate, lineHeight = 17.sp)
                 Spacer(Modifier.height(6.dp))
                 cat.sizes.forEach { size ->
                     Card(
@@ -9861,8 +9912,8 @@ private fun ShopPlatformScreen(
                     ) {
                         Column(Modifier.fillMaxWidth().padding(14.dp)) {
                             Text(size.label, fontWeight = FontWeight.SemiBold, color = DeepNavy, fontSize = 15.sp)
-                            Text(size.sub, fontSize = 13.sp, color = Slate)
-                            if (size.note.isNotEmpty()) Text(size.note, fontSize = 12.sp, color = Slate)
+                            Text(size.sub, fontSize = 13.sp, color = Slate, lineHeight = 17.sp)
+                            if (size.note.isNotEmpty()) Text(size.note, fontSize = 12.sp, color = Slate, lineHeight = 16.sp)
                         }
                     }
                 }
@@ -10203,7 +10254,7 @@ private fun ConvertHomeScreen(
                         Column(Modifier.fillMaxWidth().padding(14.dp)) {
                             Text(fmt.label, fontWeight = FontWeight.Bold, color = DeepNavy, fontSize = 16.sp)
                             Spacer(Modifier.height(2.dp))
-                            Text(fmt.desc, fontSize = 12.sp, color = Slate)
+                            Text(fmt.desc, fontSize = 12.sp, color = Slate, lineHeight = 16.sp)
                         }
                     }
                 }
@@ -10214,7 +10265,7 @@ private fun ConvertHomeScreen(
         Card(colors = CardDefaults.cardColors(containerColor = SoftGrey), shape = RoundedCornerShape(14.dp)) {
             Text(
                 "Everything happens on your phone - no upload, no internet. JPG, BMP and PDF have no transparency, so transparent areas are filled with the background you pick.",
-                modifier = Modifier.padding(14.dp), fontSize = 13.sp, color = Slate
+                modifier = Modifier.padding(14.dp), fontSize = 13.sp, color = Slate, lineHeight = 17.sp
             )
         }
         Spacer(Modifier.height(24.dp))
@@ -10252,7 +10303,7 @@ private fun ConvertEditScreen(
                         ) {
                             Column(Modifier.weight(1f)) {
                                 Text(fmt.label, fontWeight = FontWeight.SemiBold, color = DeepNavy, fontSize = 15.sp)
-                                Text(fmt.desc, fontSize = 12.sp, color = Slate)
+                                Text(fmt.desc, fontSize = 12.sp, color = Slate, lineHeight = 16.sp)
                             }
                             if (fmt.id == target.id) Icon(Icons.Default.CheckCircle, contentDescription = "Current", tint = SuccessGreen, modifier = Modifier.size(20.dp))
                         }
@@ -10455,7 +10506,7 @@ private fun CompressHomeScreen(
 ) {
     Column(modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).padding(horizontal = 16.dp).verticalScroll(rememberScrollState())) {
         Spacer(Modifier.height(10.dp))
-        Text("Reduce file size. Keep image quality.", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onBackground)
+        Text("Reduce file size. Keep great quality.", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onBackground)
         Spacer(Modifier.height(14.dp))
         Card(colors = CardDefaults.cardColors(containerColor = SoftGrey), shape = RoundedCornerShape(18.dp)) {
             Column(Modifier.fillMaxWidth().padding(22.dp), horizontalAlignment = Alignment.CenterHorizontally) {
@@ -10476,7 +10527,7 @@ private fun CompressHomeScreen(
                     Icon(Icons.Default.Image, contentDescription = null, tint = SkyBlue, modifier = Modifier.size(44.dp))
                     Spacer(Modifier.height(8.dp))
                 }
-                Text("Select Images", fontWeight = FontWeight.Bold, fontSize = 19.sp, color = DeepNavy)
+                Text("Add your images", fontWeight = FontWeight.Bold, fontSize = 19.sp, color = DeepNavy)
                 Spacer(Modifier.height(4.dp))
                 Text(
                     if (thumbs.isNotEmpty()) "${thumbs.size} image${if (thumbs.size == 1) "" else "s"} selected" else "Choose one image or multiple images",
@@ -10506,7 +10557,7 @@ private fun CompressHomeScreen(
                     Spacer(Modifier.height(8.dp))
                     Text("Quality Compression", fontWeight = FontWeight.Bold, color = DeepNavy, fontSize = 15.sp)
                     Spacer(Modifier.height(2.dp))
-                    Text("Adjust image quality", fontSize = 12.sp, color = Slate)
+                    Text("Adjust image quality", fontSize = 12.sp, color = Slate, lineHeight = 16.sp)
                 }
             }
             Card(
@@ -10515,11 +10566,11 @@ private fun CompressHomeScreen(
                 shape = RoundedCornerShape(14.dp)
             ) {
                 Column(Modifier.fillMaxWidth().padding(16.dp)) {
-                    Icon(Icons.Default.CheckCircle, contentDescription = null, tint = SkyBlue, modifier = Modifier.size(26.dp))
+                    Icon(Icons.Default.GpsFixed, contentDescription = null, tint = SkyBlue, modifier = Modifier.size(26.dp))
                     Spacer(Modifier.height(8.dp))
                     Text("Target File Size", fontWeight = FontWeight.Bold, color = DeepNavy, fontSize = 15.sp)
                     Spacer(Modifier.height(2.dp))
-                    Text("Aim for a chosen size", fontSize = 12.sp, color = Slate)
+                    Text("Aim for a chosen size", fontSize = 12.sp, color = Slate, lineHeight = 16.sp)
                 }
             }
         }
@@ -10527,7 +10578,7 @@ private fun CompressHomeScreen(
         Card(colors = CardDefaults.cardColors(containerColor = SoftGrey), shape = RoundedCornerShape(14.dp)) {
             Text(
                 "Everything happens on your phone. Compressed copies are saved as new files - your originals are never touched.",
-                modifier = Modifier.padding(14.dp), fontSize = 13.sp, color = Slate
+                modifier = Modifier.padding(14.dp), fontSize = 13.sp, color = Slate, lineHeight = 17.sp
             )
         }
         Spacer(Modifier.height(24.dp))
@@ -10636,14 +10687,14 @@ private fun CompressSettingsScreen(
                 singleLine = true
             )
             Spacer(Modifier.height(4.dp))
-            Text("The compressor gets as close as it can - very small targets may lower dimensions too.", fontSize = 12.sp, color = Slate)
+            Text("The compressor gets as close as it can - very small targets may lower dimensions too.", fontSize = 12.sp, color = Slate, lineHeight = 16.sp)
         }
         if (!isPdf) {
             Spacer(Modifier.height(14.dp))
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
                     Text("Optional resize", fontWeight = FontWeight.Bold, color = DeepNavy, fontSize = 15.sp)
-                    Text("Resize image dimensions", fontSize = 12.sp, color = Slate)
+                    Text("Resize image dimensions", fontSize = 12.sp, color = Slate, lineHeight = 16.sp)
                 }
                 Switch(checked = resizeOn, onCheckedChange = { onResizeOn(it) }, colors = SwitchDefaults.colors(checkedTrackColor = SkyBlue))
             }
@@ -10666,7 +10717,7 @@ private fun CompressSettingsScreen(
             onClick = onCompress,
             enabled = !busy && thumbs.isNotEmpty(),
             modifier = Modifier.fillMaxWidth().height(52.dp),
-            colors = ButtonDefaults.buttonColors(containerColor = SkyBlue, contentColor = Color.White),
+            colors = ButtonDefaults.buttonColors(containerColor = Orange, contentColor = Color.White),
             shape = RoundedCornerShape(14.dp)
         ) {
             Text(if (busy) "Compressing…" else if (isPdf) "Compress PDF" else if (thumbs.size > 1) "Compress ${thumbs.size} Images" else "Compress Image", fontWeight = FontWeight.Bold)
@@ -10766,7 +10817,7 @@ private fun CompressResultScreen(
                         }
                         if (isPdf && CompressUtils.percentSaved(origSize, newSize) < 5) {
                             Spacer(Modifier.height(4.dp))
-                            Text("This PDF was already well-compressed, so savings are small.", fontSize = 12.sp, color = Slate)
+                            Text("This PDF was already well-compressed, so savings are small.", fontSize = 12.sp, color = Slate, lineHeight = 16.sp)
                         }
                     }
                 }
@@ -10805,7 +10856,7 @@ private fun CompressResultScreen(
             onClick = onSave,
             enabled = !saved,
             modifier = Modifier.fillMaxWidth().height(52.dp),
-            colors = ButtonDefaults.buttonColors(containerColor = SkyBlue, contentColor = Color.White),
+            colors = ButtonDefaults.buttonColors(containerColor = Orange, contentColor = Color.White),
             shape = RoundedCornerShape(14.dp)
         ) {
             Text(
@@ -10901,7 +10952,7 @@ private fun PrintHomeScreen(
                         Spacer(Modifier.height(8.dp))
                         var showAllPages by remember { mutableStateOf(false) }
                         if (pdfSelected.isEmpty()) {
-                            Text("Tap pages below to select them - selected pages get a ✅.", fontSize = 12.sp, color = Slate)
+                            Text("Tap pages below to select them - selected pages get a ✅.", fontSize = 12.sp, color = Slate, lineHeight = 16.sp)
                         } else {
                             Text(
                                 "${pdfSelected.size} page${if (pdfSelected.size == 1) "" else "s"} selected: ${formatPageRanges(pdfSelected.sorted())}",
@@ -11078,14 +11129,14 @@ private fun PrintSetupScreen(
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
                         Text("Keep aspect ratio", fontWeight = FontWeight.SemiBold, color = DeepNavy, fontSize = 14.sp)
-                        Text("Changing one side calculates the other.", fontSize = 12.sp, color = Slate)
+                        Text("Changing one side calculates the other.", fontSize = 12.sp, color = Slate, lineHeight = 16.sp)
                     }
                     Switch(checked = lockAspect, onCheckedChange = onLockAspect, colors = SwitchDefaults.colors(checkedTrackColor = SkyBlue))
                 }
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
                         Text("Bleed allowance", fontWeight = FontWeight.SemiBold, color = DeepNavy, fontSize = 14.sp)
-                        Text("Adds 3 mm on each side for professional printing.", fontSize = 12.sp, color = Slate)
+                        Text("Adds 3 mm on each side for professional printing.", fontSize = 12.sp, color = Slate, lineHeight = 16.sp)
                     }
                     Switch(checked = bleedOn, onCheckedChange = onBleedOn, colors = SwitchDefaults.colors(checkedTrackColor = SkyBlue))
                 }
@@ -11102,7 +11153,7 @@ private fun PrintSetupScreen(
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                         Column(Modifier.weight(1f)) {
                             Text("Multiple copies on one sheet", fontWeight = FontWeight.SemiBold, color = DeepNavy, fontSize = 15.sp)
-                            Text("Neat grid with cutting guides.", fontSize = 12.sp, color = Slate)
+                            Text("Neat grid with cutting guides.", fontSize = 12.sp, color = Slate, lineHeight = 16.sp)
                         }
                         Switch(checked = sheetOn, onCheckedChange = onSheetOn, colors = SwitchDefaults.colors(checkedTrackColor = SkyBlue))
                     }
@@ -11149,7 +11200,7 @@ private fun PrintSetupScreen(
         }
         Spacer(Modifier.height(14.dp))
         Text("Print Resolution (PPI)", fontWeight = FontWeight.Bold, color = DeepNavy, fontSize = 17.sp)
-        Text("Often called DPI. Higher means more detail in print.", fontSize = 13.sp, color = Slate)
+        Text("Often called DPI. Higher means more detail in print.", fontSize = 13.sp, color = Slate, lineHeight = 17.sp)
         Spacer(Modifier.height(8.dp))
         listOf(
             Triple(150, "Large prints", "May be appropriate for larger prints viewed from a distance."),
@@ -11175,7 +11226,7 @@ private fun PrintSetupScreen(
                             modifier = Modifier.background(Color.White, RoundedCornerShape(6.dp)).padding(horizontal = 8.dp, vertical = 3.dp)
                         )
                     }
-                    Text(desc, fontSize = 13.sp, color = Slate)
+                    Text(desc, fontSize = 13.sp, color = Slate, lineHeight = 17.sp)
                 }
             }
         }
@@ -11208,7 +11259,7 @@ private fun PrintSetupScreen(
         Card(colors = CardDefaults.cardColors(containerColor = SoftGrey), shape = RoundedCornerShape(12.dp)) {
             Column(Modifier.fillMaxWidth().padding(14.dp)) {
                 Text(qTitle, fontWeight = FontWeight.Bold, color = qColor, fontSize = 15.sp)
-                Text(qText, fontSize = 13.sp, color = Slate)
+                Text(qText, fontSize = 13.sp, color = Slate, lineHeight = 17.sp)
             }
         }
         Spacer(Modifier.height(14.dp))
@@ -11335,7 +11386,7 @@ private fun PrintPreviewScreen(
                         Text("Crop marks (PDF export)", Modifier.weight(1f), fontSize = 14.sp, color = DeepNavy)
                         Switch(checked = cropMarks, onCheckedChange = onCropMarks, colors = SwitchDefaults.colors(checkedTrackColor = SkyBlue))
                     }
-                    Text("Background for transparent images", fontSize = 13.sp, color = Slate)
+                    Text("Background for transparent images", fontSize = 13.sp, color = Slate, lineHeight = 17.sp)
                     Row(Modifier.horizontalScroll(rememberScrollState())) {
                         PrintPresetChip("White", "default", bgWhite) { onBgWhite(true) }
                         PrintPresetChip("Light grey", "soft grey", !bgWhite) { onBgWhite(false) }
@@ -11350,7 +11401,7 @@ private fun PrintPreviewScreen(
             onClick = onContinue,
             enabled = !sheetMode || grid[2] > 0,
             modifier = Modifier.fillMaxWidth().height(52.dp),
-            colors = ButtonDefaults.buttonColors(containerColor = SkyBlue),
+            colors = ButtonDefaults.buttonColors(containerColor = Orange),
             shape = RoundedCornerShape(12.dp)
         ) { Text("Continue to Export", color = Color.White, fontWeight = FontWeight.Bold) }
         Spacer(Modifier.height(20.dp))
@@ -11408,7 +11459,7 @@ private fun PrintExportScreen(
             ) {
                 Column(Modifier.padding(14.dp)) {
                     Text(title, fontWeight = FontWeight.Bold, color = DeepNavy, fontSize = 15.sp)
-                    Text(desc, fontSize = 13.sp, color = Slate)
+                    Text(desc, fontSize = 13.sp, color = Slate, lineHeight = 17.sp)
                 }
             }
         }
@@ -11601,7 +11652,7 @@ private fun TextOnPhotoScreen(
                     Text("Choose Your Photo", color = DeepNavy, fontWeight = FontWeight.Bold, fontSize = 17.sp)
                     Text("Select a photo from your gallery to get started.", color = Slate, fontSize = 12.sp, textAlign = TextAlign.Center)
                     Spacer(Modifier.height(12.dp))
-                    Button(onClick = onSelectPhoto, modifier = Modifier.fillMaxWidth().height(50.dp), colors = ButtonDefaults.buttonColors(containerColor = SkyBlue, contentColor = Color.White), shape = RoundedCornerShape(14.dp)) {
+                    Button(onClick = onSelectPhoto, modifier = Modifier.fillMaxWidth().height(50.dp), colors = ButtonDefaults.buttonColors(containerColor = Orange, contentColor = Color.White), shape = RoundedCornerShape(14.dp)) {
                         Text("Select Photo", fontWeight = FontWeight.Bold)
                     }
                 }
@@ -12435,7 +12486,7 @@ private fun TextOnPhotoScreen(
                         // v0.16.5: enabled with zero layers too - zoom/crop + save without text is a real flow.
                         enabled = !busy,
                         modifier = Modifier.fillMaxWidth().height(50.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = SkyBlue, contentColor = Color.White),
+                        colors = ButtonDefaults.buttonColors(containerColor = Orange, contentColor = Color.White),
                         shape = RoundedCornerShape(14.dp)
                     ) { Text("Process", fontWeight = FontWeight.Bold) }   // v0.16.6: no confusing "Process again" - edits invalidate the result, so this is always the one first step
                     }

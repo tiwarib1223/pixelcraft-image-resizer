@@ -130,6 +130,20 @@ class AuditScreensTest {
             waitForText("Social", timeoutMs = 120_000)
             pump(); pump()
             shot(sc, "audit_social_home")
+            composeRule.onNodeWithText("Instagram", substring = true).performClick()
+            waitForText("Official size", timeoutMs = 120_000)
+            pump(); pump()
+            shot(sc, "audit_social_labels")
+            sc.close()
+        }
+    }
+
+    @Test
+    fun audit10BackgroundTool() {
+        launch("pixelcraft.test.tool" to "background").use { sc ->
+            waitForText("Remove Background", timeoutMs = 120_000)
+            pump(); pump()
+            shot(sc, "audit_editor_background")
             sc.close()
         }
     }
