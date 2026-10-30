@@ -354,11 +354,196 @@ object TextOverlayUtils {
         }
     }
 
+    // ---- v0.19.0: Frame + Perspective tools (his confirmed spec: fill the 2 empty grid slots) ----
+
+    enum class FrameStyle(val id: String, val label: String, val usesColor: Boolean) {
+        NONE("none", "None", false),
+        LINE("line", "Line", true),
+        DOUBLE("double", "Double", true),
+        ROUNDED("rounded", "Rounded", true),
+        INSET("inset", "Inset", true),
+        DASHED("dashed", "Dashed", true),
+        BRACKETS("brackets", "Corners", true),
+        NEON("neon", "Neon", true),
+        GRADIENT("gradient", "Gradient", true),
+        POLAROID("polaroid", "Polaroid", false),
+        FILM("film", "Film", false),
+        STAMP("stamp", "Stamp", false),
+        VIGNETTE("vignette", "Vignette", false);
+
+        companion object { fun fromId(id: String) = values().firstOrNull { it.id == id } ?: NONE }
+    }
+
+    /**
+     * Frame drawing shared by the live preview AND the export (preview = export, his rule).
+     * [widthPx] is the base band width in canvas pixels; colour styles use [color].
+     */
+    fun drawFrame(canvas: Canvas, w: Int, h: Int, style: FrameStyle, widthPx: Float, color: Int) {
+        if (style == FrameStyle.NONE) return
+        val wf = w.toFloat(); val hf = h.toFloat()
+        val wd = widthPx.coerceAtLeast(2f)
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+        when (style) {
+            FrameStyle.LINE -> {
+                paint.style = Paint.Style.STROKE; paint.strokeWidth = wd; paint.color = color
+                val half = wd / 2f
+                canvas.drawRect(half, half, wf - half, hf - half, paint)
+            }
+            FrameStyle.DOUBLE -> {
+                paint.style = Paint.Style.STROKE; paint.color = color
+                paint.strokeWidth = wd
+                val half = wd / 2f
+                canvas.drawRect(half, half, wf - half, hf - half, paint)
+                paint.strokeWidth = (wd / 3f).coerceAtLeast(1.5f)
+                val inset = wd * 2f
+                canvas.drawRect(inset, inset, wf - inset, hf - inset, paint)
+            }
+            FrameStyle.ROUNDED -> {
+                paint.style = Paint.Style.STROKE; paint.strokeWidth = wd; paint.color = color
+                val half = wd / 2f; val rad = wd * 3f
+                canvas.drawRoundRect(RectF(half, half, wf - half, hf - half), rad, rad, paint)
+            }
+            FrameStyle.INSET -> {
+                paint.style = Paint.Style.STROKE; paint.strokeWidth = wd; paint.color = color
+                val inset = wd * 2.5f
+                canvas.drawRect(inset, inset, wf - inset, hf - inset, paint)
+            }
+            FrameStyle.DASHED -> {
+                paint.style = Paint.Style.STROKE; paint.strokeWidth = (wd * 0.7f).coerceAtLeast(2f); paint.color = color
+                paint.pathEffect = DashPathEffect(floatArrayOf(wd * 2f, wd * 1.4f), 0f)
+                val half = paint.strokeWidth / 2f + wd * 0.6f
+                canvas.drawRect(half, half, wf - half, hf - half, paint)
+            }
+            FrameStyle.BRACKETS -> {
+                paint.style = Paint.Style.STROKE; paint.strokeWidth = (wd * 0.8f).coerceAtLeast(2.5f); paint.color = color
+                paint.strokeCap = Paint.Cap.ROUND
+                val arm = minOf(wf, hf) * 0.12f
+                val m = wd * 1.2f
+                val path = Path()
+                path.moveTo(m, m + arm); path.lineTo(m, m); path.lineTo(m + arm, m)
+                path.moveTo(wf - m - arm, m); path.lineTo(wf - m, m); path.lineTo(wf - m, m + arm)
+                path.moveTo(m, hf - m - arm); path.lineTo(m, hf - m); path.lineTo(m + arm, hf - m)
+                path.moveTo(wf - m - arm, hf - m); path.lineTo(wf - m, hf - m); path.lineTo(wf - m, hf - m - arm)
+                canvas.drawPath(path, paint)
+            }
+            FrameStyle.NEON -> {
+                paint.style = Paint.Style.STROKE; paint.color = color
+                paint.strokeWidth = wd
+                val half = wd / 2f
+                canvas.drawRect(half, half, wf - half, hf - half, paint)
+                paint.color = 0xFFFFFFFF.toInt()
+                paint.strokeWidth = (wd * 0.35f).coerceAtLeast(1.5f)
+                canvas.drawRect(half, half, wf - half, hf - half, paint)
+            }
+            FrameStyle.GRADIENT -> {
+                paint.style = Paint.Style.STROKE; paint.strokeWidth = wd
+                paint.shader = LinearGradient(0f, 0f, wf, hf, color, 0xFFFFFFFF.toInt(), Shader.TileMode.CLAMP)
+                val half = wd / 2f
+                canvas.drawRect(half, half, wf - half, hf - half, paint)
+                paint.shader = null
+            }
+            FrameStyle.POLAROID -> {
+                paint.style = Paint.Style.FILL; paint.color = 0xFFFFFFFF.toInt()
+                val side = wd * 1.2f; val top = wd * 1.2f; val bottom = wd * 3.5f
+                canvas.drawRect(0f, 0f, wf, top, paint)
+                canvas.drawRect(0f, hf - bottom, wf, hf, paint)
+                canvas.drawRect(0f, top, side, hf - bottom, paint)
+                canvas.drawRect(wf - side, top, wf, hf - bottom, paint)
+            }
+            FrameStyle.FILM -> {
+                paint.style = Paint.Style.FILL; paint.color = 0xFF111111.toInt()
+                val bar = wd * 1.6f
+                canvas.drawRect(0f, 0f, wf, bar, paint)
+                canvas.drawRect(0f, hf - bar, wf, hf, paint)
+                paint.color = 0xFFFFFFFF.toInt()
+                val hole = bar * 0.4f; val step = hole * 2.2f
+                var x = step * 0.6f
+                while (x < wf - hole) {
+                    canvas.drawRoundRect(RectF(x, (bar - hole) / 2f, x + hole, (bar + hole) / 2f), hole * 0.25f, hole * 0.25f, paint)
+                    canvas.drawRoundRect(RectF(x, hf - (bar + hole) / 2f, x + hole, hf - (bar - hole) / 2f), hole * 0.25f, hole * 0.25f, paint)
+                    x += step
+                }
+            }
+            FrameStyle.STAMP -> {
+                paint.style = Paint.Style.FILL; paint.color = 0xFFFFFFFF.toInt()
+                val band = wd * 1.5f
+                canvas.drawRect(0f, 0f, wf, band, paint)
+                canvas.drawRect(0f, hf - band, wf, hf, paint)
+                canvas.drawRect(0f, band, band, hf - band, paint)
+                canvas.drawRect(wf - band, band, wf, hf - band, paint)
+                paint.color = 0x44000000
+                val r = band * 0.16f; val step = r * 3.4f
+                var x = band / 2f
+                while (x < wf) {
+                    canvas.drawCircle(x, band / 2f, r, paint)
+                    canvas.drawCircle(x, hf - band / 2f, r, paint)
+                    x += step
+                }
+                var y = band / 2f
+                while (y < hf) {
+                    canvas.drawCircle(band / 2f, y, r, paint)
+                    canvas.drawCircle(wf - band / 2f, y, r, paint)
+                    y += step
+                }
+            }
+            FrameStyle.VIGNETTE -> {
+                paint.style = Paint.Style.FILL
+                paint.shader = android.graphics.RadialGradient(wf / 2f, hf / 2f, maxOf(wf, hf) * 0.72f,
+                    intArrayOf(0x00000000, 0x00000000, 0x99000000.toInt()), floatArrayOf(0f, 0.62f, 1f), Shader.TileMode.CLAMP)
+                canvas.drawRect(0f, 0f, wf, hf, paint)
+                paint.shader = null
+            }
+            else -> {}
+        }
+    }
+
+    /**
+     * 2-slider perspective (his reference app: Vertical + Horizontal only). v/h in -100..100 map to
+     * about +-38 degrees of tilt around the canvas centre; 0/0 is the identity. Pure math + polyToPoly
+     * (no android.graphics.Camera) so the exact same warp runs in unit tests and on device.
+     */
+    fun perspectiveMatrix(w: Int, h: Int, v: Float, hTilt: Float): android.graphics.Matrix {
+        val m = android.graphics.Matrix()
+        if (v == 0f && hTilt == 0f) return m
+        val ax = Math.toRadians((v * 0.38).toDouble())
+        val ay = Math.toRadians((hTilt * 0.38).toDouble())
+        val cx = w / 2.0; val cy = h / 2.0
+        val dist = maxOf(w, h) * 1.4
+        val cosX = Math.cos(ax); val sinX = Math.sin(ax)
+        val cosY = Math.cos(ay); val sinY = Math.sin(ay)
+        fun project(px: Float, py: Float): FloatArray {
+            val x = px - cx; val y = py - cy
+            val y1 = y * cosX; val z1 = y * sinX
+            val x2 = x * cosY - z1 * sinY
+            val z2 = x * sinY + z1 * cosY
+            val sc = dist / (dist + z2)
+            return floatArrayOf((cx + x2 * sc).toFloat(), (cy + y1 * sc).toFloat())
+        }
+        val src = floatArrayOf(0f, 0f, w.toFloat(), 0f, 0f, h.toFloat(), w.toFloat(), h.toFloat())
+        val p00 = project(0f, 0f); val p10 = project(w.toFloat(), 0f)
+        val p01 = project(0f, h.toFloat()); val p11 = project(w.toFloat(), h.toFloat())
+        val dst = floatArrayOf(p00[0], p00[1], p10[0], p10[1], p01[0], p01[1], p11[0], p11[1])
+        m.setPolyToPoly(src, 0, dst, 0, 4)
+        return m
+    }
+
     /** Full-resolution export: photo + image overlays + all text layers, exactly what the preview showed. */
-    fun renderToBitmap(photo: Bitmap, layers: List<TextLayer>, imageLayers: List<ImageLayer> = emptyList()): Bitmap {
+    fun renderToBitmap(
+        photo: Bitmap, layers: List<TextLayer>, imageLayers: List<ImageLayer> = emptyList(),
+        frameStyle: FrameStyle = FrameStyle.NONE, frameWidthPx: Float = 0f, frameColor: Int = Color.WHITE,
+        perspV: Float = 0f, perspH: Float = 0f
+    ): Bitmap {
         val out = Bitmap.createBitmap(photo.width, photo.height, Bitmap.Config.ARGB_8888)
         val c = Canvas(out)
-        c.drawBitmap(photo, 0f, 0f, null)
+        if (perspV != 0f || perspH != 0f) {
+            c.save()
+            c.concat(perspectiveMatrix(photo.width, photo.height, perspV, perspH))
+            c.drawBitmap(photo, 0f, 0f, null)
+            c.restore()
+        } else {
+            c.drawBitmap(photo, 0f, 0f, null)
+        }
+        if (frameStyle != FrameStyle.NONE) drawFrame(c, photo.width, photo.height, frameStyle, frameWidthPx, frameColor)
         drawAll(c, layers, photo.width, photo.height, imageLayers = imageLayers)
         return out
     }

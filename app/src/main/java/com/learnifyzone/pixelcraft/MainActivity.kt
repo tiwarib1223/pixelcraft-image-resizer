@@ -94,6 +94,8 @@ import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Colorize
 import androidx.compose.material.icons.filled.Flip
 import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.CropSquare
+import androidx.compose.material.icons.filled.Transform
 import androidx.compose.material.icons.filled.EmojiEmotions
 import androidx.compose.material.icons.filled.Title
 import androidx.compose.material3.AlertDialog
@@ -427,6 +429,12 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
     var textCropAdjust by remember { mutableStateOf(false) }
     var textCropZoomAbs by remember { mutableStateOf(1f) }   // v0.16.6: absolute Position-mode zoom (slider 1..5, like Social Media)
     var textFilterId by remember { mutableStateOf("normal") }
+    // v0.19.0: Frame + Perspective tools (his confirmed spec - fill the 2 empty grid slots next to Meme)
+    var textFrameStyle by remember { mutableStateOf("none") }
+    var textFrameWidth by remember { mutableStateOf(8f) }
+    var textFrameColor by remember { mutableStateOf(0xFFFFFFFF.toInt()) }
+    var textPerspV by remember { mutableStateOf(0f) }
+    var textPerspH by remember { mutableStateOf(0f) }
     var textStylePresets by remember { mutableStateOf<List<TextStylePreset>>(emptyList()) }
     var pendingTextStyle by remember { mutableStateOf<TextStylePreset?>(null) }
     var textLastGestureRecord by remember { mutableStateOf(0L) }
@@ -2860,6 +2868,11 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
     /** His v0.16.3 "Add reset button": start over on the SAME photo - clears layers, crop, undo and results. */
     fun resetTextEdits() {
         textFilterId = "normal"
+        textFrameStyle = "none"
+        textFrameWidth = 8f
+        textFrameColor = 0xFFFFFFFF.toInt()
+        textPerspV = 0f
+        textPerspH = 0f
         textLayers.clear()
         textSelectedId = null
         textImageLayers.clear()
@@ -3438,7 +3451,13 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                         eff[1].coerceAtMost(bmp.height - (crop[1] * bmp.height).toInt().coerceIn(0, bmp.height - 16))
                     )
                     val filtered = if (textFilterId == "normal") source else FilterUtils.applyFilter(source, textFilterId)
-                    val out = TextOverlayUtils.renderToBitmap(filtered, textLayers.toList(), textImageLayers.toList())
+                    val out = TextOverlayUtils.renderToBitmap(
+                        filtered, textLayers.toList(), textImageLayers.toList(),
+                        frameStyle = TextOverlayUtils.FrameStyle.fromId(textFrameStyle),
+                        frameWidthPx = textFrameWidth * minOf(filtered.width, filtered.height) / 400f,
+                        frameColor = textFrameColor,
+                        perspV = textPerspV, perspH = textPerspH
+                    )
                     val baos = java.io.ByteArrayOutputStream()
                     if (textFormat == "PNG") out.compress(Bitmap.CompressFormat.PNG, 100, baos)
                     else out.compress(Bitmap.CompressFormat.JPEG, 95, baos)
@@ -3713,6 +3732,17 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                 onResetEdits = { resetTextEdits() },
                 filterId = textFilterId,
                 onFilter = { id -> textFilterId = id; textResultBytes = null; textSaved = false; textTick++ },
+                frameStyle = textFrameStyle,
+                frameWidth = textFrameWidth,
+                frameColor = textFrameColor,
+                perspV = textPerspV,
+                perspH = textPerspH,
+                onFrameStyle = { id -> textFrameStyle = id; textResultBytes = null; textSaved = false; textTick++ },
+                onFrameWidth = { v -> textFrameWidth = v; textResultBytes = null; textSaved = false; textTick++ },
+                onFrameColor = { c -> textFrameColor = c; textResultBytes = null; textSaved = false; textTick++ },
+                onPerspV = { v -> textPerspV = v; textResultBytes = null; textSaved = false; textTick++ },
+                onPerspH = { v -> textPerspH = v; textResultBytes = null; textSaved = false; textTick++ },
+                onResetPerspective = { textPerspV = 0f; textPerspH = 0f; textResultBytes = null; textSaved = false; textTick++ },
                 onSelectLayer = { textSelectedId = it; textImageSelectedId = null; textTick++; textSelTick++ },
                 onAddLayer = { textImageSelectedId = null; addTextLayer() },
                 onDeleteLayer = { deleteTextLayer(it) },
@@ -4952,6 +4982,31 @@ private fun StickersLevel(testSheetLevel: String?, layerCount: Int, imageCount: 
                         }
                     }
                     if (testSheetLevel != null) Text("hook:layers=" + layerCount + ",images=" + imageCount + " t" + tick, fontSize = 8.sp, color = BorderGrey)}
+
+/** v0.19.0: frame style thumbnail - drawn by the SAME drawFrame the photo preview and export use. */
+@Composable
+private fun FrameThumb(style: TextOverlayUtils.FrameStyle, color: Int, selected: Boolean, onClick: () -> Unit) {
+    val tb = remember(style, color) {
+        val b = Bitmap.createBitmap(96, 72, Bitmap.Config.ARGB_8888)
+        val c = android.graphics.Canvas(b)
+        val gp = android.graphics.Paint().apply {
+            shader = android.graphics.LinearGradient(0f, 0f, 96f, 72f, 0xFF90CAF9.toInt(), 0xFF1565C0.toInt(), android.graphics.Shader.TileMode.CLAMP)
+        }
+        c.drawRect(0f, 0f, 96f, 72f, gp)
+        TextOverlayUtils.drawFrame(c, 96, 72, style, 6f, color)
+        b
+    }
+    Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(end = 10.dp).clickable { onClick() }) {
+        Image(
+            bitmap = tb.asImageBitmap(),
+            contentDescription = style.label,
+            contentScale = ContentScale.Crop,
+            modifier = Modifier.size(64.dp).clip(RoundedCornerShape(10.dp)).border(if (selected) 2.dp else 1.dp, if (selected) SkyBlue else BorderGrey, RoundedCornerShape(10.dp))
+        )
+        Spacer(Modifier.height(2.dp))
+        Text(style.label, color = if (selected) SkyBlue else DeepNavy, fontSize = 11.sp, fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal)
+    }
+}
 
 @Composable
 private fun MemeLevel(testSheetLevel: String?, layerCount: Int, imageCount: Int, tick: Int, onApplyMeme: (String, String) -> Unit) {
@@ -10839,6 +10894,17 @@ private fun TextOnPhotoScreen(
     onResetEdits: () -> Unit,
     filterId: String,
     onFilter: (String) -> Unit,
+    frameStyle: String,
+    frameWidth: Float,
+    frameColor: Int,
+    perspV: Float,
+    perspH: Float,
+    onFrameStyle: (String) -> Unit,
+    onFrameWidth: (Float) -> Unit,
+    onFrameColor: (Int) -> Unit,
+    onPerspV: (Float) -> Unit,
+    onPerspH: (Float) -> Unit,
+    onResetPerspective: () -> Unit,
     onSelectLayer: (Long) -> Unit,
     onAddLayer: () -> Unit,
     onDeleteLayer: (Long) -> Unit,
@@ -11012,7 +11078,20 @@ private fun TextOnPhotoScreen(
                         nc.drawRect(cl, ct, cr, cb, frame)
                     } else {
                         if (cropRect != null) nc.translate(-cropRect[0] * bmp.width, -cropRect[1] * bmp.height)
-                        nc.drawBitmap(bmp, 0f, 0f, fPaint)
+                        // v0.19.0 Perspective: tilt the photo under the layers (text/stickers stay put).
+                        if (perspV != 0f || perspH != 0f) {
+                            nc.save()
+                            nc.concat(TextOverlayUtils.perspectiveMatrix(effW, effH, perspV, perspH))
+                            nc.drawBitmap(bmp, 0f, 0f, fPaint)
+                            nc.restore()
+                        } else {
+                            nc.drawBitmap(bmp, 0f, 0f, fPaint)
+                        }
+                        // v0.19.0 Frame: over the photo edges, under the layers.
+                        val pvStyle = TextOverlayUtils.FrameStyle.fromId(frameStyle)
+                        if (pvStyle != TextOverlayUtils.FrameStyle.NONE) {
+                            TextOverlayUtils.drawFrame(nc, effW, effH, pvStyle, frameWidth * minOf(effW, effH) / 400f, frameColor)
+                        }
                         TextOverlayUtils.drawAll(nc, layers, effW, effH, selectedId, selectionFrame = true, imageLayers = imageLayers, selectedImageId = selectedImageId)
                     }
                     nc.restore()
@@ -11754,6 +11833,54 @@ private fun TextOnPhotoScreen(
                         ) { Text(if (saved) "Saved ✓ - see your gallery" else "Save to Gallery", fontWeight = FontWeight.Bold) }
                     }
                     }
+                    "frame" -> {
+                        Text("Frame", color = DeepNavy, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                        Text("Tap a style - the photo updates live. Text and stickers stay on top.", color = Slate, fontSize = 11.sp)
+                        Spacer(Modifier.height(8.dp))
+                        Row(Modifier.horizontalScroll(rememberScrollState())) {
+                            TextOverlayUtils.FrameStyle.values().forEach { st ->
+                                FrameThumb(st, if (st.usesColor) frameColor else 0xFFFFFFFF.toInt(), frameStyle == st.id) { onFrameStyle(st.id) }
+                            }
+                        }
+                        val curStyle = TextOverlayUtils.FrameStyle.fromId(frameStyle)
+                        if (curStyle.usesColor) {
+                            Spacer(Modifier.height(6.dp))
+                            Text("Frame colour", color = Slate, fontSize = 11.sp)
+                            Spacer(Modifier.height(4.dp))
+                            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                listOf(0xFFFFFFFF, 0xFF111111, 0xFF42BFEF, 0xFFF95F6A, 0xFFFF8A32, 0xFFFFCA28, 0xFF3ECF8E, 0xFF3D5AFE, 0xFF9B5DE5, 0xFF8D6E63, 0xFFD4AF37, 0xFFC0C0C0).forEach { cv ->
+                                    val c = cv.toInt()
+                                    Box(
+                                        Modifier.size(30.dp).clip(CircleShape).background(Color(c))
+                                            .border(if (frameColor == c) 3.dp else 1.dp, if (frameColor == c) SkyBlue else BorderGrey, CircleShape)
+                                            .clickable { onFrameColor(c) }
+                                    )
+                                }
+                            }
+                        }
+                        if (curStyle != TextOverlayUtils.FrameStyle.NONE) {
+                            Spacer(Modifier.height(6.dp))
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text("Thickness", color = Slate, fontSize = 12.sp)
+                                Slider(
+                                    value = frameWidth,
+                                    onValueChange = { onFrameWidth(it) },
+                                    valueRange = 2f..20f,
+                                    modifier = Modifier.weight(1f).padding(horizontal = 8.dp)
+                                )
+                                Text(frameWidth.toInt().toString(), color = DeepNavy, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            }
+                        }
+                    }
+                    "perspective" -> {
+                        Text("Perspective", color = DeepNavy, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                        Text("Tilt the photo - flatten a tilted shot or add a 3D look. Text and stickers stay put. Tap a value to snap it back to the centre.", color = Slate, fontSize = 11.sp)
+                        Spacer(Modifier.height(4.dp))
+                        AdjustSlider("Vertical", perspV, {}, { onPerspV(it) }, {})
+                        AdjustSlider("Horizontal", perspH, {}, { onPerspH(it) }, {})
+                        Spacer(Modifier.height(4.dp))
+                        OutlinedButton(onClick = onResetPerspective, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(10.dp)) { Text("Reset perspective", color = DeepNavy) }
+                    }
                     else -> {
                         Text("Tap a layer on the photo to style it - its options open here.", color = Slate, fontSize = 11.sp)
                         Spacer(Modifier.height(8.dp))
@@ -11767,7 +11894,9 @@ private fun TextOnPhotoScreen(
                             Triple("Flip & Clone", Icons.Default.Flip, { sheetLevel = "flipclone" }),
                             Triple("Effects", Icons.Default.AutoAwesome, { sheetLevel = "effects" }),
                             Triple("Stickers", Icons.Default.EmojiEmotions, { sheetLevel = "stickers" }),
-                            Triple("Meme", Icons.Default.Title, { sheetLevel = "meme" })
+                            Triple("Meme", Icons.Default.Title, { sheetLevel = "meme" }),
+                            Triple("Frame", Icons.Default.CropSquare, { sheetLevel = "frame" }),
+                            Triple("Perspective", Icons.Default.Transform, { sheetLevel = "perspective" })
                         ).chunked(3).forEach { rowItems ->
                             Row(Modifier.fillMaxWidth().padding(bottom = 8.dp)) {
                                 rowItems.forEach { (label, icon, action) ->
