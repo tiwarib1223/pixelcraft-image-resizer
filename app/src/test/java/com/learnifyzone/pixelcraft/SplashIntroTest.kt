@@ -43,12 +43,12 @@ class SplashIntroTest {
         val afd = ctx.resources.openRawResourceFd(R.raw.opening)
         assertTrue("opening.mp4 must be bundled as a raw resource", afd != null && afd.length > 100_000)
         afd!!.close()
-        // Duration/audio were verified with ffprobe before bundling (5.0s, h264+aac, 478x850); the native
+        // Duration/audio were verified with ffprobe before bundling (5.04s, h264+aac, 478x850, first frame = starry wave); the native
         // MediaMetadataRetriever is too heavy for this host (OOM-killed the test JVM, exit 137).
         val mp4 = ctx.resources.openRawResource(R.raw.opening).readBytes()
         val head = String(mp4.copyOfRange(4, 12))
         assertTrue("raw/opening must be an MP4 (ftyp box), got $head", head.startsWith("ftyp"))
-        assertTrue("his 5s clip is ~918KB", mp4.size in 800_000..1_100_000)
+        assertTrue("his re-encoded clip (logo first frame dropped, v0.20.3) is ~639KB", mp4.size in 550_000..800_000)
     }
 
     @Test
@@ -64,7 +64,7 @@ class SplashIntroTest {
                 val v = act.window.decorView
                 val bmp = android.graphics.Bitmap.createBitmap(v.width, v.height, android.graphics.Bitmap.Config.ARGB_8888)
                 v.draw(android.graphics.Canvas(bmp))
-                bmp.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, File(dir, "v0201_phone_opening_gate.png").outputStream())
+                bmp.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, File(dir, "v0203_phone_opening_gate.png").outputStream())
             }
             pump()
             // any tap on the opening skips straight to the app (the promise to him): invoke the surface's OnClick.

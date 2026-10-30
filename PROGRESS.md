@@ -1,5 +1,22 @@
 # PixelCraft Image Resizer — Progress
 
+## v0.20.3 (versionCode 70): seamless opening - the video's own first frame behind everything
+His test of v0.20.2 (screen recording): the dim icon was gone, but the pre-video screen was a plain BLACK frame
+and the video popping in was still a visible jump - "Still not properly fixed".
+- Fix: extracted frame 0 of his untouched opening.mp4 (res/drawable-nodpi/opening_first_frame.png, 478x850) and
+  made it (a) the activity window background (new drawable/opening_bg.xml on Theme.PixelCraft) so the pre-Compose
+  window already shows the video's first scene, and (b) a fullscreen overlay on the video surface that hides the
+  exact moment the player renders its first real frame (MediaPlayer.MEDIA_INFO_VIDEO_RENDERING_START). The video
+  now flows out of its own still first frame with no black gap and no pop. The video asset itself is untouched.
+- Splash gate screenshot refreshed (v0203_phone_opening_gate).
+- SECOND PASS, same evening (his "No brother still logo seen in starting" / "Remove frozen picture"): the ROOT CAUSE
+  was inside his own asset - its actual frame 0 is the finished bright end-card logo (the player holds it while
+  buffering, so a frozen logo showed first). Re-encoded the video WITHOUT that one frame (ffmpeg drop frame 0,
+  ~33ms, audio stream copied untouched and in sync, h264+aac, 478x850, total 5.04s, CRF 18). Verified by extracting
+  frames from the re-encoded file: frame 0 is now the dark starry wave, no logo. The window/overlay first-frame
+  image was regenerated from the re-encoded video, so the app opens on exactly the video's new first frame -
+  no frozen logo, no black frame, no pop.
+
 ## v0.20.2 (versionCode 69): Settings = mode + clear recent only, drawer becomes the info page, clean pre-video splash
 His two requests after testing v0.20.1 on his phone (evening 2026-10-30, his messages + a 9s screen recording):
 - Request 1 ("Setting page only mode and clear recently edited", "Rest of all move next side info page"):

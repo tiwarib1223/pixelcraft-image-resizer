@@ -2,6 +2,8 @@
 <resources>
     <style name="Theme.PixelCraft" parent="android:style/Theme.Material.Light.NoActionBar">
         <item name="android:fontFamily">sans</item>
+        <!-- v0.20.3: the pre-Compose window already shows the opening video's first frame - no black frame. -->
+        <item name="android:windowBackground">@drawable/opening_bg</item>
         <item name="android:statusBarColor">#FFFFFF</item>
         <item name="android:navigationBarColor">#FFFFFF</item>
         <item name="android:windowLightStatusBar">true</item>

@@ -176,7 +176,7 @@ class PresetsSettingsTest {
             waitForText("Share")
             waitForText("Terms & Conditions")
             waitForText("Privacy Policy")
-            waitForText("0.20.2")   // version footer in the drawer
+            waitForText("0.20.3")   // version footer in the drawer
             shot(sc, "v0202_phone_drawer")
             // drawer Terms row -> Terms doc page (renders on the Settings tab, back-safe since v0.20.1)
             clickText("Terms & Conditions")

@@ -272,28 +272,50 @@ private fun PixelCraftApp() {
     }
 }
 
-/** v0.20.1: his real 5-second opening video (res/raw/opening.mp4, his own asset - "keep 5 seconds video in opening").
- *  Fullscreen on the video's starry navy, letterboxed; plays once per cold start; tap anywhere or press back to skip;
- *  any playback error goes straight to the app. Replaces the static intro of v0.20.0. */
+/** v0.20.3 (his "still not properly fixed" + screen recording): the flat navy behind the video read as a black
+ *  frame and the video popping in was a visible jump. Now the app opens on the video's own FIRST FRAME
+ *  (res/drawable-nodpi/opening_first_frame.png, extracted from his untouched asset) - it is the window background
+ *  AND an overlay on the video surface that hides the exact moment the player renders its first real frame
+ *  (MEDIA_INFO_VIDEO_RENDERING_START), so playback flows out of the still image with zero visible jump.
+ *  Plays once per cold start; tap anywhere or press back to skip; any playback error goes straight to the app. */
 @Composable
 internal fun OpeningVideoScreen(onFinished: () -> Unit) {
+    var rendering by remember { mutableStateOf(false) }
     Box(
         Modifier
             .fillMaxSize()
             .background(Color(0xFF030B1E))
             .clickable { onFinished() }
     ) {
+        Image(
+            painter = painterResource(R.drawable.opening_first_frame),
+            contentDescription = null,
+            contentScale = ContentScale.Crop,
+            modifier = Modifier.fillMaxSize()
+        )
         AndroidView(
             factory = { ctx ->
                 android.widget.VideoView(ctx).apply {
                     setVideoURI(Uri.parse("android.resource://" + ctx.packageName + "/" + R.raw.opening))
                     setOnPreparedListener { start() }
+                    setOnInfoListener { _, what, _ ->
+                        if (what == android.media.MediaPlayer.MEDIA_INFO_VIDEO_RENDERING_START) rendering = true
+                        false
+                    }
                     setOnCompletionListener { onFinished() }
                     setOnErrorListener { _, _, _ -> onFinished(); true }
                 }
             },
             modifier = Modifier.fillMaxSize()
         )
+        if (!rendering) {
+            Image(
+                painter = painterResource(R.drawable.opening_first_frame),
+                contentDescription = "A2Z Image Craft opening",
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize()
+            )
+        }
         Text(
             "Tap to skip",
             color = Color(0x99FFFFFF),
