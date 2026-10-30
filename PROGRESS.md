@@ -1,5 +1,36 @@
 # PixelCraft Image Resizer - Progress
 
+## v1.0.5 (versionCode 78): tool-screens polish spec part 3 (his PDF, sections 8-12) + X website cards (his item 13)
+8. Online Shop Sizes: headline "Popular shops. The right product size."; the grey-box note
+   is his exact "Sizes follow each shop's official guidance at the time of checking. Shops can
+   change them anytime."; the Other Shop line is "Recommended sizes for these shops too."; every
+   size card is labelled "Official size" (exact number on the shop's own help page) or
+   "Recommended size" (audited against 10 shops' official pages Oct 31, 2026 - table in
+   docs/shop-sizes.md); sub-line honesty fix "the official size" -> "the right size". The Social
+   Media Sizes grey box already carried his platform sentence from v1.0.4.
+9. Text on Photo: the "Position" button is now "Move photo" (it switches to a mode where you
+   drag the photo to position it and zoom with the slider or pinch; Done keeps it); tighter
+   line spacing on the gesture hint; the top bar shows only the photo size, no file name (his
+   optional item - done). The Perspective tile already had the transform-style icon
+   (Icons.Default.Transform), verified visually - it is not the crop icon.
+10. Collage Maker: heading "Combine your photos"; the repeated "Add your photos" title inside
+    the box removed (step 2 heading and the orange button stay); tighter subtitle lines.
+11. Photo Adjustments: the photo preview is now FIXED at the top while sliders scroll
+    underneath; sliders are custom-drawn - no fill at 0, sky-blue fill from the centre to the
+    thumb when moved, light grey track (the old Material slider always filled from the left
+    edge); "Original: 800 x 600" now uses "×".
+12. Print Size & DPI: REAL BUG fixed - Effective PPI ignored the Fit / Fill & Crop choice.
+    Fit now reports the whole-image value (2000x2000 on A4 portrait = 242 PPI, his example),
+    Fill & Crop the covered-page value (171), Stretch the worst axis. The low-resolution
+    warning uses the same value. New unit test effectivePpiRespectsFitVsFillCrop. Unit chips
+    no longer split words (scrollable row, natural chip widths); the Fill & Crop description
+    wraps inside the chip instead of running off-screen. "Set Up Print Size",
+    "Use N selected pages" and "Continue to Print Preview" are orange.
+13. X Website Card Ad replaced: "Website Card · wide" 1200 × 628 (1.91:1) and
+    "Website Card · square" 1200 × 1200 (1:1), both Official size (business.x.com ad
+    specifications, his citation).
+
+
 ## v1.0.4 (versionCode 77): tool-screens polish spec (his PDF, 7 sections)
 1. Format Converter: Home card and Help entry now list the real output formats
    ("JPG, PNG, WebP, PDF & more" on Home; full JPG/PNG/WebP/PDF/BMP/TIFF in Help and

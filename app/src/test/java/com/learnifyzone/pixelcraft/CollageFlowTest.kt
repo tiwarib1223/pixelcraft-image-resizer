@@ -83,7 +83,7 @@ class CollageFlowTest {
             composeRule.onNodeWithText("Reset").performClick()
             pump(); pump()
             // Full wipe: collage home with the photo picker and no photos loaded.
-            waitForText("Photo Collage Maker")
+            waitForText("Combine your photos")
             waitForText("Add your photos (0/20)")
             shot(sc, "v0183_phone_collage_reset")
             sc.close()
@@ -112,7 +112,7 @@ class CollageFlowTest {
     fun collageHomeShowsLayoutCardsAndStart() {
         // Home: title, 4 layout family cards, photo strip with count, Start Creating.
         launchRaw("pixelcraft.test.collage" to "1", "pixelcraft.test.collagelevel" to "home").use { sc ->
-            waitForText("Photo Collage Maker")
+            waitForText("Combine your photos")
             waitForText("Choose a layout style")
             waitForText("Grid")
             waitForText("Mixed")

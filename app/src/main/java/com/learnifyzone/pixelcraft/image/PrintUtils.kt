@@ -6,6 +6,7 @@ import android.graphics.Color
 import android.graphics.Matrix
 import android.graphics.Paint
 import android.graphics.RectF
+import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
 
@@ -82,9 +83,18 @@ object PrintUtils {
      * Effective PPI if the image were printed at this size: pixels per inch on each
      * axis; the smaller axis limits print quality, so that is what we report.
      */
-    fun effectivePpi(imgW: Int, imgH: Int, wIn: Double, hIn: Double): Double {
+    fun effectivePpi(imgW: Int, imgH: Int, wIn: Double, hIn: Double, fitMode: String = "Fill"): Double {
         if (wIn <= 0 || hIn <= 0) return 0.0
-        return min(imgW / wIn, imgH / hIn)
+        val pw = imgW / wIn
+        val ph = imgH / hIn
+        // v1.0.5 (his bug report): Fit prints the WHOLE image, so the wider-fit axis sets the
+        // scale (2000x2000 on A4 portrait = 2000 / 8.27 = 242 PPI); Fill & Crop scales to cover
+        // the page, so the smaller axis is lost to cropping (171 PPI); Stretch distorts, report
+        // the worst axis. The old code always returned the Fill & Crop value.
+        return when (fitMode) {
+            "Fit" -> max(pw, ph)
+            else -> min(pw, ph)
+        }
     }
 
     /**

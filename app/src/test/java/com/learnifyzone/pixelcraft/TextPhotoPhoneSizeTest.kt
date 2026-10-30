@@ -96,7 +96,7 @@ class TextPhotoPhoneSizeTest {
     fun phoneWindowCleanOpen() {
         launch().use { sc ->
             waitForText("Add Image")
-            waitForText("Position")
+            waitForText("Move photo")
             shot(sc, "v0165_phone_clean")
             sc.close()
         }

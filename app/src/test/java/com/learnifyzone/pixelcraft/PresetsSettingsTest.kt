@@ -215,7 +215,7 @@ class PresetsSettingsTest {
             waitForText("PHOTO TOOLKIT")
             composeRule.onNodeWithContentDescription("Menu").performClick()
             clickText("What's new")
-            waitForText("What's new in version 1.0.4")
+            waitForText("What's new in version 1.0.5")
             shot(sc, "v100_phone_whatsnew")
             composeRule.onNodeWithContentDescription("Back").performClick()
             waitForText("PHOTO TOOLKIT")

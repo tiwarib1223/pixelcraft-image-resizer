@@ -139,7 +139,7 @@ class MainFlowUiTest {
             .putExtra("pixelcraft.test.tool", "shop")
         ActivityScenario.launch<MainActivity>(intent).use {
             waitForText("Online Shop Sizes")
-            waitForText("Every shop. Every product image.")
+            waitForText("Popular shops. The right product size.")
             waitForText("Select Your Image")
             waitForText("Etsy")
             waitForText("Gumroad")

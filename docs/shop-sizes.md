@@ -78,3 +78,32 @@ Encoded in `app/src/main/java/com/learnifyzone/pixelcraft/image/ShopSizes.kt`.
 
 Every platform also offers Product Collage (2-4 photos combined into one
 canvas at the platform's product image size) and Custom Size (16-12000 px).
+
+## In-app labels (v1.0.5)
+
+Each shop size card shows "Official size" only when the shop's own help/spec
+page gives that exact number; otherwise "Recommended size". Audited October 31, 2026.
+
+Official (exact number on the shop's own page):
+- Etsy: listing/gallery 2000 (min 635 first photo), big banner 1600x400, mini banner 1600x213, carousel 1200x300, shop icon 500x500, receipt banner 760x100 - help.etsy.com/hc/en-us/articles/115015663347
+- Amazon: Store hero 3000x600, brand logo 400x400 - advertising.amazon.com/resources/ad-specs/stores
+- eBay: listing/gallery 1600 longest side (min 500) - ebay help; store billboard 1200x270, store logo 300x300 - ebay.com.au Seller Centre
+- Gumroad: cover 1280x720, thumbnail 600x600 - gumroad.com/help/article/60
+- WooCommerce: minimum 800x800 - woocommerce.com/document/adding-product-images-and-galleries
+- Wix Stores: 3000x3000 minimum resolution - support.wix.com (Wix Stores: Adding Product Images, GIFs, and Videos)
+- Ko-fi: previews 600x600 / 600x300, cover 1200x400 - help.ko-fi.com
+- Creative Market: screenshot 1820x1214 (min 910x607) - support.creativemarket.com
+
+Recommended (the shop publishes no exact number for this use, or our pick):
+- Shopify: all entries (help page gives only max 25 MP / 20 MB; 2048 is the widely used recommendation from Shopify's blog, not a help page)
+- Amazon: product/gallery 2000 (official pages give ranges 500-10000 and 1000+ for zoom)
+- Payhip: all entries (help page explicitly recommends no specific dimensions - aspect ratio only)
+- Squarespace: all entries (official guidance is a 1500-2500 px range, not an exact size)
+- Ko-fi: profile picture 500, share preview 1000x500 (Ko-fi's help gives 600x300 2:1 for social previews - flagged for his decision)
+- Creative Market: graphics preview 1920x1080
+- Every shop's "Product Collage" entry (our own collage-tool output size, matched to the listing size)
+- eBay: (none)
+- Etsy: Product Collage only
+- Gumroad: Product Collage only
+- WooCommerce: product/gallery 1200 (official pages recommend 800+ only)
+- Wix: Product Collage only

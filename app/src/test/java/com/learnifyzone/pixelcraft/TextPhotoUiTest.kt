@@ -116,7 +116,7 @@ class TextPhotoUiTest {
                 composeRule.onAllNodesWithText("Text Styling", substring = true).fetchSemanticsNodes().isEmpty()
             )
             // v0.16.3: Position (zoom+crop the main photo) and Reset must be visible WITHOUT picking a size first
-            waitForText("Position")
+            waitForText("Move photo")
             waitForText("Reset")
             shot(sc, "v0164_clean_open")
             sc.close()

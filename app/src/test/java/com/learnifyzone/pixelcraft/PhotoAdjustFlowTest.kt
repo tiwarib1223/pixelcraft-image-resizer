@@ -75,7 +75,7 @@ class PhotoAdjustFlowTest {
             waitForText("Reset")
             waitForText("Adjust")
             waitForText("Filters")
-            waitForText("Original: 800 x 600")
+            waitForText("Original: 800 × 600")
             waitForText("Brightness")
             waitForText("Exposure")
             waitForText("Contrast")
@@ -167,9 +167,11 @@ class PhotoAdjustFlowTest {
             val a = android.graphics.BitmapFactory.decodeFile(File(dir, "v0184_phone_adjust_warm.png").absolutePath)
             val b = android.graphics.BitmapFactory.decodeFile(File(dir, "v0184_phone_adjust_compare_original.png").absolutePath)
             assert(a != null && b != null && a.width == b.width && a.height == b.height) { "screenshots unreadable" }
+            // Sample only the preview band (the fixed 260.dp photo area, about y=90..340 in the
+            // 360x640 shot): the rest of the screen is unchanged chrome and dilutes the mean.
             var diff = 0L; var n = 0
-            var y = 0
-            while (y < a.height) {
+            var y = 90
+            while (y < minOf(a.height, 340)) {
                 var x = 0
                 while (x < a.width) {
                     val pa = a.getPixel(x, y); val pb = b.getPixel(x, y)

@@ -6,6 +6,8 @@ import androidx.compose.ui.test.junit4.createEmptyComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollToNode
+import androidx.compose.ui.test.performScrollTo
 import androidx.test.core.app.ActivityScenario
 import androidx.test.core.app.ApplicationProvider
 import org.junit.Rule
@@ -154,6 +156,31 @@ class AuditScreensTest {
             waitForText("Shop", timeoutMs = 120_000)
             pump(); pump()
             shot(sc, "audit_shop_home")
+            sc.close()
+        }
+    }
+
+    @Test
+    fun audit06bShopPlatformLabels() {
+        launch("pixelcraft.test.tool" to "shop").use { sc ->
+            waitForText("Etsy", timeoutMs = 120_000)
+            composeRule.onNodeWithText("Etsy").performClick()
+            waitForText("Official size", timeoutMs = 120_000)
+            pump(); pump()
+            shot(sc, "audit_shop_labels")
+            sc.close()
+        }
+    }
+
+    @Test
+    fun audit06cXWebsiteCards() {
+        launch("pixelcraft.test.tool" to "social").use { sc ->
+            waitForText("Instagram", timeoutMs = 120_000)
+            composeRule.onNodeWithText("X", substring = true).performClick()
+            waitForText("Website Card · wide", timeoutMs = 120_000)
+            composeRule.onNodeWithText("Website Card · wide").performScrollTo()
+            pump(); pump()
+            shot(sc, "audit_x_cards")
             sc.close()
         }
     }

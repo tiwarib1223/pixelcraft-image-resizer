@@ -90,7 +90,8 @@ object SocialSizes {
             SocialCategory("Cover Photo / Banner", "Profile header", listOf(
                 SocialSize("Header Photo", "1500 × 500 px (3:1)", 1500, 500))),
             SocialCategory("Ad Creative", "Promotional image sizes", listOf(
-                SocialSize("Website Card Ad", "1200 × 675 px (16:9)", 1200, 675, official = false)))
+                SocialSize("Website Card · wide", "1200 × 628 px (1.91:1)", 1200, 628, "business.x.com ad specifications"),
+                    SocialSize("Website Card · square", "1200 × 1200 px (1:1)", 1200, 1200, "business.x.com ad specifications")))
         )),
         SocialPlatform("WhatsApp", listOf(
             SocialCategory("Profile Picture", "Avatar and account photo", listOf(

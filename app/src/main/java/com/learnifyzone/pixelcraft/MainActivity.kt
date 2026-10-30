@@ -32,6 +32,7 @@ import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.background
@@ -59,6 +60,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
@@ -178,6 +180,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.setProgress
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -5564,8 +5568,8 @@ private fun CollageChip(label: String, active: Boolean, onClick: () -> Unit) {
 private fun CollageHomeScreen(modifier: Modifier, state: CollageUiState, hasProject: Boolean, onPick: () -> Unit, onAddMore: () -> Unit, onSaveProject: () -> Unit, onOpenProject: () -> Unit) {
     Column(modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp)) {
         Spacer(Modifier.height(12.dp))
-        Text("Photo Collage Maker", color = DeepNavy, fontSize = 20.sp, fontWeight = FontWeight.Bold)
-        Text("Combine 2 to 20 photos into one collage - no watermark, fully on your phone.", color = Slate, fontSize = 13.sp)
+        Text("Combine your photos", color = DeepNavy, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+        Text("Combine 2 to 20 photos into one collage - no watermark, fully on your phone.", color = Slate, fontSize = 13.sp, lineHeight = 17.sp)
         Spacer(Modifier.height(14.dp))
 
         Text("1. Choose a layout style", color = DeepNavy, fontSize = 15.sp, fontWeight = FontWeight.Bold)
@@ -5600,9 +5604,7 @@ private fun CollageHomeScreen(modifier: Modifier, state: CollageUiState, hasProj
         if (state.photos.isEmpty()) {
             Card(shape = RoundedCornerShape(14.dp), colors = CardDefaults.cardColors(containerColor = Color.White), border = androidx.compose.foundation.BorderStroke(1.dp, BorderGrey)) {
                 Column(Modifier.fillMaxWidth().padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text("Add your photos", color = DeepNavy, fontSize = 15.sp, fontWeight = FontWeight.Bold)
-                    Spacer(Modifier.height(4.dp))
-                    Text("JPG, PNG or WebP. Pick 2 to 20 photos.", color = Slate, fontSize = 12.sp)
+                    Text("JPG, PNG or WebP. Pick 2 to 20 photos.", color = Slate, fontSize = 12.sp, lineHeight = 16.sp)
                     Spacer(Modifier.height(10.dp))
                     Button(onClick = onPick, modifier = Modifier.fillMaxWidth().height(50.dp), colors = ButtonDefaults.buttonColors(containerColor = Orange, contentColor = Color.White), shape = RoundedCornerShape(14.dp)) {
                         Icon(Icons.Default.Image, contentDescription = null)
@@ -6088,12 +6090,41 @@ private fun AdjustSlider(
             Spacer(Modifier.width(8.dp))
             Text("+100", color = Slate, fontSize = 10.sp)
         }
-        Slider(
-            value = value,
-            onValueChange = { onBegin(); onChange(it) },
-            onValueChangeFinished = { onEnd() },
-            valueRange = -100f..100f
-        )
+        // v1.0.5 (his spec): no fill at 0; sky-blue fill from the CENTER to the thumb when moved;
+        // track is light grey. A plain Slider always fills from the left edge, so this is drawn.
+        BoxWithConstraints(Modifier.fillMaxWidth().height(30.dp)) {
+            val wPx = constraints.maxWidth.toFloat()
+            fun xToValue(x: Float): Float = (((x / wPx) * 200f) - 100f).coerceIn(-100f, 100f)
+            Canvas(
+                Modifier.fillMaxSize()
+                    .semantics { setProgress { v -> onBegin(); onChange(v.coerceIn(-100f, 100f)); onEnd(); true } }
+                    .pointerInput(wPx) {
+                        detectTapGestures(onPress = { off ->
+                            onBegin(); onChange(xToValue(off.x))
+                            if (tryAwaitRelease()) onEnd()
+                        })
+                    }
+                    .pointerInput(wPx) {
+                        detectHorizontalDragGestures(
+                            onDragStart = { off -> onBegin(); onChange(xToValue(off.x)) },
+                            onDragEnd = { onEnd() },
+                            onHorizontalDrag = { change, _ -> change.consume(); onChange(xToValue(change.position.x)) }
+                        )
+                    }
+            ) {
+                val cy = size.height / 2f
+                val cx = size.width / 2f
+                val thumbX = ((value + 100f) / 200f) * size.width
+                val trackH = 4.dp.toPx()
+                drawRoundRect(color = Color(0xFFE3E6EA), topLeft = androidx.compose.ui.geometry.Offset(0f, cy - trackH / 2f), size = androidx.compose.ui.geometry.Size(size.width, trackH), cornerRadius = androidx.compose.ui.geometry.CornerRadius(trackH / 2f))
+                if (value != 0f) {
+                    val left = minOf(cx, thumbX)
+                    drawRoundRect(color = SkyBlue, topLeft = androidx.compose.ui.geometry.Offset(left, cy - trackH / 2f), size = androidx.compose.ui.geometry.Size(kotlin.math.abs(thumbX - cx), trackH), cornerRadius = androidx.compose.ui.geometry.CornerRadius(trackH / 2f))
+                }
+                drawCircle(color = Color.White, radius = 8.dp.toPx(), center = androidx.compose.ui.geometry.Offset(thumbX, cy))
+                drawCircle(color = if (value == 0f) Color(0xFFB9BEC6) else SkyBlue, radius = 8.dp.toPx(), center = androidx.compose.ui.geometry.Offset(thumbX, cy), style = androidx.compose.ui.graphics.drawscope.Stroke(width = 2.dp.toPx()))
+            }
+        }
     }
 }
 
@@ -6106,7 +6137,8 @@ private fun PhotoAdjustScreen(
     onSave: () -> Unit
 ) {
     val base = state.base
-    Column(modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp)) {
+    // v1.0.5 (his spec): the preview stays FIXED at the top; only the settings scroll.
+    Column(modifier.fillMaxSize().padding(horizontal = 16.dp)) {
         Spacer(Modifier.height(12.dp))
         if (base == null) {
             Text("Adjust your photo", color = DeepNavy, fontSize = 20.sp, fontWeight = FontWeight.Bold)
@@ -6123,6 +6155,7 @@ private fun PhotoAdjustScreen(
 
         // Slider drags push ONE undo point per drag (captured at the first change).
         var dragSnap by remember { mutableStateOf<Pair<PhotoAdjust.Params, String>?>(null) }
+
         fun beginDrag() { if (dragSnap == null) dragSnap = state.snapshot() }
         fun endDrag() { dragSnap?.let { state.undoStack.add(it); if (state.undoStack.size > 40) state.undoStack.removeAt(0); state.redoStack.clear() }; dragSnap = null }
 
@@ -6135,21 +6168,21 @@ private fun PhotoAdjustScreen(
             val sc = 720f / maxOf(adjusted.width, adjusted.height).toFloat()
             if (sc < 1f) Bitmap.createScaledBitmap(adjusted, (adjusted.width * sc).roundToInt(), (adjusted.height * sc).roundToInt(), true) else adjusted
         }
-        Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+        Box(Modifier.fillMaxWidth().height(260.dp), contentAlignment = Alignment.Center) {
             Image(
                 bitmap = preview.asImageBitmap(),
                 contentDescription = "Photo preview",
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .aspectRatio(base.width.toFloat() / base.height.toFloat())
+                    .fillMaxSize()
                     .clip(RoundedCornerShape(8.dp)),
                 contentScale = ContentScale.Fit
             )
         }
         Spacer(Modifier.height(4.dp))
-        Text("Original: ${state.origW} x ${state.origH}" + if (state.compare) " - showing the original" else "", color = Slate, fontSize = 12.sp)
+        Text("Original: ${state.origW} × ${state.origH}" + if (state.compare) " - showing the original" else "", color = Slate, fontSize = 12.sp)
 
         Spacer(Modifier.height(8.dp))
+        Column(Modifier.fillMaxWidth().weight(1f).verticalScroll(rememberScrollState())) {
         Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
             OutlinedButton(onClick = { state.undo() }, enabled = state.undoStack.isNotEmpty(), modifier = Modifier.weight(1f), shape = RoundedCornerShape(10.dp), contentPadding = PaddingValues(horizontal = 2.dp)) { Text("Undo", color = DeepNavy, fontSize = 12.sp, maxLines = 1, softWrap = false) }
             OutlinedButton(onClick = { state.redo() }, enabled = state.redoStack.isNotEmpty(), modifier = Modifier.weight(1f), shape = RoundedCornerShape(10.dp), contentPadding = PaddingValues(horizontal = 2.dp)) { Text("Redo", color = DeepNavy, fontSize = 12.sp, maxLines = 1, softWrap = false) }
@@ -6241,6 +6274,7 @@ private fun PhotoAdjustScreen(
         Spacer(Modifier.height(8.dp))
         OutlinedButton(onClick = onPick, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(14.dp)) { Text("Choose a different photo", color = DeepNavy) }
         Spacer(Modifier.height(16.dp))
+        }
     }
 }
 
@@ -9793,9 +9827,9 @@ private fun ShopHomeScreen(
 ) {
     Column(modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).padding(horizontal = 16.dp).verticalScroll(rememberScrollState())) {
         Spacer(Modifier.height(10.dp))
-        Text("Every shop. Every product image.", fontSize = 22.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onBackground)
+        Text("Popular shops. The right product size.", fontSize = 22.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onBackground)
         Spacer(Modifier.height(4.dp))
-        Text("Pick your shop, choose the official size, and export your product photo ready to upload.", fontSize = 14.sp, color = Slate)
+        Text("Pick your shop, choose the right size, and export your product photo ready to upload.", fontSize = 14.sp, color = Slate)
         Spacer(Modifier.height(14.dp))
         Card(colors = CardDefaults.cardColors(containerColor = PaleBlue), shape = RoundedCornerShape(16.dp)) {
             Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -9843,8 +9877,8 @@ private fun ShopHomeScreen(
         Spacer(Modifier.height(16.dp))
         Card(colors = CardDefaults.cardColors(containerColor = SoftGrey), shape = RoundedCornerShape(14.dp)) {
             Text(
-                "All sizes follow the official requirements from each marketplace. The full sourced table is in the app documentation.",
-                modifier = Modifier.padding(14.dp), fontSize = 13.sp, color = Slate
+                "Sizes follow each shop's official guidance at the time of checking. Shops can change them anytime.",
+                modifier = Modifier.padding(14.dp), fontSize = 13.sp, color = Slate, lineHeight = 17.sp
             )
         }
         Spacer(Modifier.height(24.dp))
@@ -9860,7 +9894,7 @@ private fun ShopOtherScreen(
         Spacer(Modifier.height(10.dp))
         Text("More marketplaces", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onBackground)
         Spacer(Modifier.height(4.dp))
-        Text("Official sizes for these shops too.", fontSize = 14.sp, color = Slate)
+        Text("Recommended sizes for these shops too.", fontSize = 14.sp, color = Slate)
         Spacer(Modifier.height(14.dp))
         ShopSizes.platforms.map { it.name }.filter { it !in ShopSizes.mainShops }.forEach { name ->
             Card(
@@ -9913,6 +9947,9 @@ private fun ShopPlatformScreen(
                         Column(Modifier.fillMaxWidth().padding(14.dp)) {
                             Text(size.label, fontWeight = FontWeight.SemiBold, color = DeepNavy, fontSize = 15.sp)
                             Text(size.sub, fontSize = 13.sp, color = Slate, lineHeight = 17.sp)
+                            // v1.0.5 (his rule): "Official size" only when the shop's own help page gives
+                            // that exact number; otherwise honestly "Recommended size".
+                            Text(if (size.official) "Official size" else "Recommended size", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = if (size.official) SuccessGreen else Slate)
                             if (size.note.isNotEmpty()) Text(size.note, fontSize = 12.sp, color = Slate, lineHeight = 16.sp)
                         }
                     }
@@ -10970,7 +11007,7 @@ private fun PrintHomeScreen(
                         Spacer(Modifier.height(6.dp))
                         if (pdfSelected.isNotEmpty()) {
                             Spacer(Modifier.height(8.dp))
-                            Button(onClick = { onPdfPages(pdfSelected.sorted()) }, modifier = Modifier.fillMaxWidth().height(48.dp), colors = ButtonDefaults.buttonColors(containerColor = SkyBlue), shape = RoundedCornerShape(12.dp)) {
+                            Button(onClick = { onPdfPages(pdfSelected.sorted()) }, modifier = Modifier.fillMaxWidth().height(48.dp), colors = ButtonDefaults.buttonColors(containerColor = Orange), shape = RoundedCornerShape(12.dp)) {
                                 Text(if (pdfSelected.size == 1) "Use page ${pdfSelected.first() + 1}" else "Use ${pdfSelected.size} selected pages", color = Color.White, fontWeight = FontWeight.Bold)
                             }
                         }
@@ -11005,7 +11042,7 @@ private fun PrintHomeScreen(
             onClick = onContinue,
             enabled = thumb != null,
             modifier = Modifier.fillMaxWidth().height(52.dp),
-            colors = ButtonDefaults.buttonColors(containerColor = SkyBlue),
+            colors = ButtonDefaults.buttonColors(containerColor = Orange),
             shape = RoundedCornerShape(12.dp)
         ) { Text("Set Up Print Size", color = Color.White, fontWeight = FontWeight.Bold) }
         Spacer(Modifier.height(14.dp))
@@ -11029,9 +11066,9 @@ private fun PrintPresetChip(name: String, desc: String, selected: Boolean, onCli
             .border(if (selected) 2.dp else 0.dp, if (selected) SkyBlue else Color.Transparent, RoundedCornerShape(10.dp))
             .clickable { onClick() }
     ) {
-        Column(Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
+        Column(Modifier.widthIn(max = 170.dp).padding(horizontal = 12.dp, vertical = 8.dp)) {
             Text(name, fontWeight = FontWeight.Bold, color = DeepNavy, fontSize = 14.sp)
-            Text(desc, fontSize = 11.sp, color = Slate)
+            Text(desc, fontSize = 11.sp, color = Slate, lineHeight = 14.sp)
         }
     }
 }
@@ -11074,7 +11111,7 @@ private fun PrintSetupScreen(
     gridCount: Int,
     onContinue: () -> Unit
 ) {
-    val effPpi = PrintUtils.effectivePpi(imgW, imgH, wIn, hIn)
+    val effPpi = PrintUtils.effectivePpi(imgW, imgH, wIn, hIn, fitMode)
     val req = if (wIn > 0 && hIn > 0) PrintUtils.requiredPixels(wIn, hIn, ppi) else intArrayOf(0, 0)
     val quality = PrintUtils.qualityLevel(effPpi, ppi)
     val ratioMismatch = wIn > 0 && hIn > 0 && aspect > 0 && kotlin.math.abs((wIn / hIn) - aspect) / aspect > 0.02
@@ -11115,11 +11152,9 @@ private fun PrintSetupScreen(
                     )
                 }
                 Spacer(Modifier.height(8.dp))
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     listOf("in", "cm", "mm", "px").forEach { u ->
-                        Box(Modifier.weight(1f)) {
-                            PrintPresetChip(u, if (u == "in") "inches" else if (u == "cm") "centimeters" else if (u == "mm") "millimeters" else "pixels", unit == u) { onUnit(u) }
-                        }
+                        PrintPresetChip(u, if (u == "in") "inches" else if (u == "cm") "centimeters" else if (u == "mm") "millimeters" else "pixels", unit == u) { onUnit(u) }
                     }
                 }
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -11267,7 +11302,7 @@ private fun PrintSetupScreen(
             onClick = onContinue,
             enabled = wIn > 0 && hIn > 0,
             modifier = Modifier.fillMaxWidth().height(52.dp),
-            colors = ButtonDefaults.buttonColors(containerColor = SkyBlue),
+            colors = ButtonDefaults.buttonColors(containerColor = Orange),
             shape = RoundedCornerShape(12.dp)
         ) { Text("Continue to Print Preview", color = Color.White, fontWeight = FontWeight.Bold) }
         Spacer(Modifier.height(20.dp))
@@ -11664,8 +11699,8 @@ private fun TextOnPhotoScreen(
         Card(colors = CardDefaults.cardColors(containerColor = SoftGrey), shape = RoundedCornerShape(12.dp), modifier = Modifier.fillMaxWidth()) {
             Row(Modifier.padding(horizontal = 12.dp, vertical = 3.dp), verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
-                    Text(name, color = DeepNavy, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
-                    Text("${bitmap.width} × ${bitmap.height} px" + (if (sizeBytes >= 0) " · ${formatBytes(sizeBytes)}" else ""), color = Slate, fontSize = 11.sp)
+                    // v1.0.5 (his optional ask): no file name - only the size.
+                    Text("${bitmap.width} × ${bitmap.height} px" + (if (sizeBytes >= 0) " · ${formatBytes(sizeBytes)}" else ""), color = DeepNavy, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
                 }
                 OutlinedButton(onClick = onSelectPhoto, contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp), modifier = Modifier.height(34.dp)) { Text("Change", color = DeepNavy, fontSize = 13.sp) }
                 Spacer(Modifier.width(8.dp))
@@ -11835,7 +11870,7 @@ private fun TextOnPhotoScreen(
             if (pickColourMode) "Tap anywhere on the photo - that colour goes to your text."
             else if (cropAdjust) "Drag your photo to position it · use the slider or pinch to zoom · tap Done when it looks right."
             else "Drag to move · pinch to resize · twist to rotate · double-tap to edit text",
-            color = Slate, fontSize = 10.sp
+            color = Slate, fontSize = 10.sp, lineHeight = 13.sp
         )
 
         Spacer(Modifier.height(10.dp))
@@ -11890,7 +11925,7 @@ private fun TextOnPhotoScreen(
                         shape = RoundedCornerShape(10.dp),
                         contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),
                         modifier = Modifier.height(30.dp)
-                    ) { Text(if (cropAdjust) "Done" else "Position", fontSize = 12.sp, fontWeight = FontWeight.Bold) }
+                    ) { Text(if (cropAdjust) "Done" else "Move photo", fontSize = 12.sp, fontWeight = FontWeight.Bold) }
                     if (cropRect != null && !cropAdjust) {
                         TextButton(onClick = onClearCrop, contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp), modifier = Modifier.height(30.dp)) { Text("Original", fontSize = 12.sp, color = DeepNavy) }
                     }

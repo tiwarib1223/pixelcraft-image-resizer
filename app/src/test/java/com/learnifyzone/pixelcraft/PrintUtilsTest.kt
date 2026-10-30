@@ -186,4 +186,17 @@ class PrintUtilsTest {
         assertEquals(Color.WHITE, outW.getPixel(2, 2))
         assertTrue(out.getPixel(2, 2) != outW.getPixel(2, 2))
     }
+
+    @Test
+    fun effectivePpiRespectsFitVsFillCrop() {
+        // His v1.0.5 bug report: a 2000x2000 photo on A4 portrait (8.27 x 11.69 in) with Fit
+        // must show 242 PPI (2000 / 8.27), but the calculator showed 171 (the Fill & Crop value).
+        val fit = PrintUtils.effectivePpi(2000, 2000, 8.27, 11.69, "Fit")
+        val fill = PrintUtils.effectivePpi(2000, 2000, 8.27, 11.69, "Fill")
+        val stretch = PrintUtils.effectivePpi(2000, 2000, 8.27, 11.69, "Stretch")
+        assertEquals(2000.0 / 8.27, fit, 0.5)
+        assertEquals(2000.0 / 11.69, fill, 0.5)
+        assertEquals(2000.0 / 11.69, stretch, 0.5)
+        assertTrue(fit > fill)
+    }
 }
