@@ -142,6 +142,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.asImageBitmap
@@ -410,6 +412,7 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
     var textSelectedId by remember { mutableStateOf<Long?>(null) }
     val textUndo = remember { TextOverlayUtils.UndoRedo() }
     var textTick by remember { mutableStateOf(0) }   // bumped on every layer mutation so the live preview repaints
+    var textSelTick by remember { mutableStateOf(0) }   // bumped on every layer SELECT (canvas tap or Layers row) so re-tapping an already-selected layer re-opens its options panel (v0.16.10: his 'no Remove background button' report)
     var textFormat by remember { mutableStateOf("PNG") }
     var textResultBytes by remember { mutableStateOf<ByteArray?>(null) }
     var textResultDims by remember { mutableStateOf("") }
@@ -2665,18 +2668,39 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
             busy = true
             busyLabel = "Removing background…"
             try {
-                val cut = withContext(Dispatchers.IO) { BackgroundRemoval.cutOut(context, layer.bitmap) }
-                layer.bitmap = cut
-                textResultBytes = null
-                textSaved = false
-                textTick++
+                // v0.16.10 (his "not working" report): the subject engine kept his whole logo card
+                // as the "subject", so the bitmap came back unchanged and the success snackbar was
+                // the only sign anything ran. Now the result is MEASURED: if the subject engine cut
+                // (<2% transparent), a solid-colour flood remover runs (logos/icons on a plain
+                // background); if still nothing, he gets an honest message instead of fake success.
+                val totalPx = layer.bitmap.width * layer.bitmap.height
+                val outcome = withContext(Dispatchers.IO) {
+                    val cut = BackgroundRemoval.cutOut(context, layer.bitmap)
+                    var frac = BackgroundRemoval.transparentFraction(cut)
+                    var best = cut
+                    if (frac < 0.02f) {
+                        val (solid, removed) = BackgroundRemoval.removeSolidBackground(layer.bitmap)
+                        val frac2 = removed.toFloat() / totalPx
+                        if (frac2 > frac) { best = solid; frac = frac2 }
+                    }
+                    Pair(best, frac)
+                }
                 busy = false
                 busyLabel = ""
-                snackbar.showSnackbar("Background removed - drag the layer to place it.")
+                if (outcome.second >= 0.02f) {
+                    recordTextUndo()
+                    layer.bitmap = outcome.first
+                    textResultBytes = null
+                    textSaved = false
+                    textTick++
+                    snackbar.showSnackbar("Background removed - drag the layer to place it.")
+                } else {
+                    snackbar.showSnackbar("No clear background found on this image - it works best on one clear subject or a plain background.")
+                }
             } catch (e: Exception) {
                 busy = false
                 busyLabel = ""
-                snackbar.showSnackbar("Could not remove the background on this one.")
+                snackbar.showSnackbar("Could not remove the background on this one - try another image.")
             }
         }
     }
@@ -3060,6 +3084,9 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                 textTick++
             }
             act.intent.getStringExtra("pixelcraft.test.overlay")?.let { addTextImageLayer(Uri.fromFile(File(it))) }
+            // v0.16.10: simulate one tap on the already-selected layer (Robolectric cannot drive the
+            // canvas detectTapGestures reliably) - runs the same state change as onSelectImageLayer.
+            if (act.intent.getStringExtra("pixelcraft.test.seltap") == "1") { textSelTick++ }
             // v0.16.9: deterministic meme content for UI tests ("top|bottom") - Robolectric
             // semantics clicks deliver stale field text to the Apply button (documented in tests).
             act.intent.getStringExtra("pixelcraft.test.memetext")?.let { spec ->
@@ -3383,6 +3410,7 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                 sizeBytes = textPhotoBytes,
                 layers = textLayers,
                 tick = textTick,
+                selTick = textSelTick,
                 selectedId = textSelectedId,
                 canUndo = textUndo.canUndo,
                 canRedo = textUndo.canRedo,
@@ -3396,7 +3424,7 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                 onResetEdits = { resetTextEdits() },
                 filterId = textFilterId,
                 onFilter = { id -> textFilterId = id; textResultBytes = null; textSaved = false; textTick++ },
-                onSelectLayer = { textSelectedId = it; textImageSelectedId = null; textTick++ },
+                onSelectLayer = { textSelectedId = it; textImageSelectedId = null; textTick++; textSelTick++ },
                 onAddLayer = { textImageSelectedId = null; addTextLayer() },
                 onDeleteLayer = { deleteTextLayer(it) },
                 onMoveLayer = { id, dir -> moveTextLayer(id, dir) },
@@ -3404,7 +3432,7 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                 imageLayers = textImageLayers,
                 selectedImageId = textImageSelectedId,
                 onAddImageLayer = { textImagePicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
-                onSelectImageLayer = { textImageSelectedId = it; textSelectedId = null; textTick++ },
+                onSelectImageLayer = { textImageSelectedId = it; textSelectedId = null; textTick++; textSelTick++ },
                 onMutateImageLayer = { block -> mutateSelectedImageLayer(block) },
                 onTransform = { dx, dy, z, r ->
                     if (textImageSelectedId != null && selectedImageLayer() != null) {
@@ -3440,11 +3468,11 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                     // first (textLayerAt walks topmost-first), then image layers (topmost first).
                     // (v0.16.6 briefly had images first - corrected here to match the real draw order.)
                     val hit = textLayerAt(x, y)
-                    if (hit != null) { textSelectedId = hit.id; textImageSelectedId = null; textTick++ }
+                    if (hit != null) { textSelectedId = hit.id; textImageSelectedId = null; textTick++; textSelTick++ }
                     else {
                         val eff = textEffectiveSize()
                         val im = textImageLayers.lastOrNull { TextOverlayUtils.imageLayerHit(it, x, y, eff[0], eff[1]) }
-                        if (im != null) { textImageSelectedId = im.id; textSelectedId = null; textTick++ }
+                        if (im != null) { textImageSelectedId = im.id; textSelectedId = null; textTick++; textSelTick++ }
                     }
                 },
                 onEditOpen = { textEditOpen = it },
@@ -9689,6 +9717,7 @@ private fun TextOnPhotoScreen(
     sizeBytes: Long,
     layers: List<TextOverlayUtils.TextLayer>,
     tick: Int,
+    selTick: Int,
     selectedId: Long?,
     canUndo: Boolean,
     canRedo: Boolean,
@@ -9812,6 +9841,7 @@ private fun TextOnPhotoScreen(
                 Modifier
                     .size(pw, ph)
                     .align(Alignment.Center)
+                    .semantics { contentDescription = "Photo preview - tap a layer to edit it" }
                     .pointerInput(bmp) {
                         // While a finger is on the preview the page scroll is disabled,
                         // so single-finger drags move the text (or the crop frame) instead of the page.
@@ -9951,13 +9981,16 @@ private fun TextOnPhotoScreen(
         // Two-level menu: root entries -> tap one for its options -> Back arrow returns. The photo
         // stays visible above the sheet, so every edit is seen live (his "easy to look live edit").
         val testSheetLevel = (androidx.compose.ui.platform.LocalContext.current as? Activity)?.intent?.getStringExtra("pixelcraft.test.sheetlevel")
+        val testStatusLine = (androidx.compose.ui.platform.LocalContext.current as? Activity)?.intent?.getStringExtra("pixelcraft.test.statusline") == "1"
         val testCropAdjust = (androidx.compose.ui.platform.LocalContext.current as? Activity)?.intent?.getStringExtra("pixelcraft.test.cropadjust")
         LaunchedEffect(Unit) { if (testCropAdjust == "1" && !cropAdjust) onCropAdjust(true) }
         var sheetLevel by remember { mutableStateOf(testSheetLevel ?: "menu") }
         LaunchedEffect(sheetLevel) { if (sheetLevel != "pickcolour") pickColourMode = false }
         // Selecting a layer jumps straight to its options (his flow); Back returns to the menu manually.
-        LaunchedEffect(selectedId, selectedImageId) {
-            if (testSheetLevel == null) {   // a test hook pins the level
+        // v0.16.10: keyed on selTick as well as the IDs - re-tapping the SAME selected layer (his
+        // logo report: selected, but the sheet stayed on the Create grid) still re-opens its panel.
+        LaunchedEffect(selectedId, selectedImageId, selTick) {
+            if (testSheetLevel == null || selTick > 0) {   // a test hook pins the INITIAL level; a real select-tap still wins
                 if (selectedImageId != null) sheetLevel = "image"
                 else if (selectedId != null) sheetLevel = "text"
             }
@@ -10001,6 +10034,7 @@ private fun TextOnPhotoScreen(
                     IconButton(onClick = onUndo, enabled = canUndo, modifier = Modifier.size(30.dp)) { Icon(Icons.Default.Undo, contentDescription = "Undo", tint = if (canUndo) DeepNavy else BorderGrey, modifier = Modifier.size(18.dp)) }
                     IconButton(onClick = onRedo, enabled = canRedo, modifier = Modifier.size(30.dp)) { Icon(Icons.Default.Redo, contentDescription = "Redo", tint = if (canRedo) DeepNavy else BorderGrey, modifier = Modifier.size(18.dp)) }
                 }
+                if (testStatusLine) Text("hook:sel=" + selectedId + ",imgsel=" + selectedImageId + ",selt=" + selTick + ",level=" + sheetLevel, fontSize = 8.sp, color = BorderGrey)
                 if (cropAdjust) {
                     // v0.16.6 - his "Make same like you make in social media section" / "Exactly 100% same":
                     // Position mode gets the Social Media cropper's exact controls: Zoom slider + drag + hint.

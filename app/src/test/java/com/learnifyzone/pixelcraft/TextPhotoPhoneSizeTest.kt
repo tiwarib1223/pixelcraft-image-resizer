@@ -12,7 +12,15 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.printToString
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.test.click
+import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.test.hasAnyDescendant
+import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.hasSetTextAction
+import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.performTextInput
 import androidx.test.core.app.ActivityScenario
 import androidx.test.core.app.ApplicationProvider
@@ -201,6 +209,27 @@ class TextPhotoPhoneSizeTest {
             waitForText("3 photos")
             waitForText("Save to Gallery")
             shot(sc, "v0169_phone_collage")
+            sc.close()
+        }
+    }
+
+    @Test
+    fun phoneWindowReopenImagePanel() {
+        // v0.16.10 regression (his report): logo image layer already selected while the sheet sat
+        // on the Create grid - selecting it again must RE-OPEN the "Image layer" panel (with the
+        // Remove background button). The sheet is PINNED at the menu (his state after pressing
+        // Menu); the seltap hook applies the exact state change a canvas tap runs
+        // (Robolectric cannot drive the canvas detectTapGestures reliably - its double-tap
+        // timeout never fires under the test clock, proven by the status line selt=0).
+        val ov = File.createTempFile("pc_ov", ".png")
+        val ob = Bitmap.createBitmap(200, 120, Bitmap.Config.ARGB_8888).apply { eraseColor(0xFFE91E63.toInt()) }
+        ov.outputStream().use { ob.compress(Bitmap.CompressFormat.PNG, 100, it) }
+        ov.deleteOnExit()
+        launch("pixelcraft.test.overlay" to ov.absolutePath, "pixelcraft.test.statusline" to "1",
+               "pixelcraft.test.sheetlevel" to "menu", "pixelcraft.test.seltap" to "1").use { sc ->
+            waitForText("Remove background")            // BUG before fix: pinned menu won; panel hidden
+            waitForText("level=image")
+            shot(sc, "v01610_phone_imagelayer")
             sc.close()
         }
     }

@@ -62,6 +62,68 @@ object BackgroundRemoval {
         return mlKitCutOut(bitmap)
     }
 
+    /** Fraction of pixels that are (near-)transparent - 0f..1f. Used to tell a REAL cut from a no-op. */
+    fun transparentFraction(bitmap: Bitmap): Float {
+        val w = bitmap.width; val h = bitmap.height
+        val px = IntArray(w * h)
+        bitmap.getPixels(px, 0, w, 0, 0, w, h)
+        var clear = 0
+        for (c in px) if ((c ushr 24) < 16) clear++
+        return clear.toFloat() / px.size
+    }
+
+    /**
+     * Solid-background remover for logos/icons on a plain colour (his A2Z logo case): the subject
+     * engines keep a whole icon card as one "subject", so nothing is cut. Here we sample the four
+     * corner colours and flood-remove every edge-connected pixel close to any of them.
+     * Returns the cut bitmap and how many pixels were removed.
+     */
+    fun removeSolidBackground(bitmap: Bitmap, tolerance: Float = 0.14f): Pair<Bitmap, Int> {
+        val w = bitmap.width; val h = bitmap.height
+        val px = IntArray(w * h)
+        bitmap.getPixels(px, 0, w, 0, 0, w, h)
+        fun avgPatch(cx: Int, cy: Int): FloatArray {
+            var r = 0f; var g = 0f; var b = 0f; var n = 0
+            for (dy in -2..2) for (dx in -2..2) {
+                val x = (cx + dx).coerceIn(0, w - 1); val y = (cy + dy).coerceIn(0, h - 1)
+                val c = px[y * w + x]
+                r += ((c shr 16) and 0xFF) / 255f; g += ((c shr 8) and 0xFF) / 255f; b += (c and 0xFF) / 255f
+                n++
+            }
+            return floatArrayOf(r / n, g / n, b / n)
+        }
+        val corners = listOf(avgPatch(0, 0), avgPatch(w - 1, 0), avgPatch(0, h - 1), avgPatch(w - 1, h - 1))
+        fun isBg(i: Int): Boolean {
+            val c = px[i]
+            if ((c ushr 24) < 16) return true   // already transparent counts as background
+            val r = ((c shr 16) and 0xFF) / 255f; val g = ((c shr 8) and 0xFF) / 255f; val b = (c and 0xFF) / 255f
+            for (k in corners) {
+                val d = (r - k[0]) * (r - k[0]) + (g - k[1]) * (g - k[1]) + (b - k[2]) * (b - k[2])
+                if (d <= tolerance * tolerance * 3f) return true
+            }
+            return false
+        }
+        val visited = BooleanArray(w * h)
+        val stack = IntArray(w * h)
+        var top = 0
+        fun push(i: Int) { if (!visited[i]) { visited[i] = true; stack[top++] = i } }
+        for (x in 0 until w) { if (isBg(x)) push(x); if (isBg((h - 1) * w + x)) push((h - 1) * w + x) }
+        for (y in 0 until h) { if (isBg(y * w)) push(y * w); if (isBg(y * w + w - 1)) push(y * w + w - 1) }
+        var removed = 0
+        while (top > 0) {
+            val i = stack[--top]
+            if (!isBg(i)) continue
+            px[i] = 0
+            removed++
+            val x = i % w; val y = i / w
+            if (x > 0) push(i - 1)
+            if (x < w - 1) push(i + 1)
+            if (y > 0) push(i - w)
+            if (y < h - 1) push(i + w)
+        }
+        return Pair(Bitmap.createBitmap(px, w, h, Bitmap.Config.ARGB_8888), removed)
+    }
+
     private fun onnxCutOut(context: Context, bitmap: Bitmap, spec: ModelSpec): Bitmap {
         val sess = session(context, spec)
         val w = spec.inputSize

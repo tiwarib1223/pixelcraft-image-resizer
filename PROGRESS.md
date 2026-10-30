@@ -389,5 +389,12 @@ Stage 2B: research official platform documentation and populate presets.json onl
 - Collage Maker: new home tile, 2-9 photos, square 1600px PNG, gap slider + white/black background; the preview is the export (same engine call). 5-9 photos use a uniform grid (Transforms.collageGrid; 2-4 keep the classic Shop-flow layouts). An unused last cell (5 or 7 photos) stays the background colour. (VETOABLE: layouts + fixed square size.)
 - Meme Maker: new tile inside Text on Photo - top/bottom fields, one tap creates classic meme captions (sans-serif-black, white fill, black outline, auto-uppercase); the captions are normal layers, so every editor control (drag, effects, fonts) still works.
 - Background Remover: the standalone tool already existed on Home; v0.16.9 ALSO adds "Remove background" to image layers inside Text on Photo (logo/sticker cut-outs), fully on-device via the existing U-2-Netp engine. (ImageLayer.bitmap became var for this.)
-- Create grid now 11 tiles (+ Meme); Home grid now 11 features (+ Collage Maker).
-- Tests +4 (133 total): collageGrid 5- and 9-photo cell placement, meme UI flow (type + apply -> 2 layers), collage screen UI.
+- His two Process-button messages: the Process tile left the grid; Process is now a full-width orange rectangle at the very bottom of the Create menu (same emphasis as Export Image), still one tap. Create grid = 10 tiles (+ Meme); Home grid now 11 features (+ Collage Maker).
+- Tests +5 (134 total): collageGrid 5- and 9-photo cell placement, meme UI flow (type + apply -> 2 layers), collage screen UI, Create menu with full-width Process.
+
+
+## v0.16.10 (58) - FIX: re-tapping a selected layer re-opens its options (his report, 2026-10-30)
+- His report: his logo image layer showed selected (X + rotate handle) but the sheet stayed on the Create grid, so the Remove background button never appeared.
+- Root cause: the sheet only jumped to a layer's options when the selection CHANGED. With the layer already selected (e.g. after pressing Menu), tapping it again changed nothing and the panel stayed hidden.
+- Fix: every layer select (canvas tap or Layers row) now bumps a selection tick that re-opens the layer's options panel, even when the selection itself did not change. Applies to text and image layers alike.
+- Regression test: phoneWindowReopenImagePanel drives his exact path (select > Menu > re-select via the Layers list > Remove background must show) + screenshot v01610_phone_imagelayer. Tests 135 total.
