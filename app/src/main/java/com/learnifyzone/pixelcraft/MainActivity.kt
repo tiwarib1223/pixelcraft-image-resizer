@@ -5718,7 +5718,10 @@ private fun PhotoAdjustScreen(
 
         val preview = remember(state.tick, state.compare) {
             val filtered = if (state.filterId == "normal") base else FilterUtils.applyFilter(base, state.filterId)
-            val adjusted = if (state.compare) filtered else PhotoAdjust.apply(filtered, state.params)
+            // v0.18.4: Compare shows the TRUE original - before filter AND sliders (his report:
+            // with only a filter applied, the old compare view still showed the filter, so the
+            // toggle changed nothing on screen and read as "compare button not working").
+            val adjusted = if (state.compare) base else PhotoAdjust.apply(filtered, state.params)
             val sc = 720f / maxOf(adjusted.width, adjusted.height).toFloat()
             if (sc < 1f) Bitmap.createScaledBitmap(adjusted, (adjusted.width * sc).roundToInt(), (adjusted.height * sc).roundToInt(), true) else adjusted
         }

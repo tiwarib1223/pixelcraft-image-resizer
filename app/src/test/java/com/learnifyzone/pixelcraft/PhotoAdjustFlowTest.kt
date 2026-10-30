@@ -146,6 +146,60 @@ class PhotoAdjustFlowTest {
     }
 
     @Test
+    fun adjustCompareShowsTrueOriginal() {
+        // His report (v0.18.3): "compare button not working" - photo + Warm filter + Compare.
+        // The old compare view kept the filter, so edited and "original" looked identical.
+        // This test asserts PIXELS, not just the caption (the caption alone passed in v0.18.0).
+        launchRaw("pixelcraft.test.adjust" to "1").use { sc ->
+            waitForText("Compare")
+            composeRule.onNodeWithText("Filters").performClick()
+            waitForText("Warm")
+            composeRule.onNodeWithText("Warm").performClick()
+            pump(); pump(); pump()
+            shot(sc, "v0184_phone_adjust_warm")
+            composeRule.onNodeWithText("Compare").performClick()
+            pump(); pump(); pump()
+            waitForText("showing the original")
+            shot(sc, "v0184_phone_adjust_compare_original")
+            // The compare view must be the TRUE original: visibly different pixels from the
+            // Warm-filtered view (old code failed this - both showed the Warm image).
+            val dir = File("build/outputs/uishots")
+            val a = android.graphics.BitmapFactory.decodeFile(File(dir, "v0184_phone_adjust_warm.png").absolutePath)
+            val b = android.graphics.BitmapFactory.decodeFile(File(dir, "v0184_phone_adjust_compare_original.png").absolutePath)
+            assert(a != null && b != null && a.width == b.width && a.height == b.height) { "screenshots unreadable" }
+            var diff = 0L; var n = 0
+            var y = 0
+            while (y < a.height) {
+                var x = 0
+                while (x < a.width) {
+                    val pa = a.getPixel(x, y); val pb = b.getPixel(x, y)
+                    diff += kotlin.math.abs(((pa shr 16) and 0xFF) - ((pb shr 16) and 0xFF)) +
+                            kotlin.math.abs(((pa shr 8) and 0xFF) - ((pb shr 8) and 0xFF)) +
+                            kotlin.math.abs((pa and 0xFF) - (pb and 0xFF))
+                    n++
+                    x += 16
+                }
+                y += 16
+            }
+            val mean = diff / n
+            assert(mean > 20) { "compare view did not change the preview (mean diff=$mean)" }
+            // Toggle back returns to the filtered/edited view.
+            composeRule.onNodeWithText("Edited").performClick()
+            pump(); pump()
+            run {
+                val deadline = System.currentTimeMillis() + 30_000
+                while (System.currentTimeMillis() < deadline) {
+                    pump()
+                    if (composeRule.onAllNodesWithText("showing the original").fetchSemanticsNodes().isEmpty()) break
+                    Thread.sleep(60)
+                }
+                assert(composeRule.onAllNodesWithText("showing the original").fetchSemanticsNodes().isEmpty()) { "compare did not toggle back" }
+            }
+            sc.close()
+        }
+    }
+
+    @Test
     fun adjustHomeTileExists() {
         // The new tile fills the last empty slot on Home.
         launchRaw().use { sc ->

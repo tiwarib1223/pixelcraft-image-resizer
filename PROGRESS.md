@@ -1,5 +1,11 @@
 # PixelCraft Image Resizer — Progress
 
+## v0.18.4 (versionCode 65): FIX - Compare shows the TRUE original (his report)
+- His report (v0.18.3): "Brother compare button not working" - photo + one-tap Warm filter + tap Compare, nothing changed on screen.
+- Root cause (present since v0.18.0, NOT caused by the v0.18.3 Reset fix): the compare view showed the photo WITH the filter still applied (only the sliders were removed). With a filter and untouched sliders, "edited" and "original" rendered the same image, so the toggle looked dead - and the "showing the original" caption was inaccurate whenever a filter was on.
+- Fix: Compare now shows the true original photo - before filter AND sliders. Tapping Compare/Edited switches original <-> edited both ways.
+- Regression test asserts PIXELS, not just the caption (the caption alone passed in v0.18.0 while the image was wrong): photo + Warm filter + Compare -> the two views must differ visibly; toggle back hides the original again. Screenshots v0184_phone_adjust_warm / _compare_original.
+
 ## v0.18.3 (versionCode 64): FIX - Reset now starts from zero with a new-image option (his report + his definition)
 - His report (v0.18.2, both tools): "Reset button not working. And when I close and open again same things shows." Then: "When we click reset it should start from zero with new image option."
 - Root causes: (1) Reset only zeroed slider/style values - it kept the loaded photos, so with values already at defaults (or in Compare view) a tap looked like nothing happened; (2) unlike every other tool, Collage Maker and Photo Adjustments did NOT wipe their state when leaving to Home, so the old session was still there on reopen.
