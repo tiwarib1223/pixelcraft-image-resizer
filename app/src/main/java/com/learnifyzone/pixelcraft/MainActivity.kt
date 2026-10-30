@@ -36,6 +36,7 @@ import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.background
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
@@ -256,37 +257,48 @@ private data class AdaptRequest(val width: Int, val height: Int)
 private fun PixelCraftApp() {
     var darkMode by rememberSaveable { mutableStateOf(false) }
     val colors = if (darkMode) darkColorScheme(primary = SkyBlue, secondary = Orange, background = Color(0xFF101A2B), surface = Color(0xFF17243A), onPrimary = DeepNavy) else lightColorScheme(primary = SkyBlue, secondary = Orange, background = Color.White, surface = Color.White, onPrimary = DeepNavy, onBackground = DeepNavy, onSurface = DeepNavy)
-    // v0.20.0: branded opening moment - his official logo + POWERED BY BITTY (his v3 splash design), then the app.
-    // Skipped on the Robolectric host: its paused frame clock never runs the effect that dismisses the intro.
+    // v0.20.1 (his call, overrides the earlier static intro): his real 5-second opening video plays on cold start.
+    // Any tap or system back skips straight to the app - promised him skippable. rememberSaveable so a rotation
+    // mid-video does not restart it. Skipped on the Robolectric host (no media playback there).
     val testHost = android.os.Build.FINGERPRINT.contains("robolectric", ignoreCase = true)
-    var showIntro by remember { mutableStateOf(!testHost) }
-    LaunchedEffect(Unit) { kotlinx.coroutines.delay(1400); showIntro = false }
+    var showIntro by rememberSaveable { mutableStateOf(!testHost) }
+    BackHandler(enabled = showIntro) { showIntro = false }
     MaterialTheme(colorScheme = colors) {
         if (showIntro) {
-            IntroScreen()
+            OpeningVideoScreen(onFinished = { showIntro = false })
         } else {
             PixelCraftRoot(darkMode = darkMode, onDarkMode = { darkMode = it })
         }
     }
 }
 
-/** v0.20.0: the branded opening moment - matches his approved splash design (a2z_opening_v3):
- *  starry navy background, his official logo, POWERED BY BITTY at the bottom. */
+/** v0.20.1: his real 5-second opening video (res/raw/opening.mp4, his own asset - "keep 5 seconds video in opening").
+ *  Fullscreen on the video's starry navy, letterboxed; plays once per cold start; tap anywhere or press back to skip;
+ *  any playback error goes straight to the app. Replaces the static intro of v0.20.0. */
 @Composable
-internal fun IntroScreen() {
-    Box(Modifier.fillMaxSize().background(Color(0xFF030B1E))) {
-        Image(
-            painter = painterResource(R.drawable.splash_logo),
-            contentDescription = "A2Z Image Craft",
-            modifier = Modifier.align(Alignment.Center).fillMaxWidth(0.68f)
+internal fun OpeningVideoScreen(onFinished: () -> Unit) {
+    Box(
+        Modifier
+            .fillMaxSize()
+            .background(Color(0xFF030B1E))
+            .clickable { onFinished() }
+    ) {
+        AndroidView(
+            factory = { ctx ->
+                android.widget.VideoView(ctx).apply {
+                    setVideoURI(Uri.parse("android.resource://" + ctx.packageName + "/" + R.raw.opening))
+                    setOnPreparedListener { start() }
+                    setOnCompletionListener { onFinished() }
+                    setOnErrorListener { _, _, _ -> onFinished(); true }
+                }
+            },
+            modifier = Modifier.fillMaxSize()
         )
         Text(
-            "POWERED BY BITTY",
-            color = Color(0xFFC9D4E6),
-            fontSize = 13.sp,
-            fontWeight = FontWeight.Medium,
-            letterSpacing = 2.5.sp,
-            modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 52.dp)
+            "Tap to skip",
+            color = Color(0x99FFFFFF),
+            fontSize = 12.sp,
+            modifier = Modifier.align(Alignment.TopEnd).padding(top = 18.dp, end = 20.dp)
         )
     }
 }
@@ -3752,6 +3764,13 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
         }
     }
 
+    // v0.20.1 hotfix (found on his phone): back on Home-tab pages EXITED the app, because the handler above only
+    // runs for tool screens. Now: an open drawer closes, a doc page returns to Settings, any other tab returns to
+    // Home. Back must always return, never exit. Last enabled handler wins, so this order is load-bearing.
+    BackHandler(enabled = screen == Screen.Home && tab != MainTab.Home) { tab = MainTab.Home }
+    BackHandler(enabled = settingsDoc != null) { settingsDoc = null }
+    BackHandler(enabled = drawerOpen) { drawerOpen = false }
+
 
     @Composable
     fun RenderTextPhoto(modifier: Modifier) {
@@ -4936,9 +4955,7 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
             onClose = { drawerOpen = false },
             onEmail = { emailSupport() },
             onRate = { openPlayStorePage() },
-            onShare = { shareApp() },
-            onTerms = { drawerOpen = false; tab = MainTab.Settings; settingsDoc = "terms" },
-            onPrivacy = { drawerOpen = false; tab = MainTab.Settings; settingsDoc = "privacy" }
+            onShare = { shareApp() }
         )
     }
 
@@ -8031,9 +8048,10 @@ private fun SettingsScreen(
     }
 }
 
-/** v0.20.0 (his reference app): side drawer - app header + Rate / Share / Terms / Privacy over a scrim. No ads, no email row (his call). */
+/** v0.20.1 (his dedup call after testing v0.20.0): side drawer keeps only the quick actions - Email us / Rate us /
+ *  Share. Terms & Conditions and Privacy Policy live in Settings only, so nothing shows on both sides. */
 @Composable
-private fun HomeDrawer(onClose: () -> Unit, onEmail: () -> Unit, onRate: () -> Unit, onShare: () -> Unit, onTerms: () -> Unit, onPrivacy: () -> Unit) {
+private fun HomeDrawer(onClose: () -> Unit, onEmail: () -> Unit, onRate: () -> Unit, onShare: () -> Unit) {
     Box(Modifier.fillMaxSize()) {
         Box(Modifier.fillMaxSize().background(Color(0x99061722)).clickable { onClose() })
         Column(Modifier.fillMaxHeight().fillMaxWidth(0.82f).background(Color.White).verticalScroll(rememberScrollState())) {
@@ -8044,8 +8062,6 @@ private fun HomeDrawer(onClose: () -> Unit, onEmail: () -> Unit, onRate: () -> U
             DrawerRow({ Icon(Icons.Default.MailOutline, null, tint = SkyBlue, modifier = Modifier.size(22.dp)) }, "Need support? Email us", "Tell us what you'd like to see, or bugs you found") { onEmail() }
             DrawerRow({ Icon(Icons.Default.Star, null, tint = SkyBlue, modifier = Modifier.size(22.dp)) }, "Rate us", "Support the app with 5 stars") { onRate() }
             DrawerRow({ Icon(Icons.Default.Share, null, tint = SkyBlue, modifier = Modifier.size(22.dp)) }, "Share", "Tell a friend about A2Z Image Craft") { onShare() }
-            DrawerRow({ Icon(Icons.Default.Description, null, tint = SkyBlue, modifier = Modifier.size(22.dp)) }, "Terms & Conditions", "The simple rules for using the app") { onTerms() }
-            DrawerRow({ Icon(Icons.Default.Lock, null, tint = SkyBlue, modifier = Modifier.size(22.dp)) }, "Privacy Policy", "How your photos and data are treated") { onPrivacy() }
         }
     }
 }

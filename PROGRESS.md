@@ -1,5 +1,25 @@
 # PixelCraft Image Resizer — Progress
 
+## v0.20.1 (versionCode 68): HOTFIX - back navigation on doc pages + drawer dedup + his 5s opening video
+His phone test of v0.20.0 (evening 2026-10-30, screenshots + his messages):
+- REAL BUG: on the Terms & Conditions / Privacy Policy pages, system back EXITED the app instead of returning.
+  Root cause: the global BackHandler only ran for tool screens; these pages sit on the Home-tab screen, so back
+  fell through and finished the activity. Fix: three ordered BackHandlers - an open drawer closes first, a doc page
+  returns to Settings, any other tab returns to Home. Back now always returns, never exits. The doc pages keep
+  their top-bar back arrow (returns to Settings).
+- Dedup (his call): Email us / Rate us / Share / Terms / Privacy showed in BOTH the drawer and Settings. The drawer
+  now keeps only the quick actions (Email us, Rate us, Share); Terms & Conditions and Privacy Policy live in
+  Settings only.
+- Opening (his explicit instruction, overrides the v0.20.0 static intro): his own 5-second video plays fullscreen
+  as the app opening (res/raw/opening.mp4, 478x850 h264+aac, letterboxed on its starry navy). Any tap or system
+  back skips straight to the app - promised and wired. Plays on every cold start (VETOABLE: can become once-a-day).
+  A playback error goes straight to the app rather than trapping him. "Tap to skip" hint top-right (VETOABLE).
+- Regression tests: back from Terms/Privacy (arrow + system back) returns and never finishes the activity; drawer
+  no longer lists the two documents; the bundled video is his ~5s clip with its audio track; the opening's tap
+  surface invokes skip. Drawer/privacy screenshots refreshed (v0201_*).
+- Test-host note (unchanged policy): no media playback under Robolectric, so the video gate is skipped there via
+  the same FINGERPRINT guard as before; the asset, its duration/audio, and the skip wiring are tested instead.
+
 ## v0.20.0 (versionCode 67): FINALIZATION - Presets tab filled (verified sizes), Settings rebuilt, developer credit = Bitty
 - His call (delegated to parent, confirmed "Then fill brother"): the Presets tab is now FILLED with 13 platform sizes, every one verified against official platform documentation on 2026-10-30. No guessed numbers - platforms that publish nothing (WhatsApp, IG/Pinterest profile photos) are deliberately absent.
 - Shop & creator: Etsy Listing photo 2000x2000 (help.etsy.com). Social media: Instagram Post square 1080x1080 / portrait 1080x1350 / landscape 1080x566, Story + Reel cover 1080x1920 (help.instagram.com); Facebook Cover 851x315 + Post/link 1200x630 (facebook.com/help + developers.facebook.com); Pinterest Pin 1000x1500 (help.pinterest.com); YouTube Thumbnail 1280x720 + Channel banner 2560x1440 (support.google.com); X Profile 400x400 + Header 1500x500 (help.x.com). Every row shows platform, purpose, exact px, ratio, a Verified badge, and carries sourceUrl + dateVerified in presets.json.

@@ -174,16 +174,48 @@ class PresetsSettingsTest {
             waitForText("Need support? Email us")
             waitForText("Rate us")
             waitForText("Share")
+            shot(sc, "v0201_phone_drawer")
+            // v0.20.1 (his dedup call): Terms & Privacy live in Settings only, never in the drawer.
+            val drawerTerms = composeRule.onAllNodesWithText("Terms & Conditions").fetchSemanticsNodes()
+            val drawerPrivacy = composeRule.onAllNodesWithText("Privacy Policy").fetchSemanticsNodes()
+            assertTrue("drawer must not list Terms & Conditions (Settings owns it)", drawerTerms.isEmpty())
+            assertTrue("drawer must not list Privacy Policy (Settings owns it)", drawerPrivacy.isEmpty())
+        }
+    }
+
+    @Test
+    fun f_backFromDocPagesReturnsNeverExits() {
+        launch().use { sc ->
+            waitForText("Settings")
+            composeRule.onNodeWithText("Settings").performClick()
             waitForText("Terms & Conditions")
-            waitForText("Privacy Policy")
-            shot(sc, "v0200_phone_drawer")
-            // drawer Terms row -> Terms page on the Settings tab
-            composeRule.onAllNodesWithText("Terms & Conditions")[0].performClick()
+            // Terms page via its Settings row (clickText: semantics clicks land off-viewport on this host)
+            clickText("Terms & Conditions")
             waitForText("developed and published by Bitty")
-            shot(sc, "v0200_phone_terms")
-            // back out of the doc page
+            shot(sc, "v0201_phone_terms")
+            // 1) the page's own back arrow returns to Settings
             composeRule.onNodeWithContentDescription("Back").performClick()
             waitForText("Appearance")
+            // 2) system back on the doc page returns to Settings too - the v0.20.0 bug was an app EXIT here
+            clickText("Privacy Policy")
+            waitForText("private by design")
+            var finishingAfterDocBack = false
+            sc.onActivity { act ->
+                act.onBackPressedDispatcher.onBackPressed()
+                finishingAfterDocBack = act.isFinishing
+            }
+            pump()
+            assertTrue("system back on a doc page must NOT finish the activity", !finishingAfterDocBack)
+            waitForText("Appearance")
+            // 3) system back on the Settings tab returns to the Home tab
+            var finishingAfterTabBack = false
+            sc.onActivity { act ->
+                act.onBackPressedDispatcher.onBackPressed()
+                finishingAfterTabBack = act.isFinishing
+            }
+            pump()
+            assertTrue("system back on the Settings tab must NOT finish the activity", !finishingAfterTabBack)
+            waitForText("PHOTO TOOLKIT")
         }
     }
 
@@ -196,7 +228,7 @@ class PresetsSettingsTest {
             composeRule.onNodeWithText("Privacy Policy").performScrollTo()
             composeRule.onAllNodesWithText("Privacy Policy")[0].performClick()
             waitForText("private by design")
-            shot(sc, "v0200_phone_privacy")
+            shot(sc, "v0201_phone_privacy")
         }
     }
 

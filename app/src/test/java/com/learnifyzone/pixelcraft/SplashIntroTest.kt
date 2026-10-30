@@ -8,6 +8,7 @@ import androidx.compose.ui.test.assertIsDisplayed
 import androidx.activity.compose.setContent
 import androidx.test.core.app.ActivityScenario
 import androidx.test.core.app.ApplicationProvider
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -19,8 +20,9 @@ import java.io.File
 import java.util.concurrent.TimeUnit
 
 /**
- * v0.20.0: the branded opening moment (his v3 splash design) renders correctly.
- * The intro itself is skipped on this host (paused frame clock), so we render it directly.
+ * v0.20.1: the opening is his real 5-second video (res/raw/opening.mp4), skippable by any tap or back.
+ * No media playback on this host, so the video gate itself is skipped here (same FINGERPRINT guard as the
+ * old intro); these tests pin the asset and the skip surface instead.
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [30], qualifiers = "w360dp-h640dp")
@@ -36,20 +38,40 @@ class SplashIntroTest {
     }
 
     @Test
-    fun introRendersLogoAndCredit() {
+    fun openingVideoAssetShipsAndIsHisFiveSecondClip() {
+        val ctx = ApplicationProvider.getApplicationContext<android.content.Context>()
+        val afd = ctx.resources.openRawResourceFd(R.raw.opening)
+        assertTrue("opening.mp4 must be bundled as a raw resource", afd != null && afd.length > 100_000)
+        afd!!.close()
+        // Duration/audio were verified with ffprobe before bundling (5.0s, h264+aac, 478x850); the native
+        // MediaMetadataRetriever is too heavy for this host (OOM-killed the test JVM, exit 137).
+        val mp4 = ctx.resources.openRawResource(R.raw.opening).readBytes()
+        val head = String(mp4.copyOfRange(4, 12))
+        assertTrue("raw/opening must be an MP4 (ftyp box), got $head", head.startsWith("ftyp"))
+        assertTrue("his 5s clip is ~918KB", mp4.size in 800_000..1_100_000)
+    }
+
+    @Test
+    fun videoGateOffersTapToSkipAndCallsFinish() {
+        var finished = false
         ActivityScenario.launch(MainActivity::class.java).use { sc ->
             pump()
-            sc.onActivity { act -> act.setContent { IntroScreen() } }
+            sc.onActivity { act -> act.setContent { OpeningVideoScreen(onFinished = { finished = true }) } }
             pump(); pump()
-            composeRule.onNodeWithText("POWERED BY BITTY").assertIsDisplayed()
+            composeRule.onNodeWithText("Tap to skip").assertIsDisplayed()
             val dir = File("build/outputs/uishots").apply { mkdirs() }
             sc.onActivity { act ->
                 val v = act.window.decorView
                 val bmp = android.graphics.Bitmap.createBitmap(v.width, v.height, android.graphics.Bitmap.Config.ARGB_8888)
                 v.draw(android.graphics.Canvas(bmp))
-                bmp.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, File(dir, "v0200_phone_intro.png").outputStream())
+                bmp.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, File(dir, "v0201_phone_opening_gate.png").outputStream())
             }
             pump()
+            // any tap on the opening skips straight to the app (the promise to him): invoke the surface's OnClick.
+            val surface = composeRule.onNode(androidx.compose.ui.test.hasClickAction()).fetchSemanticsNode()
+            surface.config[androidx.compose.ui.semantics.SemanticsActions.OnClick].action?.invoke()
+            pump()
+            assertTrue("tapping the opening must skip to the app", finished)
             sc.close()
         }
     }
