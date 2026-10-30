@@ -402,6 +402,7 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
     var textCropRect by remember { mutableStateOf<FloatArray?>(null) }   // canvas cutter: [l,t,r,b] fractions of the photo
     var textCropLabel by remember { mutableStateOf("") }
     var textCropAdjust by remember { mutableStateOf(false) }
+    var textCropZoomAbs by remember { mutableStateOf(1f) }   // v0.16.6: absolute Position-mode zoom (slider 1..5, like Social Media)
     var textFilterId by remember { mutableStateOf("normal") }
     var textStylePresets by remember { mutableStateOf<List<TextStylePreset>>(emptyList()) }
     var pendingTextStyle by remember { mutableStateOf<TextStylePreset?>(null) }
@@ -2501,6 +2502,7 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
         textCropRect = null
         textCropLabel = ""
         textCropAdjust = false
+        textCropZoomAbs = 1f
         textTick++
     }
 
@@ -2515,6 +2517,7 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
         textCropRect = null
         textCropLabel = ""
         textCropAdjust = false
+        textCropZoomAbs = 1f
         textResultBytes = null
         textSaved = false
         textEditOpen = false
@@ -2667,6 +2670,7 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
         textCropRect = TextOverlayUtils.maxCropForRatio(bmp.width, bmp.height, rw, rh)
         textCropLabel = "$label $rw:$rh"
         textCropAdjust = true
+        textCropZoomAbs = 1f
         textResultBytes = null
         textSaved = false
         textTick++
@@ -2676,6 +2680,7 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
         textCropRect = null
         textCropLabel = ""
         textCropAdjust = false
+        textCropZoomAbs = 1f
         textResultBytes = null
         textSaved = false
         textTick++
@@ -2697,6 +2702,33 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
         textResultBytes = null
         textSaved = false
         textTick++
+    }
+
+    /**
+     * v0.16.6 (his "make same like you make in social media section" / "Exactly 100% same"): ABSOLUTE
+     * zoom for the Position-mode slider, 1..5 like the Social Media cropper. Applied as a relative
+     * zoom around the frame's CURRENT centre, so a pan is never lost when the slider moves.
+     */
+    fun setTextCropZoomAbs(newZoom: Float) {
+        val old = textCropZoomAbs
+        val z = newZoom.coerceIn(1f, 5f)
+        val r = textCropRect
+        if (r == null || kotlin.math.abs(z - old) < 0.0001f) { textCropZoomAbs = z; return }
+        textCropRect = TextOverlayUtils.zoomCrop(r, z / old)
+        textCropZoomAbs = z
+        textResultBytes = null
+        textSaved = false
+        textTick++
+    }
+
+    /** Pinch in Position mode: same absolute model, so the slider follows the fingers. */
+    fun pinchTextCropZoom(factor: Float) {
+        val old = textCropZoomAbs
+        val newAbs = (old * factor).coerceIn(1f, 5f)
+        if (kotlin.math.abs(newAbs - old) > 0.0001f) {
+            zoomTextCrop(newAbs / old)
+            textCropZoomAbs = newAbs
+        }
     }
 
     fun refreshTextStylePresets() {
@@ -3938,12 +3970,15 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                 onDeleteImageLayer = { deleteImageLayer(it) },
                 onMoveImageLayer = { id, dir -> moveImageLayer(id, dir) },
                 onTapAt = { x, y ->
-                    val hit = textLayerAt(x, y)
-                    if (hit != null) { textSelectedId = hit.id; textImageSelectedId = null; textTick++ }
+                    // v0.16.6 (his "I can't choose properly in main image"): the TOP layer wins. Image
+                    // layers draw above text, so they are hit-tested FIRST; within each kind the
+                    // topmost (last drawn) layer is picked (textLayerAt already walks top-down).
+                    val eff = textEffectiveSize()
+                    val im = textImageLayers.lastOrNull { TextOverlayUtils.imageLayerHit(it, x, y, eff[0], eff[1]) }
+                    if (im != null) { textImageSelectedId = im.id; textSelectedId = null; textTick++ }
                     else {
-                        val eff = textEffectiveSize()
-                        val im = textImageLayers.lastOrNull { TextOverlayUtils.imageLayerHit(it, x, y, eff[0], eff[1]) }
-                        if (im != null) { textImageSelectedId = im.id; textSelectedId = null; textTick++ }
+                        val hit = textLayerAt(x, y)
+                        if (hit != null) { textSelectedId = hit.id; textImageSelectedId = null; textTick++ }
                     }
                 },
                 onEditOpen = { textEditOpen = it },
@@ -3959,6 +3994,7 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                 onSetCrop = { label, rw, rh -> setTextCrop(label, rw, rh) },
                 onClearCrop = { clearTextCrop() },
                 onCropAdjust = { on ->
+                    textCropZoomAbs = 1f
                     if (on && textCropRect == null) {
                         // His "I want to zoom and crop" - Position must work WITHOUT picking a size first:
                         // start from the full-photo frame; pinch zooms in, drag pans, Done keeps the region.
@@ -3974,7 +4010,9 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                     textTick++
                 },
                 onCropNudge = { dx, dy -> nudgeTextCrop(dx, dy) },
-                onCropZoom = { z -> zoomTextCrop(z) },
+                onCropZoom = { z -> pinchTextCropZoom(z) },
+                cropZoomAbs = textCropZoomAbs,
+                onCropZoomAbs = { z -> setTextCropZoomAbs(z) },
                 stylePresets = textStylePresets,
                 onLoadStyles = { refreshTextStylePresets() },
                 onApplyStyle = { p -> applyTextStylePreset(p) },
@@ -9213,6 +9251,8 @@ private fun TextOnPhotoScreen(
     onCropAdjust: (Boolean) -> Unit,
     onCropNudge: (Float, Float) -> Unit,
     onCropZoom: (Float) -> Unit,
+    cropZoomAbs: Float,
+    onCropZoomAbs: (Float) -> Unit,
     stylePresets: List<TextStylePreset>,
     onLoadStyles: () -> Unit,
     onApplyStyle: (TextStylePreset) -> Unit,
@@ -9226,7 +9266,7 @@ private fun TextOnPhotoScreen(
     BoxWithConstraints(modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
     // v0.16.5: the sheet takes a SHARE of the screen (42%, clamped) instead of a fixed height,
     // so the preview keeps the majority of the screen on small AND tall phones alike.
-    val sheetH = (maxHeight * 0.42f).coerceIn(250.dp, 340.dp)
+    val sheetH = (maxHeight * 0.38f).coerceIn(230.dp, 320.dp)   // v0.16.6: his "little more space for image edit" (was 42%)
     Column(Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
         if (bitmap == null) {
             Spacer(Modifier.height(4.dp))
@@ -9253,14 +9293,14 @@ private fun TextOnPhotoScreen(
         }
 
         Card(colors = CardDefaults.cardColors(containerColor = SoftGrey), shape = RoundedCornerShape(12.dp), modifier = Modifier.fillMaxWidth()) {
-            Row(Modifier.padding(horizontal = 12.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+            Row(Modifier.padding(horizontal = 12.dp, vertical = 3.dp), verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
                     Text(name, color = DeepNavy, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
                     Text("${bitmap.width} × ${bitmap.height} px" + (if (sizeBytes >= 0) " · ${formatBytes(sizeBytes)}" else ""), color = Slate, fontSize = 11.sp)
                 }
-                OutlinedButton(onClick = onSelectPhoto) { Text("Change", color = DeepNavy) }
+                OutlinedButton(onClick = onSelectPhoto, contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp), modifier = Modifier.height(34.dp)) { Text("Change", color = DeepNavy, fontSize = 13.sp) }
                 Spacer(Modifier.width(8.dp))
-                OutlinedButton(onClick = onResetEdits) { Text("Reset", color = DeepNavy) }
+                OutlinedButton(onClick = onResetEdits, contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp), modifier = Modifier.height(34.dp)) { Text("Reset", color = DeepNavy, fontSize = 13.sp) }
             }
         }
         Spacer(Modifier.height(8.dp))
@@ -9348,11 +9388,11 @@ private fun TextOnPhotoScreen(
                 }
             }
         }
-        Spacer(Modifier.height(4.dp))
+        Spacer(Modifier.height(2.dp))
         Text(
-            if (cropAdjust) "Drag the photo freely to position it · pinch to zoom in or out · tap Done when it looks right."
+            if (cropAdjust) "Drag your photo to position it · use the slider or pinch to zoom · tap Done when it looks right."
             else "Drag to move · pinch to resize · twist to rotate · double-tap to edit text",
-            color = Slate, fontSize = 11.sp
+            color = Slate, fontSize = 10.sp
         )
 
         Spacer(Modifier.height(10.dp))
@@ -9361,6 +9401,8 @@ private fun TextOnPhotoScreen(
         // Two-level menu: root entries -> tap one for its options -> Back arrow returns. The photo
         // stays visible above the sheet, so every edit is seen live (his "easy to look live edit").
         val testSheetLevel = (androidx.compose.ui.platform.LocalContext.current as? Activity)?.intent?.getStringExtra("pixelcraft.test.sheetlevel")
+        val testCropAdjust = (androidx.compose.ui.platform.LocalContext.current as? Activity)?.intent?.getStringExtra("pixelcraft.test.cropadjust")
+        LaunchedEffect(Unit) { if (testCropAdjust == "1" && !cropAdjust) onCropAdjust(true) }
         var sheetLevel by remember { mutableStateOf(testSheetLevel ?: "menu") }
         // Selecting a layer jumps straight to its options (his flow); Back returns to the menu manually.
         LaunchedEffect(selectedId, selectedImageId) {
@@ -9375,14 +9417,17 @@ private fun TextOnPhotoScreen(
             Column(Modifier.fillMaxSize().padding(horizontal = 14.dp, vertical = 10.dp).verticalScroll(rememberScrollState())) {
                 Row(Modifier.fillMaxWidth().padding(bottom = 6.dp), verticalAlignment = Alignment.CenterVertically) {
                     if (sheetLevel != "menu") {
-                        OutlinedButton(
+                        // His v0.16.6 ask: "Menu button make orange colour with white writing"
+                        Button(
                             onClick = { sheetLevel = "menu" },
+                            colors = ButtonDefaults.buttonColors(containerColor = Orange, contentColor = Color.White),
+                            shape = RoundedCornerShape(10.dp),
                             contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),
                             modifier = Modifier.height(30.dp)
                         ) {
-                            Icon(Icons.Default.ArrowBack, contentDescription = "Back to menu", tint = DeepNavy, modifier = Modifier.size(16.dp))
+                            Icon(Icons.Default.ArrowBack, contentDescription = "Back to menu", tint = Color.White, modifier = Modifier.size(16.dp))
                             Spacer(Modifier.width(4.dp))
-                            Text("Menu", color = DeepNavy, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                            Text("Menu", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Bold)
                         }
                     } else {
                         Text("Create", color = DeepNavy, fontWeight = FontWeight.Bold, fontSize = 16.sp)
@@ -9403,7 +9448,17 @@ private fun TextOnPhotoScreen(
                     IconButton(onClick = onUndo, enabled = canUndo, modifier = Modifier.size(30.dp)) { Icon(Icons.Default.Undo, contentDescription = "Undo", tint = if (canUndo) DeepNavy else BorderGrey, modifier = Modifier.size(18.dp)) }
                     IconButton(onClick = onRedo, enabled = canRedo, modifier = Modifier.size(30.dp)) { Icon(Icons.Default.Redo, contentDescription = "Redo", tint = if (canRedo) DeepNavy else BorderGrey, modifier = Modifier.size(18.dp)) }
                 }
-                when (sheetLevel) {
+                if (cropAdjust) {
+                    // v0.16.6 - his "Make same like you make in social media section" / "Exactly 100% same":
+                    // Position mode gets the Social Media cropper's exact controls: Zoom slider + drag + hint.
+                    Spacer(Modifier.height(4.dp))
+                    Text("Zoom", fontSize = 13.sp, color = Slate)
+                    Slider(value = cropZoomAbs, onValueChange = onCropZoomAbs, valueRange = 1f..5f)
+                    Spacer(Modifier.height(10.dp))
+                    Card(colors = CardDefaults.cardColors(containerColor = PaleBlue), shape = RoundedCornerShape(14.dp)) {
+                        Text("Drag your photo to position it. Use the slider to zoom in or out.", modifier = Modifier.padding(14.dp), fontSize = 13.sp, color = Slate)
+                    }
+                } else when (sheetLevel) {
                     "image" -> {
 
                     // ---- Image layer quick edits (his "Add image" spec: stays editable until export) ----
@@ -9928,7 +9983,7 @@ private fun TextOnPhotoScreen(
                     }
                     "save" -> {
                     // ---- Save Photo ----
-                    Text("Save Photo", color = DeepNavy, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                    Text("Process & Save", color = DeepNavy, fontWeight = FontWeight.Bold, fontSize = 16.sp)
                     Spacer(Modifier.height(6.dp))
                     Row {
                         PrintPresetChip("PNG", "best quality", format == "PNG") { onFormat("PNG") }
@@ -9943,7 +9998,7 @@ private fun TextOnPhotoScreen(
                         modifier = Modifier.fillMaxWidth().height(50.dp),
                         colors = ButtonDefaults.buttonColors(containerColor = SkyBlue, contentColor = Color.White),
                         shape = RoundedCornerShape(14.dp)
-                    ) { Text(if (resultBytes == null) "Process" else "Process again", fontWeight = FontWeight.Bold) }
+                    ) { Text("Process", fontWeight = FontWeight.Bold) }   // v0.16.6: no confusing "Process again" - edits invalidate the result, so this is always the one first step
                     if (resultBytes != null) {
                         Spacer(Modifier.height(8.dp))
                         Card(colors = CardDefaults.cardColors(containerColor = SoftGrey), shape = RoundedCornerShape(12.dp), modifier = Modifier.fillMaxWidth()) {
@@ -9972,7 +10027,7 @@ private fun TextOnPhotoScreen(
                             Triple("Image Size", Icons.Default.PhotoSizeSelectLarge, { sheetLevel = "size" }),
                             Triple("Layers", Icons.Default.Collections, { sheetLevel = "layers" }),
                             Triple("Filters", Icons.Default.Tune, { sheetLevel = "filters" }),
-                            Triple("Save", Icons.Default.CheckCircle, { sheetLevel = "save" })
+                            Triple("Process", Icons.Default.CheckCircle, { sheetLevel = "save" })
                         ).chunked(3).forEach { rowItems ->
                             Row(Modifier.fillMaxWidth().padding(bottom = 8.dp)) {
                                 rowItems.forEach { (label, icon, action) ->

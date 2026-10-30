@@ -88,6 +88,20 @@ class TextPhotoPhoneSizeTest {
     }
 
     @Test
+    fun phoneWindowPositionMode() {
+        // v0.16.6 regression guard: Position mode must show the Social-Media-identical controls
+        // (his "Make same like you make in social media section" / "Exactly 100% same"):
+        // Zoom slider + the exact hint text, Done in the header.
+        launch("pixelcraft.test.cropadjust" to "1").use { sc ->
+            waitForText("Done")
+            waitForText("Zoom")
+            waitForText("Drag your photo to position it. Use the slider to zoom in or out.")
+            shot(sc, "v0166_phone_position")
+            sc.close()
+        }
+    }
+
+    @Test
     fun phoneWindowTextSelected() {
         launch("pixelcraft.test.textlayer" to "1").use { sc ->
             waitForText("Quick edits")

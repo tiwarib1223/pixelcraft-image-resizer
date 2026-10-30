@@ -74,6 +74,15 @@ Stage 3 v0.10.1 (built on Stage 2E v0.8.1): queue overview screen, the full "Sel
 
 
 
+## v0.16.6 - Menu button colour + Position-mode zoom slider (his two "small things")
+
+- Menu back button is now ORANGE with WHITE writing (his exact ask: "Menu button make orange colour with white writing").
+- Position mode on Text on Photo now works EXACTLY like the Social Media Position mode (his "Zooming fix properly", "I can't choose properly in main image", "Make same like you make in social media section", "Exactly 100% same"): a visible Zoom slider (1x-5x) under the photo, drag on the photo to position it, and the same hint card - "Drag your photo to position it. Use the slider to zoom in or out." Pinch-to-zoom still works and the slider follows the fingers; panning is never lost when the slider moves. Zoom resets to 1x when Position is opened, when a size preset is picked, and on Reset/Original.
+- Regression guard: TextPhotoPhoneSizeTest.phoneWindowPositionMode opens Position mode on a real phone window and asserts the Zoom slider + exact hint text render (screenshot v0166_phone_position).
+- Tap-to-select fixed (his "I can't choose properly in main image"): the TOP layer now always wins - image layers (his logo) draw above text but were hit-tested AFTER text, so a tap grabbed the text underneath; image layers are now checked first, and within each kind the topmost (last drawn) layer is picked.
+- More room for the photo (his "If possible increase little more space for image edit"): the bottom sheet now takes 38% of the screen instead of 42%, the photo name/size card is slimmer, and the hint line under the preview is smaller. Everything stays reachable; the photo gets noticeably more vertical space.
+- Save flow wording (his "First save button there, when i click then coming process again" -> his decision "Better change save to process"): the last Create-menu tile is now "Process" (was "Save"), the level is titled "Process & Save", and the action button always reads "Process" - the confusing "Process again" is gone (edits invalidate the result, so Process is always the one first step). Flow reads: tap Process -> result ready -> "Save to Gallery". The hint "Nothing is saved until you tap Save. Your original photo is never replaced." stays.
+
 ## v0.16.5 - His three v0.16.4 errors + Menu button (live phone feedback)
 
 - Preview too small (his "When I select image it is very small"): the sheet layout squeezed the preview to ~200dp on a real phone, so a square photo rendered as a tiny centered square. Fixed chrome: decorative subtitle hidden once a photo is loaded, slimmer photo card, Position moved into the sheet header (with Original beside it), sheet height 340 -> 300dp, undo/redo compact in the header. The preview now gets the real remaining space and the photo fills its width. Regression guard: new TextPhotoPhoneSizeTest renders at a REAL phone window (w360dp-h640dp) - the tall review window had masked this.
