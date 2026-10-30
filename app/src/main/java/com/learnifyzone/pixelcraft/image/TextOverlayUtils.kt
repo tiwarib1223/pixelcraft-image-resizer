@@ -173,7 +173,7 @@ object TextOverlayUtils {
      */
     class ImageLayer(
         val id: Long,
-        val bitmap: Bitmap,
+        var bitmap: Bitmap,
         var cx: Float = 0.5f,
         var cy: Float = 0.5f,
         var widthFrac: Float = 0.4f,   // width as a fraction of image width; height keeps the bitmap's aspect

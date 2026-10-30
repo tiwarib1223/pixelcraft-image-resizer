@@ -93,6 +93,7 @@ import androidx.compose.material.icons.filled.Colorize
 import androidx.compose.material.icons.filled.Flip
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.EmojiEmotions
+import androidx.compose.material.icons.filled.Title
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -221,7 +222,7 @@ class MainActivity : ComponentActivity() {
 }
 
 private enum class MainTab { Home, MyPhotos, Presets, Settings }
-private enum class Screen { Home, Editor, Export, PrintHome, PrintSetup, PrintPreview, PrintExport, Success, QueueOverview, QueueResult, SocialHome, SocialPlatform, SocialEdit, ShopHome, ShopOther, ShopPlatform, ShopEdit, ShopCollage, ConvertHome, ConvertEdit, ConvertResult, CompressHome, CompressSettings, CompressResult, TextPhoto }
+private enum class Screen { Home, Editor, Export, PrintHome, PrintSetup, PrintPreview, PrintExport, Success, QueueOverview, QueueResult, SocialHome, SocialPlatform, SocialEdit, ShopHome, ShopOther, ShopPlatform, ShopEdit, ShopCollage, ConvertHome, ConvertEdit, ConvertResult, CompressHome, CompressSettings, CompressResult, TextPhoto, Collage }
 private enum class Tool(val label: String) { Resize("Resize"), Presets("Presets"), Crop("Crop & Rotate"), Background("Background"), Circle("Circle Cutter"), Format("Format") }
 
 private enum class CropTransform { LEFT, RIGHT, FLIP_H, FLIP_V }
@@ -324,6 +325,14 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
     var collageTarget by remember { mutableStateOf<SocialSize?>(null) }
     var collageLayout by rememberSaveable { mutableStateOf(2) }
     val collagePhotos = remember { mutableStateListOf<Bitmap>() }
+
+    // v0.16.9 Collage Maker (standalone home tile, his "Yes all 8" #7) + Meme Maker state
+    val collageMakerPhotos = remember { mutableStateListOf<Bitmap>() }
+    var collageMakerGap by rememberSaveable { mutableStateOf(8f) }
+    var collageMakerBg by rememberSaveable { mutableStateOf("White") }
+    var collageMakerSaved by rememberSaveable { mutableStateOf(false) }
+    var memeTopId by remember { mutableStateOf<Long?>(null) }
+    var memeBottomId by remember { mutableStateOf<Long?>(null) }
     var pendingConvertTool by remember { mutableStateOf(false) }
     var convertGoEdit by remember { mutableStateOf(false) }
     val convertUris = remember { mutableStateListOf<Uri>() }
@@ -930,6 +939,65 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
             } finally {
                 busy = false
                 busyLabel = ""
+            }
+        }
+    }
+
+    /** v0.16.9: load 2-9 photos for the standalone Collage Maker (capped for a smooth preview). */
+    fun loadCollageMakerPhotos(uris: List<Uri>) {
+        scope.launch {
+            busy = true
+            busyLabel = "Loading photos…"
+            val loaded = mutableListOf<Bitmap>()
+            try {
+                uris.take(9).forEach { uri ->
+                    val b = withContext(Dispatchers.IO) { decodeAnyImage(context, uri) }
+                    val capped = if (maxOf(b.width, b.height) > 1600) {
+                        val f = 1600f / maxOf(b.width, b.height)
+                        Bitmap.createScaledBitmap(b, (b.width * f).roundToInt(), (b.height * f).roundToInt(), true)
+                    } else b
+                    loaded.add(capped)
+                }
+                if (loaded.size >= 2) {
+                    collageMakerPhotos.clear()
+                    collageMakerPhotos.addAll(loaded)
+                    collageMakerSaved = false
+                    screen = Screen.Collage
+                } else if (loaded.isNotEmpty()) {
+                    busy = false
+                    busyLabel = ""
+                    snackbar.showSnackbar("Pick at least 2 photos for a collage.")
+                    return@launch
+                }
+            } catch (e: Exception) {
+                busy = false
+                busyLabel = ""
+                snackbar.showSnackbar("Could not load those photos - try JPG or PNG.")
+                return@launch
+            }
+            busy = false
+            busyLabel = ""
+        }
+    }
+
+    /** v0.16.9: save the collage shown in the preview (the preview IS the export, 1600px PNG). */
+    fun saveCollageMaker(result: Bitmap) {
+        scope.launch {
+            busy = true
+            busyLabel = "Saving…"
+            try {
+                val name = "collage-${System.currentTimeMillis()}.png"
+                val baos = java.io.ByteArrayOutputStream()
+                result.compress(Bitmap.CompressFormat.PNG, 100, baos)
+                withContext(Dispatchers.IO) { saveToGallery(context, name, "image/png", baos.toByteArray()) }
+                collageMakerSaved = true
+                busy = false
+                busyLabel = ""
+                snackbar.showSnackbar("Saved to your gallery as $name.")
+            } catch (e: Exception) {
+                busy = false
+                busyLabel = ""
+                snackbar.showSnackbar("Could not save. Try again.")
             }
         }
     }
@@ -2480,6 +2548,9 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
     val collagePicker = rememberLauncherForActivityResult(ActivityResultContracts.PickMultipleVisualMedia(4)) { uris ->
         if (uris.isNotEmpty()) loadCollagePhotos(uris)
     }
+    val collageMakerPicker = rememberLauncherForActivityResult(ActivityResultContracts.PickMultipleVisualMedia(9)) { uris ->
+        if (uris.isNotEmpty()) loadCollageMakerPhotos(uris)
+    }
     val convertPicker = rememberLauncherForActivityResult(ActivityResultContracts.PickMultipleVisualMedia(20)) { uris ->
         if (uris.isNotEmpty()) loadConvertPhotos(uris)
     }
@@ -2537,6 +2608,77 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
         if (coalesceMs > 0L && now - textLastGestureRecord < coalesceMs) return
         textLastGestureRecord = now
         textUndo.record(textLayers.toList())
+    }
+
+    /** v0.16.9 (his "Yes all 8" #8): classic meme top/bottom captions on the shared text engine. */
+    fun applyMeme(topText: String, bottomText: String) {
+        recordTextUndo()
+        fun styleMeme(l: TextOverlayUtils.TextLayer, text: String, y: Float) {
+            l.text = text.uppercase()
+            l.font = TextOverlayUtils.FontChoice.Black
+            l.bold = false
+            l.sizeFrac = 0.09f
+            l.colorArgb = 0xFFFFFFFF.toInt()
+            l.outlineFrac = 0.08f
+            l.outlineColorArgb = 0xFF000000.toInt()
+            l.bgColorArgb = 0
+            l.shadow = false
+            l.effect = TextOverlayUtils.TextEffect.NONE
+            l.cx = 0.5f
+            l.cy = y
+        }
+        if (topText.isNotBlank()) {
+            val existing = textLayers.firstOrNull { it.id == memeTopId }
+            if (existing != null) {
+                styleMeme(existing, topText, 0.10f)
+            } else {
+                var id = System.currentTimeMillis()
+                while (textLayers.any { it.id == id } || textImageLayers.any { it.id == id }) id++
+                val l = TextOverlayUtils.TextLayer(id = id)
+                styleMeme(l, topText, 0.10f)
+                textLayers.add(l)
+                memeTopId = id
+            }
+        }
+        if (bottomText.isNotBlank()) {
+            val existing = textLayers.firstOrNull { it.id == memeBottomId }
+            if (existing != null) {
+                styleMeme(existing, bottomText, 0.90f)
+            } else {
+                var id = System.currentTimeMillis() + 1
+                while (textLayers.any { it.id == id } || textImageLayers.any { it.id == id }) id++
+                val l = TextOverlayUtils.TextLayer(id = id)
+                styleMeme(l, bottomText, 0.90f)
+                textLayers.add(l)
+                memeBottomId = id
+            }
+        }
+        textResultBytes = null
+        textSaved = false
+        textTick++
+    }
+
+    /** v0.16.9 (his "Yes all 8" #6): remove the background of the selected image layer, fully on-device. */
+    fun removeBgOnSelectedImageLayer() {
+        val layer = textImageLayers.firstOrNull { it.id == textImageSelectedId } ?: return
+        scope.launch {
+            busy = true
+            busyLabel = "Removing background…"
+            try {
+                val cut = withContext(Dispatchers.IO) { BackgroundRemoval.cutOut(context, layer.bitmap) }
+                layer.bitmap = cut
+                textResultBytes = null
+                textSaved = false
+                textTick++
+                busy = false
+                busyLabel = ""
+                snackbar.showSnackbar("Background removed - drag the layer to place it.")
+            } catch (e: Exception) {
+                busy = false
+                busyLabel = ""
+                snackbar.showSnackbar("Could not remove the background on this one.")
+            }
+        }
     }
 
     fun selectedTextLayer(): TextOverlayUtils.TextLayer? = textLayers.firstOrNull { it.id == textSelectedId }
@@ -2918,6 +3060,21 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                 textTick++
             }
             act.intent.getStringExtra("pixelcraft.test.overlay")?.let { addTextImageLayer(Uri.fromFile(File(it))) }
+            // v0.16.9: deterministic meme content for UI tests ("top|bottom") - Robolectric
+            // semantics clicks deliver stale field text to the Apply button (documented in tests).
+            act.intent.getStringExtra("pixelcraft.test.memetext")?.let { spec ->
+                val parts = spec.split("|")
+                applyMeme(parts.getOrElse(0) { "" }, parts.getOrElse(1) { "" })
+            }
+        }
+        if (act?.intent?.getStringExtra("pixelcraft.test.collage") == "1") {
+            // Deterministic synthetic photos - the pickers cannot run under Robolectric.
+            for (i in 0..2) {
+                val b = Bitmap.createBitmap(400, 300, Bitmap.Config.ARGB_8888)
+                b.eraseColor(when (i) { 0 -> 0xFFF95F6A.toInt(); 1 -> 0xFF42BFEF.toInt(); else -> 0xFF3ECF8E.toInt() })
+                collageMakerPhotos.add(b)
+            }
+            screen = Screen.Collage
         }
     }
 
@@ -3216,6 +3373,127 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
         }
     }
 
+
+    @Composable
+    fun RenderTextPhoto(modifier: Modifier) {
+        TextOnPhotoScreen(
+            modifier = modifier,
+                bitmap = textPhotoBitmap,
+                name = textPhotoName,
+                sizeBytes = textPhotoBytes,
+                layers = textLayers,
+                tick = textTick,
+                selectedId = textSelectedId,
+                canUndo = textUndo.canUndo,
+                canRedo = textUndo.canRedo,
+                format = textFormat,
+                resultBytes = textResultBytes,
+                resultDims = textResultDims,
+                saved = textSaved,
+                editOpen = textEditOpen,
+                busy = busy,
+                onSelectPhoto = { textPhotoPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
+                onResetEdits = { resetTextEdits() },
+                filterId = textFilterId,
+                onFilter = { id -> textFilterId = id; textResultBytes = null; textSaved = false; textTick++ },
+                onSelectLayer = { textSelectedId = it; textImageSelectedId = null; textTick++ },
+                onAddLayer = { textImageSelectedId = null; addTextLayer() },
+                onDeleteLayer = { deleteTextLayer(it) },
+                onMoveLayer = { id, dir -> moveTextLayer(id, dir) },
+                onMutate = { coalesce, block -> mutateSelectedLayer(coalesce, block) },
+                imageLayers = textImageLayers,
+                selectedImageId = textImageSelectedId,
+                onAddImageLayer = { textImagePicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
+                onSelectImageLayer = { textImageSelectedId = it; textSelectedId = null; textTick++ },
+                onMutateImageLayer = { block -> mutateSelectedImageLayer(block) },
+                onTransform = { dx, dy, z, r ->
+                    if (textImageSelectedId != null && selectedImageLayer() != null) {
+                        mutateSelectedImageLayer { im ->
+                            im.cx = (im.cx + dx).coerceIn(0f, 1f)
+                            im.cy = (im.cy + dy).coerceIn(0f, 1f)
+                            im.widthFrac = (im.widthFrac * z).coerceIn(0.02f, 2f)
+                            im.rotation = (im.rotation + r) % 360f
+                        }
+                    } else {
+                        mutateSelectedLayer(1000L) { l ->
+                            l.cx = (l.cx + dx).coerceIn(0f, 1f)
+                            l.cy = (l.cy + dy).coerceIn(0f, 1f)
+                            l.scale = (l.scale * z).coerceIn(0.2f, 10f)
+                            l.rotation = (l.rotation + r) % 360f
+                        }
+                    }
+                },
+                onDoubleTapAt = { x, y ->
+                    val hit = textLayerAt(x, y)
+                    if (hit != null) { textSelectedId = hit.id; textImageSelectedId = null; textTick++; textEditOpen = true }
+                    else {
+                        val eff2 = textEffectiveSize()
+                        val im2 = textImageLayers.lastOrNull { TextOverlayUtils.imageLayerHit(it, x, y, eff2[0], eff2[1]) }
+                        if (im2 != null) { textImageSelectedId = im2.id; textSelectedId = null; textTick++ }
+                        else textEditOpen = true
+                    }
+                },
+                onDeleteImageLayer = { deleteImageLayer(it) },
+                onMoveImageLayer = { id, dir -> moveImageLayer(id, dir) },
+                onTapAt = { x, y ->
+                    // drawAll draws image layers UNDER text, so the TOP layer is text: hit-test text
+                    // first (textLayerAt walks topmost-first), then image layers (topmost first).
+                    // (v0.16.6 briefly had images first - corrected here to match the real draw order.)
+                    val hit = textLayerAt(x, y)
+                    if (hit != null) { textSelectedId = hit.id; textImageSelectedId = null; textTick++ }
+                    else {
+                        val eff = textEffectiveSize()
+                        val im = textImageLayers.lastOrNull { TextOverlayUtils.imageLayerHit(it, x, y, eff[0], eff[1]) }
+                        if (im != null) { textImageSelectedId = im.id; textSelectedId = null; textTick++ }
+                    }
+                },
+                onEditOpen = { textEditOpen = it },
+                onUndo = { undoTextLayers() },
+                onRedo = { redoTextLayers() },
+                onFormat = { textFormat = it; textResultBytes = null; textSaved = false },
+                onProcess = { processTextPhoto() },
+                onSave = { saveTextPhoto() },
+                cropRect = textCropRect,
+                cropLabel = textCropLabel,
+                cropAdjust = textCropAdjust,
+                canvasDims = textEffectiveSize().let { "${it[0]} × ${it[1]} px" },
+                onSetCrop = { label, rw, rh -> setTextCrop(label, rw, rh) },
+                onClearCrop = { clearTextCrop() },
+                onCropAdjust = { on ->
+                    textCropZoomAbs = 1f
+                    if (on && textCropRect == null) {
+                        // His "I want to zoom and crop" - Position must work WITHOUT picking a size first:
+                        // start from the full-photo frame; pinch zooms in, drag pans, Done keeps the region.
+                        textCropRect = floatArrayOf(0f, 0f, 1f, 1f)
+                        textCropLabel = "Custom"
+                    }
+                    if (!on && textCropLabel == "Custom" && textCropRect != null) {
+                        val r = textCropRect!!
+                        val untouched = kotlin.math.abs(r[0]) < 0.001f && kotlin.math.abs(r[1]) < 0.001f && kotlin.math.abs(r[2] - 1f) < 0.001f && kotlin.math.abs(r[3] - 1f) < 0.001f
+                        if (untouched) { textCropRect = null; textCropLabel = "" }
+                    }
+                    textCropAdjust = on
+                    textTick++
+                },
+                onCropNudge = { dx, dy -> nudgeTextCrop(dx, dy) },
+                onCropZoom = { z -> pinchTextCropZoom(z) },
+                cropZoomAbs = textCropZoomAbs,
+                onCropZoomAbs = { z -> setTextCropZoomAbs(z) },
+                onPickColourAt = { x, y, t -> pickColourAt(x, y, t) },
+                onFlipSelected = { flipSelectedLayer() },
+                onCloneSelected = { cloneSelectedLayer() },
+                onAddEmoji = { e -> addEmojiTextLayer(e) },
+                onAddSticker = { k, c -> addStickerLayer(k, c) },
+                onApplyMeme = { t, b -> applyMeme(t, b) },
+                onRemoveBgImageLayer = { removeBgOnSelectedImageLayer() },
+                stylePresets = textStylePresets,
+                onLoadStyles = { refreshTextStylePresets() },
+                onApplyStyle = { p -> applyTextStylePreset(p) },
+                onSaveStyle = { name -> saveTextStylePreset(name) }
+            
+        )
+    }
+
     if (showDimensionsSheet) {
         val bmp = workingBitmap
         DimensionsSheet(
@@ -3306,7 +3584,7 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
         containerColor = MaterialTheme.colorScheme.background,
         snackbarHost = { SnackbarHost(snackbar) },
         topBar = {
-            if (screen == Screen.Editor || screen == Screen.Export || screen == Screen.PrintHome || screen == Screen.PrintSetup || screen == Screen.PrintPreview || screen == Screen.PrintExport || screen == Screen.QueueOverview || screen == Screen.QueueResult || screen == Screen.Success || screen == Screen.SocialHome || screen == Screen.SocialPlatform || screen == Screen.SocialEdit || screen == Screen.ShopHome || screen == Screen.ShopOther || screen == Screen.ShopPlatform || screen == Screen.ShopEdit || screen == Screen.ShopCollage || screen == Screen.ConvertHome || screen == Screen.ConvertEdit || screen == Screen.ConvertResult || screen == Screen.CompressHome || screen == Screen.CompressSettings || screen == Screen.CompressResult) {
+            if (screen == Screen.Editor || screen == Screen.Export || screen == Screen.PrintHome || screen == Screen.PrintSetup || screen == Screen.PrintPreview || screen == Screen.PrintExport || screen == Screen.QueueOverview || screen == Screen.QueueResult || screen == Screen.Success || screen == Screen.SocialHome || screen == Screen.SocialPlatform || screen == Screen.SocialEdit || screen == Screen.ShopHome || screen == Screen.ShopOther || screen == Screen.ShopPlatform || screen == Screen.ShopEdit || screen == Screen.ShopCollage || screen == Screen.ConvertHome || screen == Screen.ConvertEdit || screen == Screen.ConvertResult || screen == Screen.CompressHome || screen == Screen.CompressSettings || screen == Screen.CompressResult || screen == Screen.Collage) {
                 TopAppBar(
                     title = {
                         Text(
@@ -3335,6 +3613,7 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                                 Screen.PrintPreview -> "Print Preview"
                                 Screen.PrintExport -> "Export Print File"
                                 Screen.TextPhoto -> "Text on Photo"
+                                Screen.Collage -> "Collage Maker"
                                 else -> "Print Size & DPI"
                             },
                             fontWeight = FontWeight.SemiBold
@@ -3491,6 +3770,11 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                             "Format Converter" -> screen = Screen.ConvertHome
                             "Compress" -> screen = Screen.CompressHome
                             "Text on Photo" -> { resetTextPhoto(); screen = Screen.TextPhoto }
+                            "Collage Maker" -> {
+                                collageMakerPhotos.clear()
+                                collageMakerSaved = false
+                                collageMakerPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+                            }
                             "Remove Background" -> {
                                 if (workingBitmap != null) { screen = Screen.Editor; tool = Tool.Background }
                                 else { pendingBgTool = true; pickPhotos() }
@@ -4004,119 +4288,19 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                 onSave = { saveCompressResult() },
                 onAgain = { resetCompress(); screen = Screen.CompressHome }
             )
-            Screen.TextPhoto -> TextOnPhotoScreen(
+            Screen.Collage -> CollageMakerScreen(
                 modifier = Modifier.padding(padding),
-                bitmap = textPhotoBitmap,
-                name = textPhotoName,
-                sizeBytes = textPhotoBytes,
-                layers = textLayers,
-                tick = textTick,
-                selectedId = textSelectedId,
-                canUndo = textUndo.canUndo,
-                canRedo = textUndo.canRedo,
-                format = textFormat,
-                resultBytes = textResultBytes,
-                resultDims = textResultDims,
-                saved = textSaved,
-                editOpen = textEditOpen,
+                photos = collageMakerPhotos,
+                gap = collageMakerGap,
+                bg = collageMakerBg,
+                saved = collageMakerSaved,
                 busy = busy,
-                onSelectPhoto = { textPhotoPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
-                onResetEdits = { resetTextEdits() },
-                filterId = textFilterId,
-                onFilter = { id -> textFilterId = id; textResultBytes = null; textSaved = false; textTick++ },
-                onSelectLayer = { textSelectedId = it; textImageSelectedId = null; textTick++ },
-                onAddLayer = { textImageSelectedId = null; addTextLayer() },
-                onDeleteLayer = { deleteTextLayer(it) },
-                onMoveLayer = { id, dir -> moveTextLayer(id, dir) },
-                onMutate = { coalesce, block -> mutateSelectedLayer(coalesce, block) },
-                imageLayers = textImageLayers,
-                selectedImageId = textImageSelectedId,
-                onAddImageLayer = { textImagePicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
-                onSelectImageLayer = { textImageSelectedId = it; textSelectedId = null; textTick++ },
-                onMutateImageLayer = { block -> mutateSelectedImageLayer(block) },
-                onTransform = { dx, dy, z, r ->
-                    if (textImageSelectedId != null && selectedImageLayer() != null) {
-                        mutateSelectedImageLayer { im ->
-                            im.cx = (im.cx + dx).coerceIn(0f, 1f)
-                            im.cy = (im.cy + dy).coerceIn(0f, 1f)
-                            im.widthFrac = (im.widthFrac * z).coerceIn(0.02f, 2f)
-                            im.rotation = (im.rotation + r) % 360f
-                        }
-                    } else {
-                        mutateSelectedLayer(1000L) { l ->
-                            l.cx = (l.cx + dx).coerceIn(0f, 1f)
-                            l.cy = (l.cy + dy).coerceIn(0f, 1f)
-                            l.scale = (l.scale * z).coerceIn(0.2f, 10f)
-                            l.rotation = (l.rotation + r) % 360f
-                        }
-                    }
-                },
-                onDoubleTapAt = { x, y ->
-                    val hit = textLayerAt(x, y)
-                    if (hit != null) { textSelectedId = hit.id; textImageSelectedId = null; textTick++; textEditOpen = true }
-                    else {
-                        val eff2 = textEffectiveSize()
-                        val im2 = textImageLayers.lastOrNull { TextOverlayUtils.imageLayerHit(it, x, y, eff2[0], eff2[1]) }
-                        if (im2 != null) { textImageSelectedId = im2.id; textSelectedId = null; textTick++ }
-                        else textEditOpen = true
-                    }
-                },
-                onDeleteImageLayer = { deleteImageLayer(it) },
-                onMoveImageLayer = { id, dir -> moveImageLayer(id, dir) },
-                onTapAt = { x, y ->
-                    // drawAll draws image layers UNDER text, so the TOP layer is text: hit-test text
-                    // first (textLayerAt walks topmost-first), then image layers (topmost first).
-                    // (v0.16.6 briefly had images first - corrected here to match the real draw order.)
-                    val hit = textLayerAt(x, y)
-                    if (hit != null) { textSelectedId = hit.id; textImageSelectedId = null; textTick++ }
-                    else {
-                        val eff = textEffectiveSize()
-                        val im = textImageLayers.lastOrNull { TextOverlayUtils.imageLayerHit(it, x, y, eff[0], eff[1]) }
-                        if (im != null) { textImageSelectedId = im.id; textSelectedId = null; textTick++ }
-                    }
-                },
-                onEditOpen = { textEditOpen = it },
-                onUndo = { undoTextLayers() },
-                onRedo = { redoTextLayers() },
-                onFormat = { textFormat = it; textResultBytes = null; textSaved = false },
-                onProcess = { processTextPhoto() },
-                onSave = { saveTextPhoto() },
-                cropRect = textCropRect,
-                cropLabel = textCropLabel,
-                cropAdjust = textCropAdjust,
-                canvasDims = textEffectiveSize().let { "${it[0]} × ${it[1]} px" },
-                onSetCrop = { label, rw, rh -> setTextCrop(label, rw, rh) },
-                onClearCrop = { clearTextCrop() },
-                onCropAdjust = { on ->
-                    textCropZoomAbs = 1f
-                    if (on && textCropRect == null) {
-                        // His "I want to zoom and crop" - Position must work WITHOUT picking a size first:
-                        // start from the full-photo frame; pinch zooms in, drag pans, Done keeps the region.
-                        textCropRect = floatArrayOf(0f, 0f, 1f, 1f)
-                        textCropLabel = "Custom"
-                    }
-                    if (!on && textCropLabel == "Custom" && textCropRect != null) {
-                        val r = textCropRect!!
-                        val untouched = kotlin.math.abs(r[0]) < 0.001f && kotlin.math.abs(r[1]) < 0.001f && kotlin.math.abs(r[2] - 1f) < 0.001f && kotlin.math.abs(r[3] - 1f) < 0.001f
-                        if (untouched) { textCropRect = null; textCropLabel = "" }
-                    }
-                    textCropAdjust = on
-                    textTick++
-                },
-                onCropNudge = { dx, dy -> nudgeTextCrop(dx, dy) },
-                onCropZoom = { z -> pinchTextCropZoom(z) },
-                cropZoomAbs = textCropZoomAbs,
-                onCropZoomAbs = { z -> setTextCropZoomAbs(z) },
-                onPickColourAt = { x, y, t -> pickColourAt(x, y, t) },
-                onFlipSelected = { flipSelectedLayer() },
-                onCloneSelected = { cloneSelectedLayer() },
-                onAddEmoji = { e -> addEmojiTextLayer(e) },
-                onAddSticker = { k, c -> addStickerLayer(k, c) },
-                stylePresets = textStylePresets,
-                onLoadStyles = { refreshTextStylePresets() },
-                onApplyStyle = { p -> applyTextStylePreset(p) },
-                onSaveStyle = { name -> saveTextStylePreset(name) }
+                onPick = { collageMakerPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
+                onGap = { collageMakerGap = it; collageMakerSaved = false },
+                onBg = { collageMakerBg = it; collageMakerSaved = false },
+                onSave = { saveCollageMaker(it) }
             )
+            Screen.TextPhoto -> RenderTextPhoto(Modifier.padding(padding))
             Screen.PrintHome -> PrintHomeScreen(
                 modifier = Modifier.padding(padding),
                 thumb = printThumb,
@@ -4320,6 +4504,203 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
     }
 }
 
+
+@Composable
+private fun EffectsLevel(selected: TextOverlayUtils.TextLayer?, testSheetLevel: String?, tick: Int, onMutate: (Long, (TextOverlayUtils.TextLayer) -> Unit) -> Unit) {
+                    // v0.16.8 Text Effects Pack (his "Yes all 8"): gradient, neon/glow, hollow + ready-made styles.
+                    Text("Text Effects", color = DeepNavy, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                    Spacer(Modifier.height(4.dp))
+                    Text(if (selected == null) "Tap a text layer on the photo first, then come back here." else "One tap changes the whole look. The preview on your photo is exactly what gets saved.", color = Slate, fontSize = 11.sp)
+                    Spacer(Modifier.height(8.dp))
+                    Text("Ready-made styles", color = DeepNavy, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                    Spacer(Modifier.height(6.dp))
+                    TextOverlayUtils.EFFECT_TEMPLATES.chunked(2).forEach { rowItems ->
+                        Row(Modifier.fillMaxWidth().padding(bottom = 8.dp)) {
+                            rowItems.forEach { tpl ->
+                                OutlinedButton(
+                                    onClick = { onMutate(0L) { l -> TextOverlayUtils.applyTemplate(l, tpl.name) } },
+                                    enabled = selected != null,
+                                    shape = RoundedCornerShape(12.dp),
+                                    modifier = Modifier.weight(1f).padding(end = 8.dp)
+                                ) {
+                                    Text("Ag", color = Color(tpl.previewArgb), fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                                    Spacer(Modifier.width(6.dp))
+                                    Text(tpl.name, color = DeepNavy, fontSize = 12.sp, maxLines = 1)
+                                }
+                            }
+                            repeat(2 - rowItems.size) { Spacer(Modifier.weight(1f).padding(end = 8.dp)) }
+                        }
+                    }
+                    Spacer(Modifier.height(4.dp))
+                    Text("Effect", color = DeepNavy, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                    Spacer(Modifier.height(6.dp))
+                    Row(Modifier.horizontalScroll(rememberScrollState())) {
+                        TextOverlayUtils.TextEffect.values().forEach { eff ->
+                            val selEff = selected?.effect == eff
+                            OutlinedButton(
+                                onClick = { onMutate(0L) { l -> l.effect = eff } },
+                                enabled = selected != null,
+                                shape = RoundedCornerShape(10.dp),
+                                colors = ButtonDefaults.outlinedButtonColors(containerColor = if (selEff) SkyBlue else Color.Transparent, contentColor = if (selEff) Color.White else DeepNavy),
+                                modifier = Modifier.padding(end = 8.dp)
+                            ) { Text(eff.label, fontSize = 12.sp) }
+                        }
+                    }
+                    if (selected?.effect == TextOverlayUtils.TextEffect.GRADIENT) {
+                        Spacer(Modifier.height(8.dp))
+                        Text("Gradient colours", color = DeepNavy, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                        Spacer(Modifier.height(6.dp))
+                        Row(Modifier.horizontalScroll(rememberScrollState())) {
+                            TextOverlayUtils.GRADIENT_PRESETS.forEach { gp ->
+                                val selG = selected?.gradientStartArgb == gp.startArgb && selected?.gradientEndArgb == gp.endArgb
+                                Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(end = 10.dp).clickable { onMutate(0L) { l -> l.gradientStartArgb = gp.startArgb; l.gradientEndArgb = gp.endArgb } }) {
+                                    Box(Modifier.size(44.dp).clip(RoundedCornerShape(10.dp)).background(Brush.linearGradient(listOf(Color(gp.startArgb), Color(gp.endArgb)))).border(if (selG) 3.dp else 1.dp, if (selG) SkyBlue else BorderGrey, RoundedCornerShape(10.dp)))
+                                    Spacer(Modifier.height(2.dp))
+                                    Text(gp.label, color = if (selG) SkyBlue else DeepNavy, fontSize = 11.sp)
+                                }
+                            }
+                        }
+                    }
+                    if (selected?.effect == TextOverlayUtils.TextEffect.NEON) {
+                        Spacer(Modifier.height(8.dp))
+                        Text("Glow colour", color = DeepNavy, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                        Spacer(Modifier.height(6.dp))
+                        Row(Modifier.horizontalScroll(rememberScrollState())) {
+                            (TextOverlayUtils.QUICK_COLORS + TextOverlayUtils.EXTRA_COLORS.take(6)).forEach { c ->
+                                val selC = selected?.glowColorArgb == c
+                                Box(Modifier.padding(end = 10.dp).size(34.dp).clip(RoundedCornerShape(17.dp)).background(Color(c)).border(if (selC) 3.dp else 1.dp, if (selC) SkyBlue else BorderGrey, RoundedCornerShape(17.dp)).clickable { onMutate(0L) { l -> l.glowColorArgb = c } })
+                            }
+                        }
+                    }
+                    if (testSheetLevel != null) Text("hook:effect=" + (selected?.effect?.name ?: "none") + " t" + tick, fontSize = 8.sp, color = BorderGrey)}
+
+@Composable
+private fun StickersLevel(testSheetLevel: String?, layerCount: Int, imageCount: Int, tick: Int, onAddEmoji: (String) -> Unit, onAddSticker: (TextOverlayUtils.StickerKind, Int) -> Unit) {
+                    // v0.16.8 (his "Yes all 8"): stickers & emoji - tap to add, then drag/resize/rotate on the photo.
+                    Text("Stickers & Emoji", color = DeepNavy, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                    Spacer(Modifier.height(4.dp))
+                    Text("Tap to add one - then drag, resize or rotate it on the photo. Shapes sit under your text; emoji act like text.", color = Slate, fontSize = 11.sp)
+                    Spacer(Modifier.height(8.dp))
+                    Text("Shapes", color = DeepNavy, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                    Spacer(Modifier.height(6.dp))
+                    Row(Modifier.horizontalScroll(rememberScrollState())) {
+                        TextOverlayUtils.STICKERS.forEach { st ->
+                            val stickerBmp = remember(st.kind) { TextOverlayUtils.makeStickerBitmap(st.kind, 128, st.colorArgb) }
+                            OutlinedButton(
+                                onClick = { onAddSticker(st.kind, st.colorArgb) },
+                                shape = RoundedCornerShape(12.dp),
+                                modifier = Modifier.padding(end = 8.dp)
+                            ) {
+                                Image(bitmap = stickerBmp.asImageBitmap(), contentDescription = st.label, modifier = Modifier.size(28.dp))
+                                Spacer(Modifier.width(6.dp))
+                                Text(st.label, color = DeepNavy, fontSize = 12.sp)
+                            }
+                        }
+                    }
+                    Spacer(Modifier.height(10.dp))
+                    Text("Emoji", color = DeepNavy, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                    Spacer(Modifier.height(6.dp))
+                    var emojiCat by remember { mutableStateOf(0) }
+                    Row(Modifier.horizontalScroll(rememberScrollState())) {
+                        TextOverlayUtils.EMOJI_CATEGORIES.forEachIndexed { i, cat ->
+                            OutlinedButton(
+                                onClick = { emojiCat = i },
+                                shape = RoundedCornerShape(10.dp),
+                                colors = ButtonDefaults.outlinedButtonColors(containerColor = if (emojiCat == i) SkyBlue else Color.Transparent, contentColor = if (emojiCat == i) Color.White else DeepNavy),
+                                modifier = Modifier.padding(end = 8.dp)
+                            ) { Text(cat.first, fontSize = 12.sp) }
+                        }
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    TextOverlayUtils.EMOJI_CATEGORIES[emojiCat.coerceIn(0, TextOverlayUtils.EMOJI_CATEGORIES.size - 1)].second.chunked(5).forEach { rowItems ->
+                        Row(Modifier.fillMaxWidth().padding(bottom = 4.dp)) {
+                            rowItems.forEach { emoji ->
+                                Text(emoji, fontSize = 26.sp, textAlign = androidx.compose.ui.text.style.TextAlign.Center, modifier = Modifier.weight(1f).clickable { onAddEmoji(emoji) })
+                            }
+                            repeat(5 - rowItems.size) { Spacer(Modifier.weight(1f)) }
+                        }
+                    }
+                    if (testSheetLevel != null) Text("hook:layers=" + layerCount + ",images=" + imageCount + " t" + tick, fontSize = 8.sp, color = BorderGrey)}
+
+@Composable
+private fun MemeLevel(testSheetLevel: String?, layerCount: Int, imageCount: Int, tick: Int, onApplyMeme: (String, String) -> Unit) {
+                    // v0.16.9 Meme Maker (his "Yes all 8" #8): classic top/bottom captions in one tap.
+                    var memeTop by remember { mutableStateOf("") }
+                    var memeBottom by remember { mutableStateOf("") }
+                    Text("Meme Maker", color = DeepNavy, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                    Spacer(Modifier.height(4.dp))
+                    Text("Type your lines - they land on the photo in the classic meme style. Drag them anywhere after.", color = Slate, fontSize = 11.sp)
+                    Spacer(Modifier.height(8.dp))
+                    OutlinedTextField(value = memeTop, onValueChange = { memeTop = it }, singleLine = true, label = { Text("Top text") }, modifier = Modifier.fillMaxWidth())
+                    Spacer(Modifier.height(8.dp))
+                    OutlinedTextField(value = memeBottom, onValueChange = { memeBottom = it }, singleLine = true, label = { Text("Bottom text") }, modifier = Modifier.fillMaxWidth())
+                    Spacer(Modifier.height(10.dp))
+                    Button(onClick = { onApplyMeme(memeTop, memeBottom) }, enabled = memeTop.isNotBlank() || memeBottom.isNotBlank(), modifier = Modifier.fillMaxWidth().height(46.dp), colors = ButtonDefaults.buttonColors(containerColor = SkyBlue, contentColor = Color.White), shape = RoundedCornerShape(14.dp)) { Text("Apply Meme Text", fontWeight = FontWeight.Bold) }
+                    if (testSheetLevel != null) Text("hook:layers=" + layerCount + ",images=" + imageCount + " t" + tick, fontSize = 8.sp, color = BorderGrey)}
+
+@Composable
+private fun CollageMakerScreen(
+    modifier: Modifier,
+    photos: List<Bitmap>,
+    gap: Float,
+    bg: String,
+    saved: Boolean,
+    busy: Boolean,
+    onPick: () -> Unit,
+    onGap: (Float) -> Unit,
+    onBg: (String) -> Unit,
+    onSave: (Bitmap) -> Unit
+) {
+    Column(modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp)) {
+        Spacer(Modifier.height(12.dp))
+        if (photos.size < 2) {
+            Text("Pick 2 to 9 photos to start your collage.", color = Slate, fontSize = 13.sp)
+            Spacer(Modifier.height(10.dp))
+            Button(onClick = onPick, modifier = Modifier.fillMaxWidth().height(50.dp), colors = ButtonDefaults.buttonColors(containerColor = Orange, contentColor = Color.White), shape = RoundedCornerShape(14.dp)) {
+                Icon(Icons.Default.Image, contentDescription = null)
+                Spacer(Modifier.width(8.dp))
+                Text("Pick Photos", fontWeight = FontWeight.Bold)
+            }
+        } else {
+            // The preview is built through the SAME engine as the saved file - what he sees is what he gets.
+            val result = remember(photos.toList(), gap, bg) {
+                Transforms.collageGrid(photos, 1600, 1600, (gap * 4).roundToInt().coerceAtLeast(0), if (bg == "Black") android.graphics.Color.BLACK else android.graphics.Color.WHITE)
+            }
+            Image(
+                bitmap = result.asImageBitmap(),
+                contentDescription = "Collage preview",
+                contentScale = ContentScale.Fit,
+                modifier = Modifier.fillMaxWidth().height(340.dp).clip(RoundedCornerShape(14.dp)).background(SoftGrey).border(1.dp, BorderGrey, RoundedCornerShape(14.dp))
+            )
+            Spacer(Modifier.height(8.dp))
+            Text("${photos.size} photos · square 1600 × 1600 · PNG", color = Slate, fontSize = 12.sp)
+            Spacer(Modifier.height(6.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("Gap", color = Slate, fontSize = 12.sp)
+                Slider(value = gap, onValueChange = onGap, valueRange = 0f..24f, modifier = Modifier.weight(1f).padding(horizontal = 8.dp))
+                Text("${gap.toInt()}", color = DeepNavy, fontSize = 12.sp)
+            }
+            Row {
+                listOf("White", "Black").forEach { opt ->
+                    OutlinedButton(
+                        onClick = { onBg(opt) },
+                        shape = RoundedCornerShape(10.dp),
+                        colors = ButtonDefaults.outlinedButtonColors(containerColor = if (bg == opt) SkyBlue else Color.Transparent, contentColor = if (bg == opt) Color.White else DeepNavy)
+                    ) { Text(opt + " background", fontSize = 12.sp) }
+                    Spacer(Modifier.width(8.dp))
+                }
+            }
+            Spacer(Modifier.height(10.dp))
+            Button(onClick = { onSave(result) }, enabled = !busy && !saved, modifier = Modifier.fillMaxWidth().height(50.dp), colors = ButtonDefaults.buttonColors(containerColor = Orange, contentColor = Color.White), shape = RoundedCornerShape(14.dp)) {
+                Text(if (saved) "Saved ✓ - see your gallery" else "Save to Gallery", fontWeight = FontWeight.Bold)
+            }
+            Spacer(Modifier.height(8.dp))
+            OutlinedButton(onClick = onPick, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(14.dp)) { Text("Pick different photos", color = DeepNavy) }
+        }
+        Spacer(Modifier.height(16.dp))
+    }
+}
+
 @Composable
 private fun HomeScreen(
     modifier: Modifier,
@@ -4341,6 +4722,7 @@ private fun HomeScreen(
         Feature("Format Converter", "Any format to any format", "⇄"),
         Feature("Compress", "Reduce file size", "↓"),
         Feature("Text on Photo", "Add text to images", "T"),
+        Feature("Collage Maker", "Combine 2-9 photos", "⊞"),
         Feature("Print Size & DPI", "Ready images for printing", "◉")
     )
     Column(modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).padding(horizontal = 16.dp).verticalScroll(rememberScrollState())) {
@@ -9357,6 +9739,8 @@ private fun TextOnPhotoScreen(
     onCloneSelected: () -> Unit,
     onAddEmoji: (String) -> Unit,
     onAddSticker: (TextOverlayUtils.StickerKind, Int) -> Unit,
+    onApplyMeme: (String, String) -> Unit,
+    onRemoveBgImageLayer: () -> Unit,
     stylePresets: List<TextStylePreset>,
     onLoadStyles: () -> Unit,
     onApplyStyle: (TextStylePreset) -> Unit,
@@ -9667,6 +10051,8 @@ private fun TextOnPhotoScreen(
                                     )
                                     Text("${(selectedImage.opacity * 100).toInt()}%", color = DeepNavy, fontSize = 12.sp)
                                 }
+                                Button(onClick = { onRemoveBgImageLayer() }, enabled = !busy, modifier = Modifier.fillMaxWidth().height(44.dp), colors = ButtonDefaults.buttonColors(containerColor = Orange, contentColor = Color.White), shape = RoundedCornerShape(12.dp)) { Text("Remove background", fontWeight = FontWeight.Bold) }
+                                Spacer(Modifier.height(6.dp))
                                 OutlinedButton(onClick = { onDeleteImageLayer(selectedImage.id) }, modifier = Modifier.fillMaxWidth()) {
                                     Icon(Icons.Default.Delete, contentDescription = null, tint = DeepNavy, modifier = Modifier.size(16.dp))
                                     Spacer(Modifier.width(4.dp))
@@ -10181,121 +10567,9 @@ private fun TextOnPhotoScreen(
                     Button(onClick = onCloneSelected, enabled = selected != null || selectedImage != null, modifier = Modifier.fillMaxWidth().height(46.dp), colors = ButtonDefaults.buttonColors(containerColor = Orange, contentColor = Color.White), shape = RoundedCornerShape(14.dp)) { Text("Duplicate Layer", fontWeight = FontWeight.Bold) }
                     if (testSheetLevel != null) Text("hook:layers=" + layers.size + ",images=" + imageLayers.size, fontSize = 8.sp, color = BorderGrey)
                     }
-                    "effects" -> {
-                    // v0.16.8 Text Effects Pack (his "Yes all 8"): gradient, neon/glow, hollow + ready-made styles.
-                    Text("Text Effects", color = DeepNavy, fontWeight = FontWeight.Bold, fontSize = 16.sp)
-                    Spacer(Modifier.height(4.dp))
-                    Text(if (selected == null) "Tap a text layer on the photo first, then come back here." else "One tap changes the whole look. The preview on your photo is exactly what gets saved.", color = Slate, fontSize = 11.sp)
-                    Spacer(Modifier.height(8.dp))
-                    Text("Ready-made styles", color = DeepNavy, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
-                    Spacer(Modifier.height(6.dp))
-                    TextOverlayUtils.EFFECT_TEMPLATES.chunked(2).forEach { rowItems ->
-                        Row(Modifier.fillMaxWidth().padding(bottom = 8.dp)) {
-                            rowItems.forEach { tpl ->
-                                OutlinedButton(
-                                    onClick = { onMutate(0L) { l -> TextOverlayUtils.applyTemplate(l, tpl.name) } },
-                                    enabled = selected != null,
-                                    shape = RoundedCornerShape(12.dp),
-                                    modifier = Modifier.weight(1f).padding(end = 8.dp)
-                                ) {
-                                    Text("Ag", color = Color(tpl.previewArgb), fontWeight = FontWeight.Bold, fontSize = 16.sp)
-                                    Spacer(Modifier.width(6.dp))
-                                    Text(tpl.name, color = DeepNavy, fontSize = 12.sp, maxLines = 1)
-                                }
-                            }
-                            repeat(2 - rowItems.size) { Spacer(Modifier.weight(1f).padding(end = 8.dp)) }
-                        }
-                    }
-                    Spacer(Modifier.height(4.dp))
-                    Text("Effect", color = DeepNavy, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
-                    Spacer(Modifier.height(6.dp))
-                    Row(Modifier.horizontalScroll(rememberScrollState())) {
-                        TextOverlayUtils.TextEffect.values().forEach { eff ->
-                            val selEff = selected?.effect == eff
-                            OutlinedButton(
-                                onClick = { onMutate(0L) { l -> l.effect = eff } },
-                                enabled = selected != null,
-                                shape = RoundedCornerShape(10.dp),
-                                colors = ButtonDefaults.outlinedButtonColors(containerColor = if (selEff) SkyBlue else Color.Transparent, contentColor = if (selEff) Color.White else DeepNavy),
-                                modifier = Modifier.padding(end = 8.dp)
-                            ) { Text(eff.label, fontSize = 12.sp) }
-                        }
-                    }
-                    if (selected?.effect == TextOverlayUtils.TextEffect.GRADIENT) {
-                        Spacer(Modifier.height(8.dp))
-                        Text("Gradient colours", color = DeepNavy, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
-                        Spacer(Modifier.height(6.dp))
-                        Row(Modifier.horizontalScroll(rememberScrollState())) {
-                            TextOverlayUtils.GRADIENT_PRESETS.forEach { gp ->
-                                val selG = selected?.gradientStartArgb == gp.startArgb && selected?.gradientEndArgb == gp.endArgb
-                                Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(end = 10.dp).clickable { onMutate(0L) { l -> l.gradientStartArgb = gp.startArgb; l.gradientEndArgb = gp.endArgb } }) {
-                                    Box(Modifier.size(44.dp).clip(RoundedCornerShape(10.dp)).background(Brush.linearGradient(listOf(Color(gp.startArgb), Color(gp.endArgb)))).border(if (selG) 3.dp else 1.dp, if (selG) SkyBlue else BorderGrey, RoundedCornerShape(10.dp)))
-                                    Spacer(Modifier.height(2.dp))
-                                    Text(gp.label, color = if (selG) SkyBlue else DeepNavy, fontSize = 11.sp)
-                                }
-                            }
-                        }
-                    }
-                    if (selected?.effect == TextOverlayUtils.TextEffect.NEON) {
-                        Spacer(Modifier.height(8.dp))
-                        Text("Glow colour", color = DeepNavy, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
-                        Spacer(Modifier.height(6.dp))
-                        Row(Modifier.horizontalScroll(rememberScrollState())) {
-                            (TextOverlayUtils.QUICK_COLORS + TextOverlayUtils.EXTRA_COLORS.take(6)).forEach { c ->
-                                val selC = selected?.glowColorArgb == c
-                                Box(Modifier.padding(end = 10.dp).size(34.dp).clip(RoundedCornerShape(17.dp)).background(Color(c)).border(if (selC) 3.dp else 1.dp, if (selC) SkyBlue else BorderGrey, RoundedCornerShape(17.dp)).clickable { onMutate(0L) { l -> l.glowColorArgb = c } })
-                            }
-                        }
-                    }
-                    if (testSheetLevel != null) Text("hook:effect=" + (selected?.effect?.name ?: "none"), fontSize = 8.sp, color = BorderGrey)
-                    }
-                    "stickers" -> {
-                    // v0.16.8 (his "Yes all 8"): stickers & emoji - tap to add, then drag/resize/rotate on the photo.
-                    Text("Stickers & Emoji", color = DeepNavy, fontWeight = FontWeight.Bold, fontSize = 16.sp)
-                    Spacer(Modifier.height(4.dp))
-                    Text("Tap to add one - then drag, resize or rotate it on the photo. Shapes sit under your text; emoji act like text.", color = Slate, fontSize = 11.sp)
-                    Spacer(Modifier.height(8.dp))
-                    Text("Shapes", color = DeepNavy, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
-                    Spacer(Modifier.height(6.dp))
-                    Row(Modifier.horizontalScroll(rememberScrollState())) {
-                        TextOverlayUtils.STICKERS.forEach { st ->
-                            val stickerBmp = remember(st.kind) { TextOverlayUtils.makeStickerBitmap(st.kind, 128, st.colorArgb) }
-                            OutlinedButton(
-                                onClick = { onAddSticker(st.kind, st.colorArgb) },
-                                shape = RoundedCornerShape(12.dp),
-                                modifier = Modifier.padding(end = 8.dp)
-                            ) {
-                                Image(bitmap = stickerBmp.asImageBitmap(), contentDescription = st.label, modifier = Modifier.size(28.dp))
-                                Spacer(Modifier.width(6.dp))
-                                Text(st.label, color = DeepNavy, fontSize = 12.sp)
-                            }
-                        }
-                    }
-                    Spacer(Modifier.height(10.dp))
-                    Text("Emoji", color = DeepNavy, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
-                    Spacer(Modifier.height(6.dp))
-                    var emojiCat by remember { mutableStateOf(0) }
-                    Row(Modifier.horizontalScroll(rememberScrollState())) {
-                        TextOverlayUtils.EMOJI_CATEGORIES.forEachIndexed { i, cat ->
-                            OutlinedButton(
-                                onClick = { emojiCat = i },
-                                shape = RoundedCornerShape(10.dp),
-                                colors = ButtonDefaults.outlinedButtonColors(containerColor = if (emojiCat == i) SkyBlue else Color.Transparent, contentColor = if (emojiCat == i) Color.White else DeepNavy),
-                                modifier = Modifier.padding(end = 8.dp)
-                            ) { Text(cat.first, fontSize = 12.sp) }
-                        }
-                    }
-                    Spacer(Modifier.height(8.dp))
-                    TextOverlayUtils.EMOJI_CATEGORIES[emojiCat.coerceIn(0, TextOverlayUtils.EMOJI_CATEGORIES.size - 1)].second.chunked(5).forEach { rowItems ->
-                        Row(Modifier.fillMaxWidth().padding(bottom = 4.dp)) {
-                            rowItems.forEach { emoji ->
-                                Text(emoji, fontSize = 26.sp, textAlign = androidx.compose.ui.text.style.TextAlign.Center, modifier = Modifier.weight(1f).clickable { onAddEmoji(emoji) })
-                            }
-                            repeat(5 - rowItems.size) { Spacer(Modifier.weight(1f)) }
-                        }
-                    }
-                    if (testSheetLevel != null) Text("hook:layers=" + layers.size + ",images=" + imageLayers.size, fontSize = 8.sp, color = BorderGrey)
-                    }
+                    "effects" -> { EffectsLevel(selected, testSheetLevel, tick, onMutate) }
+                    "stickers" -> { StickersLevel(testSheetLevel, layers.size, imageLayers.size, tick, onAddEmoji, onAddSticker) }
+                    "meme" -> { MemeLevel(testSheetLevel, layers.size, imageLayers.size, tick, onApplyMeme) }
                     "save" -> {
                     // ---- Save Photo ----
                     Text("Process & Save", color = DeepNavy, fontWeight = FontWeight.Bold, fontSize = 16.sp)
@@ -10347,11 +10621,11 @@ private fun TextOnPhotoScreen(
                             Triple("Image Size", Icons.Default.PhotoSizeSelectLarge, { sheetLevel = "size" }),
                             Triple("Layers", Icons.Default.Collections, { sheetLevel = "layers" }),
                             Triple("Filters", Icons.Default.Tune, { sheetLevel = "filters" }),
-                            Triple("Process", Icons.Default.CheckCircle, { sheetLevel = "save"; if (resultBytes == null && !busy) onProcess() }),   // v0.16.7: ONE tap - tile opens the level AND runs processing
                             Triple("Pick Colour", Icons.Default.Colorize, { sheetLevel = "pickcolour" }),
                             Triple("Flip & Clone", Icons.Default.Flip, { sheetLevel = "flipclone" }),
                             Triple("Effects", Icons.Default.AutoAwesome, { sheetLevel = "effects" }),
-                            Triple("Stickers", Icons.Default.EmojiEmotions, { sheetLevel = "stickers" })
+                            Triple("Stickers", Icons.Default.EmojiEmotions, { sheetLevel = "stickers" }),
+                            Triple("Meme", Icons.Default.Title, { sheetLevel = "meme" })
                         ).chunked(3).forEach { rowItems ->
                             Row(Modifier.fillMaxWidth().padding(bottom = 8.dp)) {
                                 rowItems.forEach { (label, icon, action) ->
@@ -10369,6 +10643,20 @@ private fun TextOnPhotoScreen(
                                 }
                                 repeat(3 - rowItems.size) { Spacer(Modifier.weight(1f).padding(end = 8.dp)) }
                             }
+                        }
+                        Spacer(Modifier.height(4.dp))
+                        // v0.16.9 (his "Process button keep in last" + "make rectangle"): the primary
+                        // action sits BELOW the grid as a full-width rectangle, orange like Export.
+                        Button(
+                            onClick = { sheetLevel = "save"; if (resultBytes == null && !busy) onProcess() },
+                            enabled = !busy,
+                            modifier = Modifier.fillMaxWidth().height(52.dp),
+                            colors = ButtonDefaults.buttonColors(containerColor = Orange, contentColor = Color.White),
+                            shape = RoundedCornerShape(14.dp)
+                        ) {
+                            Icon(Icons.Default.CheckCircle, contentDescription = null, tint = Color.White)
+                            Spacer(Modifier.width(8.dp))
+                            Text("Process", fontWeight = FontWeight.Bold)
                         }
                     }
                 }

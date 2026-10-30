@@ -224,6 +224,38 @@ object Transforms {
         return out
     }
 
+    /**
+     * v0.16.9 standalone Collage Maker (his "Yes all 8" #7): 2-9 photos. 2-4 keep the classic
+     * layouts above; 5-9 use a uniform grid (2 cols for 5-6, 3 cols for 7-9; an unused last
+     * cell stays the background colour).
+     */
+    fun collageGrid(photos: List<Bitmap>, tw: Int, th: Int, gapPx: Int, bgColor: Int): Bitmap {
+        if (photos.size <= 4) return collage(photos, tw, th, gapPx, bgColor)
+        val n = photos.size.coerceIn(5, 9)
+        val cols = if (n <= 6) 2 else 3
+        val rows = (n + cols - 1) / cols
+        val out = Bitmap.createBitmap(tw, th, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(out)
+        canvas.drawColor(bgColor)
+        val g = gapPx.toFloat()
+        val cw = (tw - (cols - 1) * g) / cols
+        val ch = (th - (rows - 1) * g) / rows
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
+        photos.take(n).forEachIndexed { i, photo ->
+            val r = i / cols
+            val c = i % cols
+            val cell = RectF(c * (cw + g), r * (ch + g), c * (cw + g) + cw, r * (ch + g) + ch)
+            val base = max(cell.width() / photo.width, cell.height() / photo.height)
+            val dw = photo.width * base
+            val dh = photo.height * base
+            canvas.save()
+            canvas.clipRect(cell)
+            canvas.drawBitmap(photo, null, RectF(cell.left + (cell.width() - dw) / 2f, cell.top + (cell.height() - dh) / 2f, cell.left + (cell.width() + dw) / 2f, cell.top + (cell.height() + dh) / 2f), paint)
+            canvas.restore()
+        }
+        return out
+    }
+
     fun cropRegion(src: Bitmap, rectPx: IntArray): Bitmap =
         Bitmap.createBitmap(src, rectPx[0], rectPx[1], rectPx[2] - rectPx[0], rectPx[3] - rectPx[1])
 

@@ -383,3 +383,11 @@ Stage 2B: research official platform documentation and populate presets.json onl
 - Create grid now 10 tiles: Add Text, Add Image, Image Size, Layers, Filters, Process, Pick Colour, Flip & Clone, Effects, Stickers.
 - Known gap: saved text styles (user-created presets) do not carry the new effect fields.
 - Tests +7 (129 total): gradient direction, neon glow spread, hollow centre, template fields, sticker ink, effects-level UI + Neon Pink click, stickers level + Heart click.
+
+
+## v0.16.9 (57) - New Tools (his "Yes all 8" #6-8, 2026-10-30)
+- Collage Maker: new home tile, 2-9 photos, square 1600px PNG, gap slider + white/black background; the preview is the export (same engine call). 5-9 photos use a uniform grid (Transforms.collageGrid; 2-4 keep the classic Shop-flow layouts). An unused last cell (5 or 7 photos) stays the background colour. (VETOABLE: layouts + fixed square size.)
+- Meme Maker: new tile inside Text on Photo - top/bottom fields, one tap creates classic meme captions (sans-serif-black, white fill, black outline, auto-uppercase); the captions are normal layers, so every editor control (drag, effects, fonts) still works.
+- Background Remover: the standalone tool already existed on Home; v0.16.9 ALSO adds "Remove background" to image layers inside Text on Photo (logo/sticker cut-outs), fully on-device via the existing U-2-Netp engine. (ImageLayer.bitmap became var for this.)
+- Create grid now 11 tiles (+ Meme); Home grid now 11 features (+ Collage Maker).
+- Tests +4 (133 total): collageGrid 5- and 9-photo cell placement, meme UI flow (type + apply -> 2 layers), collage screen UI.

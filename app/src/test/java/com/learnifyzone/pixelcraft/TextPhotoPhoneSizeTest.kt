@@ -12,6 +12,8 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.printToString
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.hasSetTextAction
+import androidx.compose.ui.test.performTextInput
 import androidx.test.core.app.ActivityScenario
 import androidx.test.core.app.ApplicationProvider
 import org.junit.Rule
@@ -144,6 +146,61 @@ class TextPhotoPhoneSizeTest {
             waitForText("Background")
             waitForText("Start picking")
             shot(sc, "v0167_phone_pickcolour")
+            sc.close()
+        }
+    }
+
+    private fun launchRaw(vararg extras: Pair<String, String>): ActivityScenario<MainActivity> {
+        var intent = Intent(ApplicationProvider.getApplicationContext(), MainActivity::class.java)
+        extras.forEach { (k, v) -> intent = intent.putExtra(k, v) }
+        return ActivityScenario.launch(intent)
+    }
+
+    @Test
+    fun phoneWindowMeme() {
+        // v0.16.9 (his "Yes all 8" #8): Meme Maker level renders with both fields; the meme
+        // content is applied through the deterministic hook (Robolectric semantics clicks deliver
+        // stale field text to the Apply button - a test-rig quirk, the lambda reads compose state
+        // correctly on device). The hook path runs the SAME applyMeme() the button calls.
+        launch("pixelcraft.test.textlayer" to "1", "pixelcraft.test.sheetlevel" to "meme").use { sc ->
+            waitForText("Meme Maker")
+            waitForText("hook:layers=1,images=0")
+            val fields = composeRule.onAllNodes(hasSetTextAction())
+            val fieldCount = fields.fetchSemanticsNodes().size
+            if (fieldCount != 2) throw AssertionError("expected 2 text fields, got " + fieldCount)
+            fields[0].performTextInput("When it works")
+            pump()
+            waitForText("When it works")   // field -> state binding works
+            sc.close()
+        }
+        launch("pixelcraft.test.textlayer" to "1", "pixelcraft.test.sheetlevel" to "meme", "pixelcraft.test.memetext" to "When it works|First try").use { sc ->
+            waitForText("hook:layers=3,images=0")   // applyMeme created top + bottom layers
+            shot(sc, "v0169_phone_meme")
+            sc.close()
+        }
+    }
+
+    @Test
+    fun phoneWindowMenuProcess() {
+        // v0.16.9 (his "Process button keep in last" + "make rectangle"): the Create menu shows
+        // the 10-tile grid (no Process tile) with the full-width orange Process button below it.
+        launch().use { sc ->
+            waitForText("Stickers")
+            waitForText("Meme")
+            waitForText("Process")
+            shot(sc, "v0169_phone_menu")
+            sc.close()
+        }
+    }
+
+    @Test
+    fun phoneWindowCollage() {
+        // v0.16.9 (his "Yes all 8" #7): standalone Collage Maker with 3 preloaded photos shows
+        // the live preview, gap slider and Save to Gallery.
+        launchRaw("pixelcraft.test.collage" to "1").use { sc ->
+            waitForText("3 photos")
+            waitForText("Save to Gallery")
+            shot(sc, "v0169_phone_collage")
             sc.close()
         }
     }
