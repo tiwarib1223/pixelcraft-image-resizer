@@ -365,6 +365,7 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
     var pendingPreset by remember { mutableStateOf<Preset?>(null) }
     var pendingBgTool by remember { mutableStateOf(false) }
     var pendingCropTool by remember { mutableStateOf(false) }
+    var pendingExportTest by remember { mutableStateOf(false) }
     var cropRect by remember { mutableStateOf(CropMath.defaultRect()) }
     var cropAspect by rememberSaveable { mutableStateOf("Free") }
     var straightenAngle by rememberSaveable { mutableStateOf(0f) }
@@ -571,6 +572,8 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
     var batchSaveNote by remember { mutableStateOf<String?>(null) }
     val processedResults = remember { mutableStateMapOf<String, ProcessedResult>() }
     var pendingLaunch by remember { mutableStateOf<String?>(null) }
+    // In-app overwrite confirmation (his approved reference flow): shown before the system consent dialog.
+    var confirmReplaceCount by remember { mutableStateOf(0) }
     var chosenFormat by rememberSaveable { mutableStateOf("original") }
     var sizeUnit by rememberSaveable { mutableStateOf("px") }
     var resizeDpi by rememberSaveable { mutableStateOf("300") }
@@ -715,6 +718,14 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                     shopTarget?.let { t -> shopRect = CropMath.maxRectForRatio(t.w.toFloat() / t.h.toFloat(), loaded.width, loaded.height) }
                     screen = if (shopTarget != null) Screen.ShopEdit else Screen.ShopHome
                 }
+                if (pendingExportTest) {
+                    // Test hook: jump straight to the shared Export screen with a processed result,
+                    // so the save/replace UI can be exercised on the JVM.
+                    pendingExportTest = false
+                    processedBitmap = loaded
+                    estimatedBytes = 0L
+                    screen = Screen.Export
+                }
                 if (pendingConvertTool) {
                     pendingConvertTool = false
                     convertUris.add(uri)
@@ -768,6 +779,7 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
         if (!testPath.isNullOrBlank() && sourceUri == null && workingBitmap == null) {
             val testTool = (context as? Activity)?.intent?.getStringExtra("pixelcraft.test.tool")
             if (testTool == "crop") pendingCropTool = true
+            if (testTool == "export") pendingExportTest = true
             if (testTool == "circle") pendingCircleTool = true
             if (testTool == "social") pendingSocialTool = true
             if (testTool == "shop") pendingShopTool = true
@@ -2483,7 +2495,7 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
     fun requestBatchReplace() {
         if (photoQueue.isEmpty()) return
         if (Build.VERSION.SDK_INT >= 30) {
-            pendingLaunch = "replaceBatch"
+            confirmReplaceCount = photoQueue.size
         } else {
             scope.launch { snackbar.showSnackbar("Replace original needs Android 11 or newer. Use 'Save as new files' instead.") }
         }
@@ -2733,7 +2745,7 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
     fun requestReplaceOriginal() {
         if (sourceUri == null) return
         if (Build.VERSION.SDK_INT >= 30) {
-            pendingLaunch = "replace"
+            confirmReplaceCount = 1
         } else {
             scope.launch { snackbar.showSnackbar("Replace original needs Android 11 or newer. Use 'Save as new file' instead.") }
         }
@@ -3653,31 +3665,49 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                     multiPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
                 } catch (e: IllegalArgumentException) {
                     // Very old pickers enforce a lower system maximum; fall back to no app-side limit.
-                    multiPickerUnlimited.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+                    try {
+                        multiPickerUnlimited.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+                    } catch (e2: Exception) {
+                        scope.launch { snackbar.showSnackbar("Could not open the photo picker on this phone.") }
+                    }
                 }
             }
             "camera" -> {
-                val dir = File(context.cacheDir, "images").apply { mkdirs() }
-                val file = File(dir, "capture_${System.currentTimeMillis()}.jpg")
-                val uri = FileProvider.getUriForFile(context, context.packageName + ".fileprovider", file)
-                pendingCameraUri = uri
-                takePicture.launch(uri)
+                try {
+                    val dir = File(context.cacheDir, "images").apply { mkdirs() }
+                    val file = File(dir, "capture_${System.currentTimeMillis()}.jpg")
+                    val uri = FileProvider.getUriForFile(context, context.packageName + ".fileprovider", file)
+                    pendingCameraUri = uri
+                    takePicture.launch(uri)
+                } catch (e: Exception) {
+                    scope.launch { snackbar.showSnackbar("Could not open the camera on this phone.") }
+                }
             }
             "replace" -> {
                 val uri = sourceUri
-                if (uri != null && Build.VERSION.SDK_INT >= 30) {
-                    val pendingIntent = MediaStore.createWriteRequest(context.contentResolver, listOf(uri))
-                    writeConsent.launch(IntentSenderRequest.Builder(pendingIntent.intentSender).build())
+                try {
+                    if (uri != null && Build.VERSION.SDK_INT >= 30) {
+                        val pendingIntent = MediaStore.createWriteRequest(context.contentResolver, listOf(uri))
+                        writeConsent.launch(IntentSenderRequest.Builder(pendingIntent.intentSender).build())
+                    }
+                } catch (e: Exception) {
+                    // A non-MediaStore source (e.g. photo picker on some phones) makes createWriteRequest throw;
+                    // never let that kill the app - offer the always-safe path instead.
+                    scope.launch { snackbar.showSnackbar("Replace isn't available for this photo. Use 'Save as new file' instead.") }
                 }
             }
             "saf" -> {
-                val suggested = buildFileName(exportName, outFormat())
-                when (outFormat()) {
-                    ExportFormat.JPEG -> createJpeg.launch(suggested)
-                    ExportFormat.PNG -> createPng.launch(suggested)
-                    ExportFormat.WEBP -> createWebp.launch(suggested)
-                    ExportFormat.PDF -> createPdf.launch(suggested)
-                    ExportFormat.UNKNOWN -> createJpeg.launch(suggested)
+                try {
+                    val suggested = buildFileName(exportName, outFormat())
+                    when (outFormat()) {
+                        ExportFormat.JPEG -> createJpeg.launch(suggested)
+                        ExportFormat.PNG -> createPng.launch(suggested)
+                        ExportFormat.WEBP -> createWebp.launch(suggested)
+                        ExportFormat.PDF -> createPdf.launch(suggested)
+                        ExportFormat.UNKNOWN -> createJpeg.launch(suggested)
+                    }
+                } catch (e: Exception) {
+                    scope.launch { snackbar.showSnackbar("Could not open the folder picker. Try 'Save as new file' instead.") }
                 }
             }
             "replaceBatch" -> {
@@ -3690,7 +3720,13 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                     scope.launch { snackbar.showSnackbar("Replace isn't available for these photos. Use 'Save as new files' instead.") }
                 }
             }
-            "legacySave" -> legacyWritePermission.launch(android.Manifest.permission.WRITE_EXTERNAL_STORAGE)
+            "legacySave" -> {
+                try {
+                    legacyWritePermission.launch(android.Manifest.permission.WRITE_EXTERNAL_STORAGE)
+                } catch (e: Exception) {
+                    scope.launch { snackbar.showSnackbar("Storage access is not available on this phone.") }
+                }
+            }
         }
         pendingLaunch = null
     }
@@ -3950,6 +3986,30 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
         )
     }
 
+    if (confirmReplaceCount > 0) {
+        val n = confirmReplaceCount
+        AlertDialog(
+            onDismissRequest = { confirmReplaceCount = 0 },
+            title = { Text("Are you sure?", color = DeepNavy, fontWeight = FontWeight.Bold) },
+            text = {
+                Text(
+                    if (n == 1) "The original photo will be overwritten by the new one. This cannot be undone."
+                    else "The $n original files will be overwritten by the new ones. This cannot be undone.",
+                    color = Slate, fontSize = 13.sp, lineHeight = 18.sp
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirmReplaceCount = 0
+                    pendingLaunch = if (n == 1) "replace" else "replaceBatch"
+                }) { Text("Replace", color = Orange, fontWeight = FontWeight.Bold) }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmReplaceCount = 0 }) { Text("Cancel", color = DeepNavy, fontWeight = FontWeight.Bold) }
+            }
+        )
+    }
+
     batchProgress?.let { p ->
         AlertDialog(
             onDismissRequest = { },
@@ -4031,7 +4091,8 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
             type = "text/plain"
             putExtra(Intent.EXTRA_TEXT, "Check out A2Z Image Craft - a free photo toolkit: resize, crop, convert, collage, text on photo and more, all on your phone.\nhttps://play.google.com/store/apps/details?id=" + context.packageName)
         }
-        context.startActivity(Intent.createChooser(send, "Share A2Z Image Craft"))
+        try { context.startActivity(Intent.createChooser(send, "Share A2Z Image Craft")) }
+        catch (e: Exception) { scope.launch { snackbar.showSnackbar("No app available to share with on this phone.") } }
     }
 
     Scaffold(
@@ -7354,7 +7415,7 @@ private fun ExportScreen(
                     onValueChangeFinished = onQualitySettled,
                     valueRange = 10f..100f,
                     steps = 89,
-                    modifier = Modifier.padding(start = 12.dp)
+                    modifier = Modifier.weight(1f).padding(start = 12.dp)
                 )
             }
             Text("Lower quality makes a smaller file. The estimate updates when you stop moving the slider.", color = Slate, fontSize = 11.sp, lineHeight = 15.sp)
