@@ -45,6 +45,7 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -106,7 +107,10 @@ import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.filled.AspectRatio
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.MenuBook
+import androidx.compose.material.icons.filled.NewReleases
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.MailOutline
 import androidx.compose.material.icons.filled.Title
@@ -764,7 +768,9 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                 // so gating busy on it left the Process button spinning for ~4s after every load.
                 busy = false
                 busyLabel = ""
-            } catch (e: Exception) {
+                        } catch (e: OutOfMemoryError) {
+snackbar.showSnackbar("This phone ran out of memory. Try a smaller size or fewer pages.")
+                } catch (e: Exception) {
                 snackbar.showSnackbar("Couldn't open this image. Try another photo.")
             } finally {
                 busy = false
@@ -821,7 +827,9 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                 bgError = ""
                 if (bgWidth.isBlank()) bgWidth = fmtUnit(fg.width.toDouble(), bgUnit, bgDpiValue())
                 if (bgHeight.isBlank()) bgHeight = fmtUnit(fg.height.toDouble(), bgUnit, bgDpiValue())
-            } catch (e: Exception) {
+                        } catch (e: OutOfMemoryError) {
+bgError = "This photo is too big for this phone's memory. Try a smaller photo."
+                } catch (e: Exception) {
                 bgError = "Couldn't remove the background. If this is the first use, connect to the internet once so the on-device model can download, then try again."
             } finally {
                 busy = false
@@ -902,7 +910,9 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                 exportReturnToSocial = false; exportReturnToShop = false; exportReturnToCollage = false
                 screen = Screen.Export
                 snackbar.showSnackbar("$circleShape cut: ${out.width} × ${out.height} px.")
-            } catch (e: Exception) {
+                        } catch (e: OutOfMemoryError) {
+snackbar.showSnackbar("This phone ran out of memory. Try a smaller size or fewer pages.")
+                } catch (e: Exception) {
                 snackbar.showSnackbar("Couldn't cut this shape. Try a smaller size.")
             } finally {
                 busy = false
@@ -950,7 +960,9 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                 exportReturnToSocial = true
                 screen = Screen.Export
                 snackbar.showSnackbar("Ready: ${t.w} × ${t.h} px for $socialPlatform.")
-            } catch (e: Exception) {
+                        } catch (e: OutOfMemoryError) {
+snackbar.showSnackbar("This phone ran out of memory. Try a smaller size or fewer pages.")
+                } catch (e: Exception) {
                 snackbar.showSnackbar("Couldn't export. Try a smaller target size.")
             } finally {
                 busy = false
@@ -1001,7 +1013,9 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                 exportReturnToShop = true
                 screen = Screen.Export
                 snackbar.showSnackbar("Ready: ${t.w} × ${t.h} px for $shopPlatform.")
-            } catch (e: Exception) {
+                        } catch (e: OutOfMemoryError) {
+snackbar.showSnackbar("This phone ran out of memory. Try a smaller size or fewer pages.")
+                } catch (e: Exception) {
                 snackbar.showSnackbar("Couldn't export. Try a smaller target size.")
             } finally {
                 busy = false
@@ -1039,6 +1053,9 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                             saveToGallery(context, "pixelcraft_${t.w}x${t.h}_${i + 1}.${fmt.extension}", fmt.mimeType, bytes)
                         }
                         done++
+                    } catch (e: OutOfMemoryError) {
+                        failed++
+                        snackbar.showSnackbar("This phone ran out of memory. Try a smaller size or fewer pages.")
                     } catch (e: Exception) { failed++ }
                 }
                 snackbar.showSnackbar(if (failed == 0) "Saved $done photos to Pictures/PixelCraft." else "Saved $done photos, $failed failed.")
@@ -1087,7 +1104,9 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                 } else {
                     snackbar.showSnackbar("Could not load those photos - try JPG or PNG.")
                 }
-            } catch (e: Exception) {
+                        } catch (e: OutOfMemoryError) {
+snackbar.showSnackbar("This phone ran out of memory. Try a smaller size or fewer pages.")
+                } catch (e: Exception) {
                 busy = false
                 busyLabel = ""
                 snackbar.showSnackbar("Could not load those photos - try JPG or PNG.")
@@ -1165,7 +1184,9 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                 busy = false
                 busyLabel = ""
                 snackbar.showSnackbar("Saved to your gallery as $name.")
-            } catch (e: Exception) {
+                        } catch (e: OutOfMemoryError) {
+snackbar.showSnackbar("This phone ran out of memory. Try a smaller size or fewer pages.")
+                } catch (e: Exception) {
                 busy = false
                 busyLabel = ""
                 snackbar.showSnackbar("Could not save. Try again.")
@@ -1227,7 +1248,9 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                 busy = false
                 busyLabel = ""
                 snackbar.showSnackbar("Project saved on this phone.")
-            } catch (e: Exception) {
+                        } catch (e: OutOfMemoryError) {
+snackbar.showSnackbar("This phone ran out of memory. Try a smaller size or fewer pages.")
+                } catch (e: Exception) {
                 busy = false
                 busyLabel = ""
                 snackbar.showSnackbar("Could not save the project.")
@@ -1293,7 +1316,9 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                 } else {
                     snackbar.showSnackbar("Those photos are no longer available - pick them again.")
                 }
-            } catch (e: Exception) {
+                        } catch (e: OutOfMemoryError) {
+snackbar.showSnackbar("This phone ran out of memory. Try a smaller size or fewer pages.")
+                } catch (e: Exception) {
                 busy = false
                 busyLabel = ""
                 snackbar.showSnackbar("Could not open the saved project.")
@@ -1360,7 +1385,9 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                 busy = false
                 busyLabel = ""
                 snackbar.showSnackbar("Saved to your gallery as $name.")
-            } catch (e: Exception) {
+                        } catch (e: OutOfMemoryError) {
+snackbar.showSnackbar("This phone ran out of memory. Try a smaller size or fewer pages.")
+                } catch (e: Exception) {
                 busy = false
                 busyLabel = ""
                 snackbar.showSnackbar("Could not save. Try again.")
@@ -1430,7 +1457,9 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                 repeat(pages.size) { convertPdfChecked.add(true) }
                 busy = false
                 busyLabel = ""
-            } catch (e: Exception) {
+                        } catch (e: OutOfMemoryError) {
+snackbar.showSnackbar("This phone ran out of memory. Try a smaller size or fewer pages.")
+                } catch (e: Exception) {
                 busy = false
                 busyLabel = ""
                 snackbar.showSnackbar("Couldn't read this PDF. Try another file.")
@@ -1492,7 +1521,9 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                     busy = false
                     busyLabel = ""
                     screen = Screen.ConvertResult
-                } catch (e: Exception) {
+                                } catch (e: OutOfMemoryError) {
+snackbar.showSnackbar("This phone ran out of memory. Try a smaller size or fewer pages.")
+                    } catch (e: Exception) {
                     busy = false
                     busyLabel = ""
                     snackbar.showSnackbar("Couldn't convert this image. Try another photo.")
@@ -1543,7 +1574,9 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                     busy = false
                     busyLabel = ""
                     screen = Screen.ConvertResult
-                } catch (e: Exception) {
+                                } catch (e: OutOfMemoryError) {
+snackbar.showSnackbar("This phone ran out of memory. Try a smaller size or fewer pages.")
+                    } catch (e: Exception) {
                     busy = false
                     busyLabel = ""
                     snackbar.showSnackbar("Couldn't finish the conversion. Try fewer or smaller photos.")
@@ -1605,7 +1638,9 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                 screen = Screen.CompressSettings
                 busy = false
                 busyLabel = ""
-            } catch (e: Exception) {
+                        } catch (e: OutOfMemoryError) {
+snackbar.showSnackbar("This phone ran out of memory. Try a smaller size or fewer pages.")
+                } catch (e: Exception) {
                 busy = false
                 busyLabel = ""
                 snackbar.showSnackbar("Couldn't read this PDF. Try another file.")
@@ -1714,7 +1749,9 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                     busyLabel = ""
                     screen = Screen.CompressResult
                 }
-            } catch (e: Exception) {
+                        } catch (e: OutOfMemoryError) {
+snackbar.showSnackbar("This phone ran out of memory. Try a smaller size or fewer pages.")
+                } catch (e: Exception) {
                 busy = false
                 busyLabel = ""
                 snackbar.showSnackbar("Couldn't compress. Try fewer or smaller photos.")
@@ -1742,7 +1779,9 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                     busy = false
                     busyLabel = ""
                     snackbar.showSnackbar("Saved to Pictures/PixelCraft.")
-                } catch (e: Exception) {
+                                } catch (e: OutOfMemoryError) {
+snackbar.showSnackbar("This phone ran out of memory. Try a smaller size or fewer pages.")
+                    } catch (e: Exception) {
                     busy = false
                     busyLabel = ""
                     snackbar.showSnackbar("Couldn't save. Try again.")
@@ -1757,7 +1796,9 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                 else saveToGallery(context, compressResultName, compressResultMime, bytes)
                 compressSaved = true
                 snackbar.showSnackbar(if (compressResultMime == "application/pdf") "Saved to Downloads/PixelCraft." else "Saved to Pictures/PixelCraft (originals untouched).")
-            } catch (e: Exception) {
+                        } catch (e: OutOfMemoryError) {
+snackbar.showSnackbar("This phone ran out of memory. Try a smaller size or fewer pages.")
+                } catch (e: Exception) {
                 snackbar.showSnackbar("Couldn't save. Try again.")
             }
         }
@@ -1792,7 +1833,9 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                 printOrigSize = querySourceSize(context, uri)
                 printResultBytes = null; printSaved = false
                 screen = if (printGoSetup) { printGoSetup = false; Screen.PrintSetup } else Screen.PrintHome
-            } catch (e: Exception) {
+                        } catch (e: OutOfMemoryError) {
+snackbar.showSnackbar("This phone ran out of memory. Try a smaller size or fewer pages.")
+                } catch (e: Exception) {
                 snackbar.showSnackbar("Could not open that image.")
             }
             busy = false
@@ -1868,7 +1911,9 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                 printPdfPickerOpen = true
                 busy = false
                 busyLabel = ""
-            } catch (e: Exception) {
+                        } catch (e: OutOfMemoryError) {
+snackbar.showSnackbar("This phone ran out of memory. Try a smaller size or fewer pages.")
+                } catch (e: Exception) {
                 busy = false
                 busyLabel = ""
                 snackbar.showSnackbar("Could not read that PDF: ${e.message ?: "unknown error"}")
@@ -1906,7 +1951,9 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                 printPdfThumbs.clear()
                 busy = false
                 busyLabel = ""
-            } catch (e: Exception) {
+                        } catch (e: OutOfMemoryError) {
+snackbar.showSnackbar("This phone ran out of memory. Try a smaller size or fewer pages.")
+                } catch (e: Exception) {
                 busy = false
                 busyLabel = ""
                 snackbar.showSnackbar("Could not render that page: ${e.message ?: "unknown error"}")
@@ -1949,7 +1996,9 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                 printPdfThumbQueued.clear()
                 busy = false
                 busyLabel = ""
-            } catch (e: Exception) {
+                        } catch (e: OutOfMemoryError) {
+snackbar.showSnackbar("This phone ran out of memory. Try a smaller size or fewer pages.")
+                } catch (e: Exception) {
                 busy = false
                 busyLabel = ""
                 snackbar.showSnackbar("Could not render that PDF: ${e.message ?: "unknown error"}")
@@ -2002,7 +2051,9 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                 printPdfThumbQueued.clear()
                 busy = false
                 busyLabel = ""
-            } catch (e: Exception) {
+                        } catch (e: OutOfMemoryError) {
+snackbar.showSnackbar("This phone ran out of memory. Try a smaller size or fewer pages.")
+                } catch (e: Exception) {
                 busy = false
                 busyLabel = ""
                 snackbar.showSnackbar("Could not render that PDF: ${e.message ?: "unknown error"}")
@@ -2163,7 +2214,9 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                     printResultDims = result.dims
                 }
                 printSaved = false
-            } catch (e: Exception) {
+                        } catch (e: OutOfMemoryError) {
+snackbar.showSnackbar("This phone ran out of memory. Try a smaller size or fewer pages.")
+                } catch (e: Exception) {
                 printResultFiles.forEach { it.delete() }
                 printResultFiles.clear()
                 snackbar.showSnackbar("Could not create the print file: ${e.message ?: "unknown error"}")
@@ -2192,7 +2245,9 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                     busy = false
                     busyLabel = ""
                     snackbar.showSnackbar(if (count > 1) "Saved $count files. Your original is unchanged." else "Saved ${printResultFiles.first().name}. Your original is unchanged.")
-                } catch (e: Exception) {
+                                } catch (e: OutOfMemoryError) {
+snackbar.showSnackbar("This phone ran out of memory. Try a smaller size or fewer pages.")
+                    } catch (e: Exception) {
                     busy = false
                     busyLabel = ""
                     snackbar.showSnackbar("Save failed: ${e.message ?: "unknown error"}")
@@ -2213,7 +2268,9 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                 busy = false
                 busyLabel = ""
                 snackbar.showSnackbar("Saved $printResultName. Your original is unchanged.")
-            } catch (e: Exception) {
+                        } catch (e: OutOfMemoryError) {
+snackbar.showSnackbar("This phone ran out of memory. Try a smaller size or fewer pages.")
+                } catch (e: Exception) {
                 busy = false
                 busyLabel = ""
                 snackbar.showSnackbar("Save failed: ${e.message ?: "unknown error"}")
@@ -2239,7 +2296,9 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                     }
                     intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                     context.startActivity(Intent.createChooser(intent, "Share print file"))
-                } catch (e: Exception) {
+                                } catch (e: OutOfMemoryError) {
+snackbar.showSnackbar("This phone ran out of memory. Try a smaller size or fewer pages.")
+                    } catch (e: Exception) {
                     snackbar.showSnackbar("Share failed: ${e.message ?: "unknown error"}")
                 }
             }
@@ -2260,7 +2319,9 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                     addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                 }
                 context.startActivity(Intent.createChooser(intent, "Share print file"))
-            } catch (e: Exception) {
+                        } catch (e: OutOfMemoryError) {
+snackbar.showSnackbar("This phone ran out of memory. Try a smaller size or fewer pages.")
+                } catch (e: Exception) {
                 snackbar.showSnackbar("Share failed: ${e.message ?: "unknown error"}")
             }
         }
@@ -2299,7 +2360,9 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                     busyLabel = ""
                     val where = if (fmt.id == "pdf") "Downloads/PixelCraft" else "Pictures/PixelCraft"
                     snackbar.showSnackbar("Saved to $where.")
-                } catch (e: Exception) {
+                                } catch (e: OutOfMemoryError) {
+snackbar.showSnackbar("This phone ran out of memory. Try a smaller size or fewer pages.")
+                    } catch (e: Exception) {
                     busy = false
                     busyLabel = ""
                     snackbar.showSnackbar("Couldn't save. Try again.")
@@ -2314,7 +2377,9 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                 else saveToGallery(context, convertResultName, fmt.mimeType, bytes)
                 convertSaved = true
                 snackbar.showSnackbar(if (fmt.id == "pdf") "Saved to Downloads/PixelCraft." else "Saved to your gallery (Pictures/PixelCraft).")
-            } catch (e: Exception) {
+                        } catch (e: OutOfMemoryError) {
+snackbar.showSnackbar("This phone ran out of memory. Try a smaller size or fewer pages.")
+                } catch (e: Exception) {
                 snackbar.showSnackbar("Couldn't save. Try again.")
             }
         }
@@ -2350,7 +2415,9 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                 exportReturnToCollage = true
                 screen = Screen.Export
                 snackbar.showSnackbar("Collage ready: ${t.w} × ${t.h} px.")
-            } catch (e: Exception) {
+                        } catch (e: OutOfMemoryError) {
+snackbar.showSnackbar("This phone ran out of memory. Try a smaller size or fewer pages.")
+                } catch (e: Exception) {
                 snackbar.showSnackbar("Couldn't build the collage. Try a smaller target size.")
             } finally {
                 busy = false
@@ -2392,7 +2459,9 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                 // closing the size sheet must not drop the user back on the editor.
                 exportReturnToSocial = false; exportReturnToShop = false; exportReturnToCollage = false
                 screen = Screen.Export
-            } catch (e: Exception) {
+                        } catch (e: OutOfMemoryError) {
+snackbar.showSnackbar("This phone ran out of memory. Try a smaller size or fewer pages.")
+                } catch (e: Exception) {
                 snackbar.showSnackbar("Couldn't process this image. Try smaller dimensions.")
             } finally {
                 busy = false
@@ -2423,7 +2492,9 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                 saveLastUsedTarget(context, fit.first.width, fit.first.height)
                 exportReturnToSocial = false; exportReturnToShop = false; exportReturnToCollage = false
                 screen = Screen.Export
-            } catch (e: Exception) {
+                        } catch (e: OutOfMemoryError) {
+snackbar.showSnackbar("This phone ran out of memory. Try a smaller size or fewer pages.")
+                } catch (e: Exception) {
                 snackbar.showSnackbar("Couldn't reach that file size. Try a larger target.")
             } finally {
                 busy = false
@@ -2474,7 +2545,10 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                             }
                         }
                         saved++
-                    } catch (e: Exception) {
+                                        } catch (e: OutOfMemoryError) {
+                        failed++
+scope.launch { snackbar.showSnackbar("This phone ran out of memory. Try a smaller size or fewer pages.") }
+                        } catch (e: Exception) {
                         failed++
                     }
                 }
@@ -2533,7 +2607,10 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                         }
                         if (sourceUri == uri) sourceBytes = size
                         saved++
-                    } catch (e: Exception) {
+                                        } catch (e: OutOfMemoryError) {
+                        failed++
+scope.launch { snackbar.showSnackbar("This phone ran out of memory. Try a smaller size or fewer pages.") }
+                        } catch (e: Exception) {
                         failed++
                     }
                 }
@@ -2635,7 +2712,10 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                         }
                     }
                     done++
-                } catch (e: Exception) {
+                                } catch (e: OutOfMemoryError) {
+                    failed++
+scope.launch { snackbar.showSnackbar("This phone ran out of memory. Try a smaller size or fewer pages.") }
+                    } catch (e: Exception) {
                     failed++
                 }
                 batchProgress = BatchProgress("Processing", i + 1, total, ((i + 1) * 100) / total)
@@ -2697,7 +2777,9 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                     }
                 }
                 finishSave(filename, bytes.size.toLong())
-            } catch (e: Exception) {
+                        } catch (e: OutOfMemoryError) {
+snackbar.showSnackbar("This phone ran out of memory. Try a smaller size or fewer pages.")
+                } catch (e: Exception) {
                 snackbar.showSnackbar("Save failed. Please try again.")
             } finally {
                 busy = false
@@ -2732,7 +2814,9 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                 }
                 sourceBytes = bytes.size.toLong()
                 finishSave("Original photo updated", bytes.size.toLong())
-            } catch (e: Exception) {
+                        } catch (e: OutOfMemoryError) {
+snackbar.showSnackbar("This phone ran out of memory. Try a smaller size or fewer pages.")
+                } catch (e: Exception) {
                 snackbar.showSnackbar("Couldn't replace the original photo. Try 'Save as new file' instead.")
             } finally {
                 busy = false
@@ -2761,7 +2845,9 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                         ?: throw IllegalStateException("Could not write to the chosen location")
                 }
                 finishSave(buildFileName(exportName, outFormat()), bytes.size.toLong())
-            } catch (e: Exception) {
+                        } catch (e: OutOfMemoryError) {
+snackbar.showSnackbar("This phone ran out of memory. Try a smaller size or fewer pages.")
+                } catch (e: Exception) {
                 snackbar.showSnackbar("Save failed. Please try again.")
             } finally {
                 busy = false
@@ -2792,7 +2878,9 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                     addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                 }
                 context.startActivity(Intent.createChooser(intent, "Share photo"))
-            } catch (e: Exception) {
+                        } catch (e: OutOfMemoryError) {
+snackbar.showSnackbar("This phone ran out of memory. Try a smaller size or fewer pages.")
+                } catch (e: Exception) {
                 snackbar.showSnackbar("Couldn't prepare the photo for sharing.")
             } finally {
                 busy = false
@@ -3069,7 +3157,9 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                 } else {
                     snackbar.showSnackbar("No clear background found on this image - it works best on one clear subject or a plain background.")
                 }
-            } catch (e: Exception) {
+                        } catch (e: OutOfMemoryError) {
+snackbar.showSnackbar("This photo is too big for this phone's memory. Try a smaller photo.")
+                } catch (e: Exception) {
                 busy = false
                 busyLabel = ""
                 snackbar.showSnackbar("Could not remove the background on this one - try another image.")
@@ -3140,7 +3230,9 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                 textResultBytes = null
                 textSaved = false
                 textTick++
-            } catch (e: Exception) {
+                        } catch (e: OutOfMemoryError) {
+snackbar.showSnackbar("This phone ran out of memory. Try a smaller size or fewer pages.")
+                } catch (e: Exception) {
                 busy = false
                 busyLabel = ""
                 snackbar.showSnackbar("Could not add that image - try a JPG or PNG.")
@@ -3429,7 +3521,9 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                 refreshTextStylePresets()
                 pendingTextStyle?.let { p -> pendingTextStyle = null; applyTextStylePreset(p) }
                 textTick++
-            } catch (e: Exception) {
+                        } catch (e: OutOfMemoryError) {
+snackbar.showSnackbar("This phone ran out of memory. Try a smaller size or fewer pages.")
+                } catch (e: Exception) {
                 busy = false
                 busyLabel = ""
                 snackbar.showSnackbar("Could not open that image.")
@@ -3558,7 +3652,9 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                 textResultBytes = bytes
                 textResultDims = "${eff[0]} × ${eff[1]} px"
                 textSaved = false
-            } catch (e: Exception) {
+                        } catch (e: OutOfMemoryError) {
+snackbar.showSnackbar("This phone ran out of memory. Try a smaller size or fewer pages.")
+                } catch (e: Exception) {
                 snackbar.showSnackbar("Could not process that image.")
             }
             busy = false
@@ -3578,7 +3674,9 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                 withContext(Dispatchers.IO) { saveToGallery(context, name, mime, bytes) }
                 textSaved = true
                 snackbar.showSnackbar("Saved to your gallery as $name. The original photo is untouched.")
-            } catch (e: Exception) {
+                        } catch (e: OutOfMemoryError) {
+snackbar.showSnackbar("This phone ran out of memory. Try a smaller size or fewer pages.")
+                } catch (e: Exception) {
                 snackbar.showSnackbar("Could not save. Try again.")
             }
             busy = false
@@ -4096,8 +4194,13 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
     }
     // v0.20.0: "Need support? Email us" - his confirmed support address (11:29).
     fun emailSupport() {
+        val body = "(Write your message above this line)\n---\n" +
+            "App: A2Z Image Craft " + BuildConfig.VERSION_NAME.removeSuffix("-debug") + " (" + BuildConfig.VERSION_CODE + ")\n" +
+            "Phone: " + Build.MANUFACTURER + " " + Build.MODEL + "\n" +
+            "Android: " + Build.VERSION.RELEASE + " (API " + Build.VERSION.SDK_INT + ")"
         val mail = Intent(Intent.ACTION_SENDTO, Uri.parse("mailto:bittyjee1223@gmail.com")).apply {
             putExtra(Intent.EXTRA_SUBJECT, "A2Z Image Craft support")
+            putExtra(Intent.EXTRA_TEXT, body)
         }
         try { context.startActivity(mail) } catch (e: Exception) { scope.launch { snackbar.showSnackbar("No email app found on this phone.") } }
     }
@@ -4289,7 +4392,7 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                 NavigationBar(containerColor = MaterialTheme.colorScheme.surface) {
                     NavigationBarItem(selected = tab == MainTab.Home, onClick = { tab = MainTab.Home }, icon = { Icon(Icons.Default.Home, null) }, label = { Text("Home") })
                     NavigationBarItem(selected = tab == MainTab.MyPhotos, onClick = { tab = MainTab.MyPhotos }, icon = { Icon(Icons.Default.PhotoLibrary, null) }, label = { Text("My Photos") })
-                    NavigationBarItem(selected = tab == MainTab.Presets, onClick = { tab = MainTab.Presets }, icon = { Icon(Icons.Default.Collections, null) }, label = { Text("Presets") })
+                    NavigationBarItem(selected = tab == MainTab.Presets, onClick = { tab = MainTab.Presets }, icon = { Icon(Icons.Default.AspectRatio, null) }, label = { Text("Presets") })
                     NavigationBarItem(selected = tab == MainTab.Settings, onClick = { tab = MainTab.Settings }, icon = { Icon(Icons.Default.Settings, null) }, label = { Text("Settings") })
                 }
             }
@@ -4389,7 +4492,9 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                     darkMode = darkMode,
                     onDarkMode = onDarkMode,
                     doc = settingsDoc,
-                    onOpenDoc = { settingsDoc = it }
+                    onOpenDoc = { settingsDoc = it },
+                    onEmail = { emailSupport() },
+                    onRate = { openPlayStorePage() }
                 )
             }
             Screen.QueueOverview -> QueueOverviewScreen(
@@ -4542,7 +4647,9 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                                 exportReturnToSocial = false; exportReturnToShop = false; exportReturnToCollage = false
                                 screen = Screen.Export
                                 snackbar.showSnackbar("Cropped: ${result.width} × ${result.height} px.")
-                            } catch (e: Exception) {
+                                                        } catch (e: OutOfMemoryError) {
+snackbar.showSnackbar("This phone ran out of memory. Try a smaller size or fewer pages.")
+                                } catch (e: Exception) {
                                 snackbar.showSnackbar("Couldn't crop this photo.")
                             } finally {
                                 busy = false
@@ -5062,8 +5169,10 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
             onEmail = { emailSupport() },
             onRate = { openPlayStorePage() },
             onShare = { shareApp() },
+            onHelp = { drawerOpen = false; tab = MainTab.Settings; settingsDoc = "help" },
             onTerms = { drawerOpen = false; tab = MainTab.Settings; settingsDoc = "terms" },
-            onPrivacy = { drawerOpen = false; tab = MainTab.Settings; settingsDoc = "privacy" }
+            onPrivacy = { drawerOpen = false; tab = MainTab.Settings; settingsDoc = "privacy" },
+            onLicences = { drawerOpen = false; tab = MainTab.Settings; settingsDoc = "licences" }
         )
     }
 
@@ -7615,7 +7724,9 @@ private fun MyPhotosScreen(
                                     scope.launch {
                                         try {
                                             shareExported(context, sp.uri, sp.name)
-                                        } catch (e: Exception) {
+                                                                                } catch (e: OutOfMemoryError) {
+shareMsg = "This phone ran out of memory. Try a smaller size or fewer pages."
+                                            } catch (e: Exception) {
                                             shareMsg = "Couldn't share this photo."
                                         }
                                     }
@@ -8044,7 +8155,9 @@ private fun SettingsScreen(
     darkMode: Boolean,
     onDarkMode: (Boolean) -> Unit,
     doc: String?,
-    onOpenDoc: (String?) -> Unit
+    onOpenDoc: (String?) -> Unit,
+    onEmail: () -> Unit,
+    onRate: () -> Unit
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
     val scope = rememberCoroutineScope()
@@ -8057,10 +8170,25 @@ private fun SettingsScreen(
         Column(modifier.fillMaxSize().padding(18.dp).verticalScroll(rememberScrollState())) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 IconButton(onClick = { onOpenDoc(null) }) { Icon(Icons.Default.ArrowBack, contentDescription = "Back", tint = DeepNavy) }
-                Text(if (doc == "terms") "Terms & Conditions" else "Privacy Policy", color = DeepNavy, fontSize = 22.sp, fontWeight = FontWeight.Bold)
+                Text(
+                    when (doc) {
+                        "terms" -> "Terms & Conditions"
+                        "privacy" -> "Privacy Policy"
+                        "licences" -> "Open-source licences"
+                        "help" -> "Help & tips"
+                        else -> "What's new"
+                    },
+                    color = DeepNavy, fontSize = 22.sp, fontWeight = FontWeight.Bold
+                )
             }
             Text(
-                if (doc == "terms") TERMS_TEXT else PRIVACY_TEXT,
+                when (doc) {
+                    "terms" -> TERMS_TEXT
+                    "privacy" -> PRIVACY_TEXT
+                    "licences" -> LICENCES_TEXT
+                    "help" -> HELP_TEXT
+                    else -> WHATS_NEW_TEXT
+                },
                 color = Slate, fontSize = 13.sp, lineHeight = 19.sp, modifier = Modifier.padding(top = 10.dp)
             )
         }
@@ -8089,6 +8217,42 @@ private fun SettingsScreen(
             )
         }
 
+        SettingsSection("Support") {
+            SettingsRow(
+                icon = { Icon(Icons.Default.MailOutline, null, tint = SkyBlue, modifier = Modifier.size(20.dp)) },
+                title = "Need support? Email us",
+                subtitle = "Tell us what you'd like to see, or bugs you found",
+                onClick = onEmail
+            )
+            SettingsRow(
+                icon = { Icon(Icons.Default.Info, null, tint = SkyBlue, modifier = Modifier.size(20.dp)) },
+                title = "Help & tips",
+                subtitle = "How to get the best results from each tool",
+                onClick = { onOpenDoc("help") }
+            )
+            SettingsRow(
+                icon = { Icon(Icons.Default.Star, null, tint = SkyBlue, modifier = Modifier.size(20.dp)) },
+                title = "Rate us",
+                subtitle = "Enjoying the app? Rate it on Google Play",
+                onClick = onRate
+            )
+        }
+
+        SettingsSection("About") {
+            SettingsRow(
+                icon = { Icon(Icons.Default.MenuBook, null, tint = SkyBlue, modifier = Modifier.size(20.dp)) },
+                title = "Open-source licences",
+                subtitle = "Credits for the components the app is built with",
+                onClick = { onOpenDoc("licences") }
+            )
+            SettingsRow(
+                icon = { Icon(Icons.Default.NewReleases, null, tint = SkyBlue, modifier = Modifier.size(20.dp)) },
+                title = "What's new",
+                subtitle = "See what's in this version",
+                onClick = { onOpenDoc("whatsnew") }
+            )
+        }
+
         Spacer(Modifier.height(16.dp))
     }
     if (showClearConfirm) {
@@ -8114,19 +8278,21 @@ private fun SettingsScreen(
  *  the drawer is now the info page - Email us / Rate us / Share / Terms & Conditions / Privacy Policy, with the
  *  app version as small footer text. Nothing here also shows in Settings. */
 @Composable
-private fun HomeDrawer(onClose: () -> Unit, onEmail: () -> Unit, onRate: () -> Unit, onShare: () -> Unit, onTerms: () -> Unit, onPrivacy: () -> Unit) {
+private fun HomeDrawer(onClose: () -> Unit, onHelp: () -> Unit, onEmail: () -> Unit, onRate: () -> Unit, onShare: () -> Unit, onTerms: () -> Unit, onPrivacy: () -> Unit, onLicences: () -> Unit) {
     Box(Modifier.fillMaxSize()) {
         Box(Modifier.fillMaxSize().background(Color(0x99061722)).clickable { onClose() })
         Column(Modifier.fillMaxHeight().fillMaxWidth(0.82f).background(Color.White).verticalScroll(rememberScrollState())) {
-            Column(Modifier.fillMaxWidth().background(DeepNavy).padding(horizontal = 20.dp, vertical = 24.dp)) {
+            Column(Modifier.fillMaxWidth().background(DeepNavy).statusBarsPadding().padding(horizontal = 20.dp, vertical = 24.dp)) {
                 Text("A2Z Image Craft", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Bold)
                 Text("PHOTO TOOLKIT", color = SkyBlue, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 2.sp, modifier = Modifier.padding(top = 4.dp))
             }
+            DrawerRow({ Icon(Icons.Default.Info, null, tint = SkyBlue, modifier = Modifier.size(22.dp)) }, "Help & tips", "How to get the best results from each tool") { onHelp() }
             DrawerRow({ Icon(Icons.Default.MailOutline, null, tint = SkyBlue, modifier = Modifier.size(22.dp)) }, "Need support? Email us", "Tell us what you'd like to see, or bugs you found") { onEmail() }
-            DrawerRow({ Icon(Icons.Default.Star, null, tint = SkyBlue, modifier = Modifier.size(22.dp)) }, "Rate us", "Support the app with 5 stars") { onRate() }
+            DrawerRow({ Icon(Icons.Default.Star, null, tint = SkyBlue, modifier = Modifier.size(22.dp)) }, "Rate us", "Enjoying the app? Rate it on Google Play") { onRate() }
             DrawerRow({ Icon(Icons.Default.Share, null, tint = SkyBlue, modifier = Modifier.size(22.dp)) }, "Share", "Tell a friend about A2Z Image Craft") { onShare() }
             DrawerRow({ Icon(Icons.Default.Description, null, tint = SkyBlue, modifier = Modifier.size(22.dp)) }, "Terms & Conditions", "The simple rules for using the app") { onTerms() }
             DrawerRow({ Icon(Icons.Default.Lock, null, tint = SkyBlue, modifier = Modifier.size(22.dp)) }, "Privacy Policy", "How your photos and data are treated") { onPrivacy() }
+            DrawerRow({ Icon(Icons.Default.MenuBook, null, tint = SkyBlue, modifier = Modifier.size(22.dp)) }, "Open-source licences", "Credits for the components the app is built with") { onLicences() }
             Spacer(Modifier.height(18.dp))
             Text(
                 "A2Z Image Craft · Version " + BuildConfig.VERSION_NAME.removeSuffix("-debug") + " · Bitty",
@@ -8143,31 +8309,134 @@ private fun DrawerRow(icon: @Composable () -> Unit, title: String, subtitle: Str
         icon()
         Column(Modifier.padding(start = 14.dp)) {
             Text(title, color = DeepNavy, fontWeight = FontWeight.SemiBold, fontSize = 15.sp)
-            Text(subtitle, color = Slate, fontSize = 12.sp)
+            Text(subtitle, color = Slate, fontSize = 12.sp, lineHeight = 15.sp)
         }
     }
 }
 
-private const val TERMS_TEXT = "These Terms & Conditions govern your use of A2Z Image Craft, developed and published by Bitty.\n\n" +
-    "1. Free of charge. The app is free: no advertising, no subscriptions, no in-app purchases.\n\n" +
-    "2. Your content. You keep every right to your photos. All editing runs on your device; nothing is uploaded, and images are saved or shared only when you choose to do so.\n\n" +
-    "3. Acceptable use. You are responsible for the images you edit and share. Do not use the app to infringe copyrights, privacy or other rights of third parties, or for any unlawful purpose.\n\n" +
-    "4. No warranty. The app is provided as is. Every tool is tested carefully, but uninterrupted or error-free operation cannot be guaranteed, and no liability is accepted for how exported images are used.\n\n" +
-    "5. Changes. These terms may be updated with new versions of the app; the current version is always shown on this page."
+private const val TERMS_TEXT = "A2Z Image Craft - Terms & Conditions\n\n" +
+    "Last updated: 30 October 2026\n\n" +
+    "These Terms & Conditions (\"Terms\") apply to your use of A2Z Image Craft (\"the app\"), developed and published by Bitty, Bruges, Belgium (\"we\", \"us\"). By installing or using the app, you agree to these Terms. If you do not agree, please do not use the app.\n\n" +
+    "1. Free to use The app is currently free. It has no advertising, no subscriptions and no in-app purchases.\n\n" +
+    "2. Your licence to use the app We give you a personal, non-exclusive, non-transferable right to install and use the app on devices you own or control, for personal or business use. You may not copy, sell, rent or redistribute the app, or attempt to extract its source code, except where the law allows this.\n\n" +
+    "3. Your photos and content\n\n" +
+    "- You keep all rights to the photos, images and files you edit. We claim no ownership of them.\n\n" +
+    "- All editing happens on your device. We do not receive, store or view your images.\n\n" +
+    "- You are responsible for keeping copies of important photos. Always keep your original files.\n\n" +
+    "4. Acceptable use You are responsible for the images you create, save and share with the app. Do not use the app to:\n\n" +
+    "- infringe copyright, trademarks, privacy or other rights of other people;\n\n" +
+    "- create or share illegal, harmful, hateful or misleading content;\n\n" +
+    "- harass, impersonate or deceive others.\n\n" +
+    "5. Results and accuracy\n\n" +
+    "- Platform sizes: the preset sizes for social media and online shops are based on the platforms' official guidance at the time of checking. Platforms can change their requirements at any time, so check the platform's current guidance for important uses.\n\n" +
+    "- Background removal: results depend on the photo and may not be perfect. Check the result before using it.\n\n" +
+    "- Print size and DPI: print results also depend on your printer, paper and print settings. Make a test print before large or expensive print jobs.\n\n" +
+    "- Compression and conversion: some formats and quality settings reduce image quality. Keep your original files.\n\n" +
+    "6. Third-party services The app uses Google Play services (including Google ML Kit) for some features. Your use of these services is also covered by Google's terms and privacy policy. Images you share go to the app you choose, and that app's terms apply.\n\n" +
+    "7. Future paid features and advertising We may later add advertising or optional paid features. If we do:\n\n" +
+    "- we will update these Terms and the Privacy Policy before or at the same time as that version is released;\n\n" +
+    "- any payments will be handled by Google Play, under Google Play's terms and refund policies;\n\n" +
+    "- features you already have in the free version will be clearly described if they change.\n\n" +
+    "8. Updates and availability We may update, change or remove features of the app, and we may stop offering the app. We will try to keep the app working well, but we cannot promise it will always be available or error-free.\n\n" +
+    "9. No warranty The app is provided \"as is\" and \"as available\". To the extent permitted by law, we give no guarantees that the app will meet your needs or work without interruption or errors.\n\n" +
+    "10. Limitation of liability To the extent permitted by law, we are not liable for indirect or consequential losses, such as lost data, lost profits or lost business, arising from your use of the app. Nothing in these Terms limits liability that cannot be limited by law, such as liability for intentional misconduct or gross negligence. If you are a consumer, nothing in these Terms affects your legal rights under the consumer protection laws of your country.\n\n" +
+    "11. Intellectual property The app, its name, logo, design and code belong to us or our licensors. The app includes open-source components, listed in Settings > Open-source licences, which are covered by their own licences.\n\n" +
+    "12. Ending use You can stop using the app at any time by uninstalling it. We may end your right to use the app if you seriously break these Terms.\n\n" +
+    "13. Governing law These Terms are governed by Belgian law. If you are a consumer living in another country, you also keep the protection of the mandatory laws of your own country, and you may bring a claim in the courts where you live.\n\n" +
+    "14. Changes to these Terms We may update these Terms when the app changes. The current version is always shown in the app, with the date at the top. If you keep using the app after an update, the new Terms apply.\n\n" +
+    "15. Contact\n\n" +
+    "Bitty, Bruges, Belgium\n\n" +
+    "Email: bittyjee1223@gmail.com\n"
 
-private const val PRIVACY_TEXT = "A2Z Image Craft is private by design. This page explains, in plain words, how the app treats your data.\n\n" +
-    "What the app does not do:\n" +
-    "- No account and no sign-in.\n" +
-    "- No uploads. Your photos never leave your phone: every tool - resize, crop, convert, compress, collage, text, frames, adjustments - runs entirely on your device.\n" +
-    "- No photo-library access. The app holds no gallery permission; you hand it each photo yourself through the Android system picker.\n" +
-    "- No analytics, no tracking, no advertising.\n\n" +
-    "What stays on your phone:\n" +
-    "- Recently edited: a list of photos you opened, with small thumbnails, stored locally. Clear it any time under Settings > Privacy.\n" +
-    "- Your own text styles, stored locally.\n" +
-    "- Exports, written only when you tap Save, to the folders the app shows you.\n\n" +
-    "If a future version ever changes these principles, this page will say so before the change ships."
+private const val PRIVACY_TEXT = "A2Z Image Craft - Privacy Policy\n\n" +
+    "Last updated: 30 October 2026\n\n" +
+    "A2Z Image Craft (\"the app\") is developed and published by Bitty, Bruges, Belgium (\"we\", \"us\"). This policy explains what happens to your data when you use the app. In short: your photos stay on your phone, and we do not collect personal data through the app.\n\n" +
+    "1. Your photos stay on your device\n\n" +
+    "- Every tool in the app (resize, crop, background removal, convert, compress, print size, collage, text on photo, frames and photo adjustments) works entirely on your phone.\n\n" +
+    "- Your photos and PDF files are never uploaded to us or to any server operated by us.\n\n" +
+    "- We have no account system. You do not need to sign up or sign in.\n\n" +
+    "2. Permissions the app uses\n\n" +
+    "- Photos and files: you choose each photo or PDF yourself through the Android system picker. The app does not ask for permission to read your whole photo library.\n\n" +
+    "- Camera: \"Take a Photo\" opens your phone's own camera app. The app does not ask for camera permission itself.\n\n" +
+    "- Storage (Android 9 and older only): needed to save edited images to your Pictures folder. Newer Android versions need no permission for this.\n\n" +
+    "3. Data stored only on your phone The app keeps a small amount of data on your phone so it works smoothly:\n\n" +
+    "- Recently edited: a list of photos you opened, with small preview images. You can clear it at any time in Settings > Privacy.\n\n" +
+    "- Your saved text styles and drafts from the Text on Photo tool.\n\n" +
+    "- Your saved collage project, so you can close the app and keep working on it later.\n\n" +
+    "- Your last used resize size, so the Resize tool can offer it again.\n\n" +
+    "- Temporary copies made only while you share, print or export. They stay in the app's private cache, which no other app can read, and are removed automatically.\n\n" +
+    "- Saved images, written only when you tap Save, to the folder shown in the app. We cannot see any of this data. It is deleted when you clear it in the app, clear the app's storage, or uninstall the app. If you have turned on Android's own backup in your Google account, Android may include the app's settings in that backup, under Google's control.\n\n" +
+    "4. Google services used by the app\n\n" +
+    "- Google ML Kit (background removal backup): the app removes backgrounds with a built-in model on your phone. If that model cannot start, the app uses Google ML Kit, provided through Google Play services. The photo is still processed on your phone and is not sent to Google. Google Play services may download the ML Kit model once, and Google may collect basic device information and usage and performance data about ML Kit to maintain and improve it.\n\n" +
+    "- Google Play: when you download or update the app, Google Play may collect information such as crash reports and install statistics, which Google may share with us in summary form. These services are covered by Google's Privacy Policy: https://policies.google.com/privacy\n\n" +
+    "5. What we do not do\n\n" +
+    "- No advertising in the app.\n\n" +
+    "- No analytics or tracking tools in the app.\n\n" +
+    "- No selling, renting or sharing of personal data.\n\n" +
+    "- No in-app purchases or payments.\n\n" +
+    "6. When you contact us If you email us for support, we receive your email address, your message, and the app and phone details shown in the email. We use them only to reply to you and to improve the app. We do not share them with anyone, and we delete them when they are no longer needed. You can ask us to delete them at any time.\n\n" +
+    "7. Sharing images When you tap Share, the image goes to the app you choose (for example WhatsApp or Gmail). From then on, that app's own privacy policy applies.\n\n" +
+    "8. Children The app is not directed at children under 13. We do not knowingly collect personal data from anyone, including children. If you believe a child has sent us personal data by email, contact us and we will delete it.\n\n" +
+    "9. Security Because your photos are processed on your phone and not sent to us, they are not exposed to risks on our side. Saved images are stored in normal folders on your phone, so keep your phone protected with a screen lock.\n\n" +
+    "10. Your rights If you live in the European Union, the United Kingdom or another region with data protection laws, you have the right to ask us what personal data we hold about you, and to have it corrected or deleted. Because the app does not collect personal data, the only data we may hold is support emails you sent us. To use these rights, email us. You may also contact your local data protection authority; in Belgium this is the Data Protection Authority (dataprotectionauthority.be).\n\n" +
+    "11. Changes to this policy If a future version of the app adds features that change how data is handled, for example advertising or paid features, we will update this policy before or at the same time as that version is released and change the date at the top. Important changes will also be shown in the app.\n\n" +
+    "12. Contact\n\n" +
+    "Bitty, Bruges, Belgium\n\n" +
+    "Email: bittyjee1223@gmail.com\n"
 
-/** v0.20.0: one titled group on the Settings page. */
+private const val LICENCES_TEXT = "A2Z Image Craft is built with these open-source components. Thank you to their authors.\n\n" +
+    "U-2-Net (u2netp model) - background removal By Xuebin Qin and contributors. Licensed under the Apache License, Version 2.0. https://github.com/xuebinqin/U-2-Net\n\n" +
+    "ONNX Runtime - runs the background removal model Copyright (c) Microsoft Corporation. Licensed under the MIT License. https://github.com/microsoft/onnxruntime\n\n" +
+    "Android Jetpack and Jetpack Compose (AndroidX) Copyright The Android Open Source Project. Licensed under the Apache License, Version 2.0.\n\n" +
+    "Kotlin and kotlinx.coroutines Copyright JetBrains s.r.o. and Kotlin Programming Language contributors. Licensed under the Apache License, Version 2.0.\n\n" +
+    "Google ML Kit (subject segmentation) is provided by Google under the ML Kit Terms of Service: https://developers.google.com/ml-kit/terms\n\n" +
+    "Apache License, Version 2.0: https://www.apache.org/licenses/LICENSE-2.0 MIT License: https://opensource.org/licenses/MIT\n"
+
+private const val HELP_TEXT = "Resize\n\n" +
+    "Pick a photo, choose a size in pixels, percent, inches or millimetres, then tap Process. If the new size changes the shape of the photo, the app asks how to adapt it: Fit, Crop or Stretch.\n\n" +
+    "Remove Background\n\n" +
+    "Works best with one clear subject (a person, product or pet) and good light. Check the edges before saving. Save as PNG to keep the background transparent.\n\n" +
+    "Crop & Rotate\n\n" +
+    "Drag the corners to choose the area. Use rotate and mirror to straighten or flip the photo.\n\n" +
+    "Circle Cutter\n\n" +
+    "Cut your photo into a circle or other shape - great for profile pictures. Save as PNG to keep the corners transparent.\n\n" +
+    "Social Media Sizes\n\n" +
+    "Choose a platform and post type, and the app sets the exact recommended size for you.\n\n" +
+    "Online Shop Sizes\n\n" +
+    "Ready-made sizes for shop listings such as Etsy. Platforms can change their rules, so check their latest guidance for important listings.\n\n" +
+    "Format Converter\n\n" +
+    "Change between JPG, PNG, WebP and PDF. JPG is smallest for photos, PNG keeps transparency and sharp text, PDF is best for documents.\n\n" +
+    "Image & PDF Compressor\n\n" +
+    "Make files smaller for email or upload. A lower quality gives a smaller file. Always keep your original.\n\n" +
+    "Print Size & DPI\n\n" +
+    "Shows how big a photo can print sharply. 300 DPI is best for prints; 150 DPI is fine for posters seen from a distance. Make a test print first.\n\n" +
+    "Text on Photo\n\n" +
+    "Add text, stickers, frames, effects and perspective. Tap a layer to edit it, drag to move it, and use Reset to start again.\n\n" +
+    "Collage Maker\n\n" +
+    "Pick several photos and choose a layout. Hold a photo and drop it on another frame to swap them, and adjust spacing and background.\n\n" +
+    "Photo Adjustments\n\n" +
+    "Brightness, contrast, warmth and filters. Tap Compare to see the original photo.\n\n" +
+    "Presets\n\n" +
+    "Tap a preset to open the resize tool with that exact size ready - one tap to finish.\n\n" +
+    "Saving and sharing\n\n" +
+    "Edited photos are saved to Pictures/PixelCraft (or the folder you choose). Your original photo is never changed unless you choose \"Replace original\".\n\n" +
+    "Privacy\n\n" +
+    "Everything happens on your phone. Your photos are never uploaded.\n"
+
+private const val WHATS_NEW_TEXT = "What's new in version 1.0.0\n\n" +
+    "Welcome to A2Z Image Craft - a complete photo toolkit that works entirely on your phone.\n\n" +
+    "- Resize photos by pixels, percent, inches or mm\n\n" +
+    "- Remove backgrounds with one tap\n\n" +
+    "- Crop, rotate, mirror and cut photos into shapes\n\n" +
+    "- Exact sizes for social media and online shops\n\n" +
+    "- Convert between JPG, PNG, WebP and PDF\n\n" +
+    "- Compress images and PDFs\n\n" +
+    "- Print Size & DPI calculator\n\n" +
+    "- Text on Photo with stickers, frames, effects and perspective\n\n" +
+    "- Collage Maker\n\n" +
+    "- Photo Adjustments with filters\n\n" +
+    "- No account, no uploads - your photos stay on your phone\n"
+
 @Composable
 private fun SettingsSection(title: String, content: @Composable () -> Unit) {
     Text(title, color = Slate, fontSize = 12.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 10.dp, bottom = 6.dp))

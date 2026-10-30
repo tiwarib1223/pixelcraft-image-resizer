@@ -140,7 +140,7 @@ class PresetsSettingsTest {
     }
 
     @Test
-    fun d_settingsPageKeepsOnlyModeAndClearRecent() {
+    fun d_settingsPageHasModeClearSupportAndAbout() {
         launch().use { sc ->
             waitForText("Settings")
             composeRule.onNodeWithText("Settings").performClick()
@@ -148,14 +148,23 @@ class PresetsSettingsTest {
             waitForText("Dark mode")
             waitForText("Privacy")
             waitForText("Clear recently edited")
-            // v0.20.2 (his call): Settings = mode + clear recently edited ONLY - everything else lives in the drawer.
-            listOf("Support", "Rate us", "Share", "About", "Terms & Conditions", "Privacy Policy", "Your photos stay on this phone").forEach { gone ->
+            // v1.0.0 launch spec: Settings gains Support (Email us, Help & tips, Rate us)
+            // and About (Open-source licences, What's new) sections.
+            waitForText("Support")
+            waitForText("Need support? Email us")
+            waitForText("Help & tips")
+            waitForText("Rate us")
+            waitForText("About")
+            waitForText("Open-source licences")
+            waitForText("What's new")
+            // Terms & Privacy Policy stay in the drawer, not as Settings rows.
+            listOf("Terms & Conditions", "Privacy Policy").forEach { gone ->
                 val leaked = composeRule.onAllNodesWithText(gone).fetchSemanticsNodes()
                 assertTrue("Settings must not show: $gone", leaked.isEmpty())
             }
             val stale = composeRule.onAllNodesWithText("Learnify Zone", substring = true).fetchSemanticsNodes()
             assertTrue("no Learnify Zone may remain in the UI", stale.isEmpty())
-            shot(sc, "v0202_phone_settings")
+            shot(sc, "v100_phone_settings")
         }
     }
 
@@ -188,6 +197,37 @@ class PresetsSettingsTest {
     }
 
     @Test
+    fun g_v100DrawerDocsAndSettingsRows() {
+        launch().use { sc ->
+            waitForText("PHOTO TOOLKIT")
+            composeRule.onNodeWithContentDescription("Menu").performClick()
+            // v1.0.0 launch spec: Help & tips is the first drawer row; Open-source licences joins the drawer.
+            waitForText("Help & tips")
+            waitForText("Open-source licences")
+            clickText("Help & tips")
+            waitForText("Remove Background")
+            waitForText("Circle Cutter")
+            shot(sc, "v100_phone_help")
+            composeRule.onNodeWithContentDescription("Back").performClick()
+            waitForText("Appearance")
+            composeRule.onNodeWithText("Home").performClick()
+            waitForText("PHOTO TOOLKIT")
+            composeRule.onNodeWithContentDescription("Menu").performClick()
+            clickText("Open-source licences")
+            waitForText("U-2-Net")
+            shot(sc, "v100_phone_licences")
+            composeRule.onNodeWithContentDescription("Back").performClick()
+            waitForText("Appearance")
+            // Settings > About rows open their doc pages.
+            clickText("What's new")
+            waitForText("What's new in version 1.0.0")
+            shot(sc, "v100_phone_whatsnew")
+            composeRule.onNodeWithContentDescription("Back").performClick()
+            waitForText("Appearance")
+        }
+    }
+
+    @Test
     fun f_backFromDocPagesReturnsNeverExits() {
         launch().use { sc ->
             waitForText("Settings")
@@ -208,7 +248,7 @@ class PresetsSettingsTest {
             waitForText("PHOTO TOOLKIT")
             composeRule.onNodeWithContentDescription("Menu").performClick()
             clickText("Privacy Policy")
-            waitForText("private by design")
+            waitForText("your photos stay on your phone")
             var finishingAfterDocBack = false
             sc.onActivity { act ->
                 act.onBackPressedDispatcher.onBackPressed()
@@ -235,7 +275,7 @@ class PresetsSettingsTest {
             waitForText("PHOTO TOOLKIT")
             composeRule.onNodeWithContentDescription("Menu").performClick()
             clickText("Privacy Policy")
-            waitForText("private by design")
+            waitForText("your photos stay on your phone")
             shot(sc, "v0202_phone_privacy")
         }
     }

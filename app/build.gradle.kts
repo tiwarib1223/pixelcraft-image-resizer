@@ -15,8 +15,8 @@ android {
         // arm64 - restricting keeps the APK small instead of carrying x86 slices.
         ndk { abiFilters += "arm64-v8a" }
         targetSdk = 36
-        versionCode = 72
-        versionName = "0.20.5"
+        versionCode = 73
+        versionName = "1.0.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
@@ -26,6 +26,18 @@ android {
             storePassword = "android"
             keyAlias = "androiddebugkey"
             keyPassword = "android"
+        }
+        // Google Play upload key (Part E of the launch spec): active only when the CI
+        // environment provides the decoded keystore - without the secrets the release
+        // build stays unsigned, so nothing breaks.
+        create("upload") {
+            val keyStorePath = System.getenv("UPLOAD_KEYSTORE_PATH")
+            if (!keyStorePath.isNullOrBlank()) {
+                storeFile = file(keyStorePath)
+                storePassword = System.getenv("UPLOAD_KEY_PASSWORD")
+                keyAlias = "upload"
+                keyPassword = System.getenv("UPLOAD_KEY_PASSWORD")
+            }
         }
     }
 
@@ -42,6 +54,9 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
+            if (!System.getenv("UPLOAD_KEYSTORE_PATH").isNullOrBlank()) {
+                signingConfig = signingConfigs.getByName("upload")
+            }
         }
     }
 

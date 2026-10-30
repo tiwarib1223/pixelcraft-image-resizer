@@ -554,3 +554,37 @@ Stage 2B: research official platform documentation and populate presets.json onl
 - QUALITY SLIDER REBUILT (his repeat report): pixel analysis of his v0.20.3 and v0.20.4 screenshots showed the track always ended exactly at the 16dp padding - what read as "cut off" was Material3's detached inactive-track stub beyond the thumb plus the label+slider Row squeezing the track. Rebuilt to the app's proven Compress-screen layout: "Quality" label row with the % value right-aligned, full-width smooth slider below (step ticks removed), "Smaller file / Higher quality" end captions. Visibly different, nothing hugs the thumb.
 - BLACK INFO BARS REMOVED (his "No need down in black background"): the informational snackbars ("Photo loaded ...", "Processed: ... x ... px" x2) are gone entirely. Remaining messages (errors/confirmations only) now render as a white rounded card in app style instead of the plain black bar. (VETOABLE: the white-card styling.)
 - Tests +5 (214 total): 5 replaceTargetFor URI-shape tests (picker, legacy picker, media document, plain MediaStore, file/garbage); Export screen screenshots renamed v0205 with the same bounds + no-crash guards.
+
+## v1.0.0 (versionCode 73) - Google Play launch build
+
+Implements the full "A2Z IMAGE CRAFT - FINAL CHANGES BEFORE GOOGLE PLAY LAUNCH" spec in one update. The app stays FREE, with NO ads and NO payments.
+
+Part A - fixes:
+- A1: the side menu header no longer sits under the status bar (status-bar padding added).
+- A2: the Rate us subtitle in the side menu now says "Enjoying the app? Rate it on Google Play".
+- A3: side menu rows no longer clip two-line subtitles (line height fixed).
+- A4: the Presets tab in Settings now uses a size/layout icon instead of the duplicate collections icon.
+- A5: every long task (loading, processing, background removal, collage, convert, compress, print, save, share) now catches phone-out-of-memory errors and shows a plain-English message instead of crashing.
+- A6: the unused presets/presets.json file was deleted.
+
+Part B - additions:
+- B1: Help & tips page (in the side menu and in Settings > Support), written per tool in plain English.
+- B2: Email us now pre-fills the app version, phone model and Android version in the email body.
+- B3: Open-source licences page (in the side menu and in Settings > About).
+- B4: What's new page (Settings > About) describing version 1.0.0.
+- B5: versionName is now 1.0.0, shown at the bottom of the side menu.
+
+Parts C and D: the Terms of Use and Privacy Policy texts were replaced with the final launch versions. Two privacy details were corrected so every sentence is true for this app: dark mode is not stored between sessions (removed from the stored-data list), and the list now also names the saved collage project, the last used resize size, and the temporary private cache copies used for share/print/export.
+
+Part E - Google Play upload key (CI):
+- The release build is signed with the "upload" key when the CI provides UPLOAD_KEYSTORE_PATH and UPLOAD_KEY_PASSWORD; without them it stays unsigned, so nothing breaks.
+- android-build.yml now decodes the UPLOAD_KEYSTORE_BASE64 secret, exports the signing environment, and always deletes the keystore from the runner afterwards.
+- New manual workflow create-upload-key.yml creates the PKCS12 key (alias "upload", RSA 2048, 10000 days) and uploads it as an artifact that auto-deletes after 1 day.
+
+Part F - safety checks run before delivery:
+- F1: merged manifest permissions inspected on the built APK (only storage on Android 9 and older; ML Kit adds its standard model-download access).
+- F2: stored-data inventory done; privacy text updated to match exactly (see Parts C/D above).
+- F3: no network code and no networking libraries in the app; all tools work fully offline (background removal's Google ML Kit fallback downloads its model once via Play services, as the privacy text already explains).
+- F4: Help & tips text verified against the real behaviour of every tool (resize has no aspect lock, collage swaps by holding and dropping a photo onto another frame, the cutter is called Circle Cutter and offers Circle/Square/Rounded/Heart shapes).
+- F5: every release library is covered by the Open-source licences page.
+- F6: policy greps - no rating prompts asking for stars, no premium/ads/payments remnants anywhere in the app.
