@@ -1,5 +1,52 @@
 # PixelCraft Image Resizer — Progress
 
+## v0.18.2 (versionCode 63): Audit fixes round 2 - dead editor chips hidden (parent decision)
+- Settings version line now reads from the build itself (BuildConfig), so it can never go stale again.
+- The editor tool row no longer shows "Presets" (it navigated away mid-edit to the still-empty Presets tab) or "Format" (it only showed a "planned for a later stage" snackbar). Both return when they open something real. The tools row is now: Resize, Crop & Rotate, Background, Circle Cutter.
+- Findings still deferred (cosmetic, all content reachable by scrolling): scroll hints on the tool chip row and the print size rows.
+
+## v0.18.1 (versionCode 62): Audit fixes round 1 (his deep-review request)
+- Settings tab now shows the real identity (name, version, and the Privacy paragraph all say A2Z Image Craft): "A2Z Image Craft", "Version 0.18.1 · Learnify Zone" (was the stale "PixelCraft Image Resizer / Version 0.3.0" + an old Stage 2C build note). New summary line lists the toolset and the privacy promise in plain words.
+- Presets tab empty state: wording updated to the current app name, internal stage jargon removed. The list is still honestly empty (verification research not done) - unchanged behaviour.
+- Home: removed the "Stage 2 ..." developer note at the bottom; the subtitle under the app title now reads "PHOTO TOOLKIT" (was "IMAGE RESIZER").
+- Editor top bar now names the active tool (Crop & Rotate, Circle Cutter, Background, Presets, Format) instead of always saying "Resize Image".
+- Crop & Rotate: the rotate/flip buttons are now compact enough that all four (Left 90, Right 90, Mirror, Flip V) fit a 360dp phone screen without clipping.
+- Findings deliberately NOT changed yet (cosmetic, everything reachable): scroll hints on the editor tool chip row and print size rows; save folders stay Pictures/PixelCraft and Downloads/PixelCraft so already-saved files are not scattered.
+
+## v0.18.0 (versionCode 61): Photo Adjustments (his spec) - new Home tile
+- New Home tile **Photo Adjustments** (fills the last empty slot): one photo in, sliders out.
+- **12 sliders in his 4 categories**, each -100..+100 with the value shown, min/max labels, live preview, fully independent: Light (Brightness, Exposure, Contrast, Highlights, Shadows), Colour (Saturation, Vibrance, Temperature, Tint), Details (Sharpness, Clarity), Creative (Fade). Tapping a slider's value resets just that slider (his "double-tap or reset option").
+- **Undo / Redo / Compare / Reset** row (his mockup): undo is per slider-drag, Compare toggles between the original and the edited photo, Reset restores every slider and the filter.
+- **Filters tile** reuses the app's existing filter engine inside this screen (Normal, B&W, Warm, Cool, Vintage, ...) - sliders still apply on top. Crop and Text on Photo already have their own full tools on Home; Draw/Shapes/Frames/Blur from his mockup are a proposed separate version (reported, not silently dropped).
+- **Original quality kept**: the original photo is never touched; at save time the ORIGINAL is re-decoded (up to 4096px), adjusted ONCE and saved ONCE - no repeated compression (his spec 6.2/6.3). "Original: WxH" is shown under the preview (his spec 4.3).
+- **Export**: JPG / PNG / WebP, quality 50-100 (default 90), Original size or Custom width, save to device (his spec 5). Fully offline, no watermark, no subscription, no new permissions.
+- New engine `image/PhotoAdjust.kt`: tonal sliders compile into per-channel lookup tables (one fast pass), colour sliders run as a ColorMatrix, sharpness/clarity run an unsharp mask. Honest approximations: vibrance uses a gentler saturation curve (not true skin-protection); clarity uses a fixed small blur radius for local contrast.
+
+
+## v0.17.1 (versionCode 60): Collage Maker part 2 (rest of his spec)
+- **Swap photos between frames**: hold a photo and drop it on another frame to swap them (undoable).
+- **Rotate / flip per photo**: with a photo selected - Rotate 90°, Flip H, Flip V, Reset photo.
+- **Replace photo in its slot**: "Replace photo N" picks a new photo into that frame, keeping the layout.
+- **Frames (borders)**: a frame slider + colour swatches around EVERY photo, plus a per-photo frame override ("same as all" by default).
+- **Margins**: slider adds a background ring around the whole collage.
+- **Backgrounds**: White / Black / Colour / Gradient (Sunset, Ocean, Mint, Berry, Dusk) / None (transparent - stays transparent in PNG and WebP; JPG saves on white).
+- **View full screen**: opens the collage large, tap anywhere to close.
+- **Save project / Open saved project**: the whole collage (photos by reference + every adjustment + export settings) saves on the phone and reopens later. If a photo is no longer available on the phone it is skipped with an honest message.
+- Custom move/resize of individual sections is the one spec item left; it is a mini layout editor of its own (candidate for a later version - flagged, not silently dropped).
+- Same engine, same single draw path, no new permissions.
+
+
+## v0.17.0 (versionCode 59): Collage Maker upgrade (his 10-section spec)
+- Collage Maker rebuilt as a 3-step flow: **1) Home** (layout style cards with live mini previews: Grid / Mixed / Vertical / Horizontal; photo strip with thumbnails, count "N/20", select / move left / move right / remove / add more; Start Creating), **2) Workspace** (Undo / Redo / Reset; live preview; tap a photo to select it, drag to move it inside its frame, zoom slider 1-4x per photo; spacing slider 0-40; rounded corners slider 0-60; canvas size Square 1080 / Portrait 1080x1350 / Story 1080x1920 / Wide 1920x1080; background White / Black / Colour with 7 colour swatches; Continue to Export), **3) Export** (JPG / PNG / WebP, quality slider 50-100 (JPG/WebP), resolution Standard / High 2x (capped 4096) / Custom width, live "Will save: WxH format" summary, Save Collage).
+- **2 to 20 photos** (was 2-9). Layout library: Grid with named shapes (2,3,4,6,8,9,12,16) + near-square fallback; Mixed with hand-set asymmetric templates for 2-6 and a featured 2x2 grid for 7-20; Vertical (rows); Horizontal (columns).
+- New engine `image/CollageMaker.kt`: ONE draw path feeds the preview and the saved file (what he sees is what he saves). Photos keep their proportions - sections are filled with a centre-crop, never stretched; zoom only crops in more; pan is clamped so background can never bleed into a frame, even with rotation.
+- Memory: editing bitmaps are capped at 1024px; at export the ORIGINALS are re-decoded one section at a time (sampled, capped near the section's pixel size) so a 20-photo 4096px export does not hold all originals in memory (his spec 9.3/9.4).
+- Home tile subtitle updated: "Combine 2-20 photos".
+- No new permissions, fully on-device, no watermark, free. (His spec 9.6-9.10.)
+- Deferred to v0.17.1 (told through Instinct): drag & drop between sections, rotation/flip buttons, per-photo borders, gradient/transparent backgrounds, margins, replace-in-section, full-screen preview, save project, custom move/resize of sections. The engine already supports rotation/flip/gradients/transparent/per-photo borders.
+- (Vetoable picks: canvas presets named Square/Portrait/Story/Wide; colour palette of 7 swatches; grid-3 stacks vertically on a square canvas; quality slider 50-100 default 90.)
+
+
 ## Current stage
 Stage 3 v0.10.1 (built on Stage 2E v0.8.1): queue overview screen, the full "Select new dimensions" Process sheet, batch processing of the whole queue with live percent progress, a result screen with savings summary, and batch save (new copies or replace originals). Stage 2C delivered: "My Photos" library screen, export format picker (JPG/PNG/WEBP/PDF), size unit picker (pixels/inch/cm/mm), queue thumbnail strip, and a persistent debug signing key. Stage 2 delivered: process-then-export workflow, aspect-ratio adaptation, camera capture, multi-select (up to 50) with one-by-one queue, recently edited photos, quality control.
 

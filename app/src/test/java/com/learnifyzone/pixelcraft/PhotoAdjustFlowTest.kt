@@ -1,0 +1,122 @@
+package com.learnifyzone.pixelcraft
+
+import android.content.Intent
+import android.os.Looper
+import androidx.compose.ui.test.junit4.createEmptyComposeRule
+import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
+import androidx.test.core.app.ActivityScenario
+import androidx.test.core.app.ApplicationProvider
+import org.junit.Rule
+import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.Shadows.shadowOf
+import org.robolectric.annotation.Config
+import org.robolectric.annotation.GraphicsMode
+import java.io.File
+import java.util.concurrent.TimeUnit
+
+/** v0.18.0 Photo Adjustments screen at a REAL phone window (w360dp-h640dp). Screenshots inspected before delivery. */
+@org.junit.FixMethodOrder(org.junit.runners.MethodSorters.NAME_ASCENDING)
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [30], qualifiers = "w360dp-h640dp")
+@GraphicsMode(GraphicsMode.Mode.NATIVE)
+class PhotoAdjustFlowTest {
+
+    @get:Rule
+    val composeRule = createEmptyComposeRule()
+
+    private fun launchRaw(vararg extras: Pair<String, String>): ActivityScenario<MainActivity> {
+        var intent = Intent(ApplicationProvider.getApplicationContext(), MainActivity::class.java)
+        extras.forEach { (k, v) -> intent = intent.putExtra(k, v) }
+        return ActivityScenario.launch(intent)
+    }
+
+    private fun pump() {
+        shadowOf(Looper.getMainLooper()).idleFor(800, TimeUnit.MILLISECONDS)
+        try { composeRule.waitForIdle() } catch (e: androidx.compose.ui.test.ComposeTimeoutException) { }
+    }
+
+    private fun waitForText(text: String, timeoutMs: Long = 90_000) {
+        val deadline = System.currentTimeMillis() + timeoutMs
+        while (System.currentTimeMillis() < deadline) {
+            pump()
+            if (composeRule.onAllNodesWithText(text, substring = true).fetchSemanticsNodes().isNotEmpty()) return
+            Thread.sleep(60)
+        }
+        throw AssertionError("Text not found within ${timeoutMs}ms: $text")
+    }
+
+    private fun shot(scenario: ActivityScenario<MainActivity>, name: String) {
+        pump()
+        val dir = File("build/outputs/uishots").apply { mkdirs() }
+        scenario.onActivity { act ->
+            val v = act.window.decorView
+            val bmp = android.graphics.Bitmap.createBitmap(v.width, v.height, android.graphics.Bitmap.Config.ARGB_8888)
+            v.draw(android.graphics.Canvas(bmp))
+            bmp.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, File(dir, "$name.png").outputStream())
+        }
+        pump()
+    }
+
+    @Test
+    fun adjustScreenShowsSlidersAndControls() {
+        // Mockup structure: preview, Undo/Redo/Compare/Reset, Adjust/Filters tiles, the 12 named
+        // sliders in his 4 categories, save settings, Save Image.
+        launchRaw("pixelcraft.test.adjust" to "1").use { sc ->
+            waitForText("Undo")
+            waitForText("Compare")
+            waitForText("Reset")
+            waitForText("Adjust")
+            waitForText("Filters")
+            waitForText("Original: 800 x 600")
+            waitForText("Brightness")
+            waitForText("Exposure")
+            waitForText("Contrast")
+            waitForText("Highlights")
+            waitForText("Shadows")
+            shot(sc, "v0180_phone_adjust_top")
+            composeRule.onNodeWithText("Save Image").performScrollTo()
+            waitForText("Saturation")
+            waitForText("Vibrance")
+            waitForText("Temperature")
+            waitForText("Tint")
+            waitForText("Sharpness")
+            waitForText("Clarity")
+            waitForText("Fade")
+            waitForText("Save settings")
+            waitForText("Original size")
+            waitForText("Save Image")
+            shot(sc, "v0180_phone_adjust_bottom")
+            sc.close()
+        }
+    }
+
+    @Test
+    fun adjustCompareAndFiltersWork() {
+        launchRaw("pixelcraft.test.adjust" to "1").use { sc ->
+            waitForText("Compare")
+            composeRule.onNodeWithText("Compare").performClick()
+            waitForText("showing the original")
+            composeRule.onNodeWithText("Filters").performClick()
+            waitForText("B&W")
+            composeRule.onNodeWithText("B&W").performClick()
+            waitForText("Warm")
+            shot(sc, "v0180_phone_adjust_filters")
+            sc.close()
+        }
+    }
+
+    @Test
+    fun adjustHomeTileExists() {
+        // The new tile fills the last empty slot on Home.
+        launchRaw().use { sc ->
+            waitForText("Photo Adjustments")
+            waitForText("Light, colour & detail sliders")
+            sc.close()
+        }
+    }
+}

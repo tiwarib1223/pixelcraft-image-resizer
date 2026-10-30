@@ -28,6 +28,7 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -37,6 +38,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.offset
@@ -168,6 +170,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 import androidx.exifinterface.media.ExifInterface
@@ -177,6 +180,8 @@ import com.learnifyzone.pixelcraft.data.Preset
 import com.learnifyzone.pixelcraft.data.PresetStore
 import com.learnifyzone.pixelcraft.data.RecentsStore
 import com.learnifyzone.pixelcraft.image.BackgroundRemoval
+import com.learnifyzone.pixelcraft.image.CollageMaker
+import com.learnifyzone.pixelcraft.image.PhotoAdjust
 import com.learnifyzone.pixelcraft.image.ExportFormat
 import com.learnifyzone.pixelcraft.image.FilterUtils
 import com.learnifyzone.pixelcraft.image.SaveUtils
@@ -224,7 +229,7 @@ class MainActivity : ComponentActivity() {
 }
 
 private enum class MainTab { Home, MyPhotos, Presets, Settings }
-private enum class Screen { Home, Editor, Export, PrintHome, PrintSetup, PrintPreview, PrintExport, Success, QueueOverview, QueueResult, SocialHome, SocialPlatform, SocialEdit, ShopHome, ShopOther, ShopPlatform, ShopEdit, ShopCollage, ConvertHome, ConvertEdit, ConvertResult, CompressHome, CompressSettings, CompressResult, TextPhoto, Collage }
+private enum class Screen { Home, Editor, Export, PrintHome, PrintSetup, PrintPreview, PrintExport, Success, QueueOverview, QueueResult, SocialHome, SocialPlatform, SocialEdit, ShopHome, ShopOther, ShopPlatform, ShopEdit, ShopCollage, ConvertHome, ConvertEdit, ConvertResult, CompressHome, CompressSettings, CompressResult, TextPhoto, Collage, PhotoAdjust }
 private enum class Tool(val label: String) { Resize("Resize"), Presets("Presets"), Crop("Crop & Rotate"), Background("Background"), Circle("Circle Cutter"), Format("Format") }
 
 private enum class CropTransform { LEFT, RIGHT, FLIP_H, FLIP_V }
@@ -329,10 +334,9 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
     val collagePhotos = remember { mutableStateListOf<Bitmap>() }
 
     // v0.16.9 Collage Maker (standalone home tile, his "Yes all 8" #7) + Meme Maker state
-    val collageMakerPhotos = remember { mutableStateListOf<Bitmap>() }
-    var collageMakerGap by rememberSaveable { mutableStateOf(8f) }
-    var collageMakerBg by rememberSaveable { mutableStateOf("White") }
-    var collageMakerSaved by rememberSaveable { mutableStateOf(false) }
+    val collage = remember { CollageUiState() }
+    var collageAppend by remember { mutableStateOf(false) }
+    val adjust = remember { AdjustUiState() }
     var memeTopId by remember { mutableStateOf<Long?>(null) }
     var memeBottomId by remember { mutableStateOf<Long?>(null) }
     var pendingConvertTool by remember { mutableStateOf(false) }
@@ -946,54 +950,314 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
         }
     }
 
-    /** v0.16.9: load 2-9 photos for the standalone Collage Maker (capped for a smooth preview). */
+    /** v0.17.0: load 2-20 photos for the Collage Maker. Edit bitmaps are capped at 1024px for
+     *  memory (his spec 9.3); the original URIs are kept and re-decoded per section at export. */
     fun loadCollageMakerPhotos(uris: List<Uri>) {
         scope.launch {
             busy = true
             busyLabel = "Loading photos…"
-            val loaded = mutableListOf<Bitmap>()
             try {
-                uris.take(9).forEach { uri ->
-                    val b = withContext(Dispatchers.IO) { decodeAnyImage(context, uri) }
-                    val capped = if (maxOf(b.width, b.height) > 1600) {
-                        val f = 1600f / maxOf(b.width, b.height)
-                        Bitmap.createScaledBitmap(b, (b.width * f).roundToInt(), (b.height * f).roundToInt(), true)
-                    } else b
-                    loaded.add(capped)
+                val merged = if (collageAppend) (collage.uris + uris).take(20) else uris.take(20)
+                val loaded = mutableListOf<CollageMaker.Photo>()
+                merged.forEach { uri ->
+                    val b = withContext(Dispatchers.IO) { runCatching { decodeAnyImage(context, uri) }.getOrNull() }
+                    if (b != null) {
+                        val capped = if (maxOf(b.width, b.height) > 1024) {
+                            val f = 1024f / maxOf(b.width, b.height)
+                            Bitmap.createScaledBitmap(b, (b.width * f).roundToInt(), (b.height * f).roundToInt(), true)
+                        } else b
+                        loaded.add(CollageMaker.Photo(capped))
+                    }
                 }
+                busy = false
+                busyLabel = ""
                 if (loaded.size >= 2) {
-                    collageMakerPhotos.clear()
-                    collageMakerPhotos.addAll(loaded)
-                    collageMakerSaved = false
+                    collage.uris.clear()
+                    collage.uris.addAll(merged)
+                    collage.photos.clear()
+                    collage.photos.addAll(loaded)
+                    collage.saved = false
+                    collage.selected = -1
+                    collage.undoStack.clear()
+                    collage.redoStack.clear()
+                    collage.level = "home"
+                    collageAppend = false
                     screen = Screen.Collage
                 } else if (loaded.isNotEmpty()) {
-                    busy = false
-                    busyLabel = ""
                     snackbar.showSnackbar("Pick at least 2 photos for a collage.")
-                    return@launch
+                } else {
+                    snackbar.showSnackbar("Could not load those photos - try JPG or PNG.")
                 }
             } catch (e: Exception) {
                 busy = false
                 busyLabel = ""
                 snackbar.showSnackbar("Could not load those photos - try JPG or PNG.")
-                return@launch
             }
-            busy = false
-            busyLabel = ""
         }
     }
 
     /** v0.16.9: save the collage shown in the preview (the preview IS the export, 1600px PNG). */
-    fun saveCollageMaker(result: Bitmap) {
+    /** Cap a bitmap so its longest side is at most [maxSide] (keeps collages light in memory). */
+    fun capBitmap(b: Bitmap, maxSide: Int): Bitmap = if (maxOf(b.width, b.height) > maxSide) {
+        val f = maxSide.toFloat() / maxOf(b.width, b.height)
+        Bitmap.createScaledBitmap(b, (b.width * f).roundToInt(), (b.height * f).roundToInt(), true)
+    } else b
+
+    /** v0.18.0: load one photo for Photo Adjustments (edit copy capped 1600px; original re-decoded at save). */
+    fun loadAdjustPhoto(uri: Uri) {
+        scope.launch {
+            busy = true
+            busyLabel = "Loading photo…"
+            val full = withContext(Dispatchers.IO) { runCatching { decodeOrientedBitmap(context, uri) }.getOrNull() }
+            busy = false
+            busyLabel = ""
+            if (full != null) {
+                adjust.uri = uri
+                adjust.origW = full.width
+                adjust.origH = full.height
+                adjust.base = capBitmap(full, 1600)
+                adjust.params.copyFrom(PhotoAdjust.Params())
+                adjust.filterId = "normal"
+                adjust.compare = false
+                adjust.saved = false
+                adjust.undoStack.clear()
+                adjust.redoStack.clear()
+                adjust.panel = "adjust"
+                adjust.tick++
+                screen = Screen.PhotoAdjust
+            } else {
+                snackbar.showSnackbar("Could not load that photo - try JPG or PNG.")
+            }
+        }
+    }
+
+    /** v0.18.0: save the adjusted photo. The ORIGINAL is re-decoded, adjusted once, saved once -
+     *  no repeated compression (his spec). The file on the phone is never touched. */
+    fun saveAdjustPhoto() {
+        val base = adjust.base ?: return
         scope.launch {
             busy = true
             busyLabel = "Saving…"
             try {
-                val name = "collage-${System.currentTimeMillis()}.png"
+                val src = withContext(Dispatchers.IO) {
+                    val u = adjust.uri
+                    if (u != null) runCatching { decodeOrientedBitmap(context, u) }.getOrNull() ?: base else base
+                }
+                val filtered = if (adjust.filterId == "normal") src else FilterUtils.applyFilter(src, adjust.filterId)
+                var out = withContext(Dispatchers.Default) { PhotoAdjust.apply(filtered, adjust.params) }
+                if (adjust.resLabel == "Custom") {
+                    val w = adjust.customW.toIntOrNull()?.coerceIn(256, 4096) ?: out.width
+                    if (w != out.width) {
+                        val f = w.toFloat() / out.width
+                        out = Bitmap.createScaledBitmap(out, w, (out.height * f).roundToInt(), true)
+                    }
+                }
+                val (fmt, mime, ext) = when (adjust.format) {
+                    "PNG" -> Triple(Bitmap.CompressFormat.PNG, "image/png", "png")
+                    "WebP" -> Triple(Bitmap.CompressFormat.WEBP, "image/webp", "webp")
+                    else -> Triple(Bitmap.CompressFormat.JPEG, "image/jpeg", "jpg")
+                }
+                val q = if (fmt == Bitmap.CompressFormat.PNG) 100 else adjust.quality.roundToInt().coerceIn(50, 100)
                 val baos = java.io.ByteArrayOutputStream()
-                result.compress(Bitmap.CompressFormat.PNG, 100, baos)
-                withContext(Dispatchers.IO) { saveToGallery(context, name, "image/png", baos.toByteArray()) }
-                collageMakerSaved = true
+                out.compress(fmt, q, baos)
+                val name = "adjusted-${System.currentTimeMillis()}.$ext"
+                withContext(Dispatchers.IO) { saveToGallery(context, name, mime, baos.toByteArray()) }
+                adjust.saved = true
+                busy = false
+                busyLabel = ""
+                snackbar.showSnackbar("Saved to your gallery as $name.")
+            } catch (e: Exception) {
+                busy = false
+                busyLabel = ""
+                snackbar.showSnackbar("Could not save. Try again.")
+            }
+        }
+    }
+
+    /** v0.17.1: swap one collage photo for a new pick, keeping its slot. */
+    fun replaceCollagePhoto(uri: Uri) {
+        val idx = collage.selected
+        if (idx !in collage.photos.indices) return
+        scope.launch {
+            busy = true
+            busyLabel = "Loading photo…"
+            val b = withContext(Dispatchers.IO) { runCatching { decodeAnyImage(context, uri) }.getOrNull() }
+            busy = false
+            busyLabel = ""
+            if (b != null) {
+                val ph = CollageMaker.Photo(capBitmap(b, 1024))
+                collage.photos[idx] = ph
+                if (idx < collage.uris.size) collage.uris[idx] = uri
+                collage.tick++
+                collage.saved = false
+            } else {
+                snackbar.showSnackbar("Could not load that photo.")
+            }
+        }
+    }
+
+    val collageProjectFile = remember { java.io.File(context.filesDir, "collage_project.json") }
+    var collageHasProject by remember { mutableStateOf(collageProjectFile.exists()) }
+
+    /** v0.17.1: save the whole collage (photos by reference + every adjustment) on the phone. */
+    fun saveCollageProject() {
+        scope.launch {
+            busy = true
+            busyLabel = "Saving project…"
+            try {
+                val o = org.json.JSONObject()
+                o.put("family", collage.family.name)
+                o.put("canvasW", collage.canvasW); o.put("canvasH", collage.canvasH); o.put("canvasLabel", collage.canvasLabel)
+                o.put("gapPx", collage.gapPx.toDouble()); o.put("marginPx", collage.marginPx.toDouble()); o.put("radiusPx", collage.radiusPx.toDouble())
+                o.put("borderPx", collage.borderPx.toDouble()); o.put("borderColor", collage.borderColor)
+                o.put("bgLabel", collage.bgLabel); o.put("bgCustom", collage.bgCustom); o.put("gradientLabel", collage.gradientLabel)
+                o.put("format", collage.format); o.put("quality", collage.quality.toDouble())
+                o.put("resLabel", collage.resLabel); o.put("customResW", collage.customResW)
+                val arr = org.json.JSONArray()
+                collage.photos.forEachIndexed { i, ph ->
+                    val pj = org.json.JSONObject()
+                    pj.put("uri", collage.uris.getOrNull(i)?.toString() ?: "")
+                    pj.put("zoom", ph.zoom.toDouble()); pj.put("panX", ph.panX.toDouble()); pj.put("panY", ph.panY.toDouble())
+                    pj.put("rotation", ph.rotation.toDouble()); pj.put("flipH", ph.flipH); pj.put("flipV", ph.flipV)
+                    pj.put("borderPx", ph.borderPx); pj.put("borderColor", ph.borderColor)
+                    arr.put(pj)
+                }
+                o.put("photos", arr)
+                withContext(Dispatchers.IO) { collageProjectFile.writeText(o.toString()) }
+                collageHasProject = true
+                busy = false
+                busyLabel = ""
+                snackbar.showSnackbar("Project saved on this phone.")
+            } catch (e: Exception) {
+                busy = false
+                busyLabel = ""
+                snackbar.showSnackbar("Could not save the project.")
+            }
+        }
+    }
+
+    /** v0.17.1: reopen a saved project. Photo-picker links can expire; unreadable photos are skipped honestly. */
+    fun loadCollageProject() {
+        scope.launch {
+            busy = true
+            busyLabel = "Opening project…"
+            try {
+                val o = withContext(Dispatchers.IO) { org.json.JSONObject(collageProjectFile.readText()) }
+                val arr = o.getJSONArray("photos")
+                val loaded = mutableListOf<CollageMaker.Photo>()
+                val uris = mutableListOf<Uri>()
+                var unreadable = 0
+                for (i in 0 until arr.length()) {
+                    val pj = arr.getJSONObject(i)
+                    val uriStr = pj.optString("uri", "")
+                    val b = if (uriStr.isNotEmpty()) withContext(Dispatchers.IO) { runCatching { decodeAnyImage(context, Uri.parse(uriStr)) }.getOrNull() } else null
+                    if (b == null) { unreadable++; continue }
+                    val ph = CollageMaker.Photo(capBitmap(b, 1024))
+                    ph.zoom = pj.optDouble("zoom", 1.0).toFloat()
+                    ph.panX = pj.optDouble("panX", 0.0).toFloat()
+                    ph.panY = pj.optDouble("panY", 0.0).toFloat()
+                    ph.rotation = pj.optDouble("rotation", 0.0).toFloat()
+                    ph.flipH = pj.optBoolean("flipH", false)
+                    ph.flipV = pj.optBoolean("flipV", false)
+                    ph.borderPx = pj.optInt("borderPx", -1)
+                    ph.borderColor = pj.optInt("borderColor", 0xFFFFFFFF.toInt())
+                    loaded.add(ph)
+                    uris.add(Uri.parse(uriStr))
+                }
+                busy = false
+                busyLabel = ""
+                if (loaded.size >= 2) {
+                    collage.photos.clear(); collage.photos.addAll(loaded)
+                    collage.uris.clear(); collage.uris.addAll(uris)
+                    collage.family = runCatching { CollageMaker.LayoutFamily.valueOf(o.optString("family", "GRID")) }.getOrDefault(CollageMaker.LayoutFamily.GRID)
+                    collage.canvasW = o.optInt("canvasW", 1080); collage.canvasH = o.optInt("canvasH", 1080)
+                    collage.canvasLabel = o.optString("canvasLabel", "Square 1080")
+                    collage.gapPx = o.optDouble("gapPx", 8.0).toFloat()
+                    collage.marginPx = o.optDouble("marginPx", 0.0).toFloat()
+                    collage.radiusPx = o.optDouble("radiusPx", 0.0).toFloat()
+                    collage.borderPx = o.optDouble("borderPx", 0.0).toFloat()
+                    collage.borderColor = o.optInt("borderColor", 0xFFFFFFFF.toInt())
+                    collage.bgLabel = o.optString("bgLabel", "White")
+                    collage.bgCustom = o.optInt("bgCustom", 0xFF3D5AFE.toInt())
+                    collage.gradientLabel = o.optString("gradientLabel", "Sunset")
+                    collage.format = o.optString("format", "JPG")
+                    collage.quality = o.optDouble("quality", 90.0).toFloat()
+                    collage.resLabel = o.optString("resLabel", "Standard")
+                    collage.customResW = o.optString("customResW", "1600")
+                    collage.selected = -1
+                    collage.undoStack.clear(); collage.redoStack.clear()
+                    collage.level = "edit"
+                    collage.tick++
+                    collage.saved = false
+                    screen = Screen.Collage
+                    if (unreadable > 0) snackbar.showSnackbar("Opened without $unreadable photo(s) that are no longer available.")
+                } else {
+                    snackbar.showSnackbar("Those photos are no longer available - pick them again.")
+                }
+            } catch (e: Exception) {
+                busy = false
+                busyLabel = ""
+                snackbar.showSnackbar("Could not open the saved project.")
+            }
+        }
+    }
+
+    /** v0.17.0: export through the SAME engine as the preview. Originals are re-decoded one
+     *  section at a time (sampled, capped) so export keeps quality without holding 20 originals. */
+    fun saveCollageMaker() {
+        if (collage.photos.size < 2) return
+        scope.launch {
+            busy = true
+            busyLabel = "Saving…"
+            try {
+                val (ew, eh) = collage.exportSize()
+                val sections = collage.sections()
+                val scaleF = ew.toFloat() / collage.canvasW
+                val hiBitmaps = mutableListOf<Bitmap>()
+                val result = withContext(Dispatchers.IO) {
+                    val r = CollageMaker.renderSections({ i ->
+                        val edit = collage.photos[i]
+                        val uri = collage.uris.getOrNull(i)
+                        var bmp = edit.bitmap
+                        if (uri != null) {
+                            runCatching { decodeOrientedBitmap(context, uri) }.getOrNull()?.let { full ->
+                                // cap near what the section needs (zoom can crop in 4x, so 2x section is plenty)
+                                val secW = (sections[i].width() * ew).roundToInt().coerceAtLeast(64)
+                                val secH = (sections[i].height() * eh).roundToInt().coerceAtLeast(64)
+                                val cap = maxOf(secW, secH) * 2
+                                bmp = if (maxOf(full.width, full.height) > cap) {
+                                    val f = cap.toFloat() / maxOf(full.width, full.height)
+                                    val scaled = Bitmap.createScaledBitmap(full, (full.width * f).roundToInt(), (full.height * f).roundToInt(), true)
+                                    if (scaled != full) full.recycle()
+                                    scaled
+                                } else full
+                                if (bmp != edit.bitmap) hiBitmaps.add(bmp)
+                            }
+                        }
+                        CollageMaker.Photo(bmp, edit.zoom, edit.panX, edit.panY, edit.rotation, edit.flipH, edit.flipV)
+                    }, collage.photos.size, sections, ew, eh, collage.style(scaleF))
+                    hiBitmaps.forEach { it.recycle() }
+                    r
+                }
+                val (fmt, mime, ext) = when (collage.format) {
+                    "PNG" -> Triple(Bitmap.CompressFormat.PNG, "image/png", "png")
+                    "WebP" -> Triple(Bitmap.CompressFormat.WEBP, "image/webp", "webp")
+                    else -> Triple(Bitmap.CompressFormat.JPEG, "image/jpeg", "jpg")
+                }
+                // JPG has no transparency: a transparent background becomes white.
+                val toEncode = if (fmt == Bitmap.CompressFormat.JPEG && collage.bgLabel == "Transparent") {
+                    val flat = Bitmap.createBitmap(result.width, result.height, Bitmap.Config.ARGB_8888)
+                    val c = android.graphics.Canvas(flat)
+                    c.drawColor(android.graphics.Color.WHITE)
+                    c.drawBitmap(result, 0f, 0f, null)
+                    flat
+                } else result
+                val q = if (fmt == Bitmap.CompressFormat.PNG) 100 else collage.quality.roundToInt().coerceIn(50, 100)
+                val baos = java.io.ByteArrayOutputStream()
+                toEncode.compress(fmt, q, baos)
+                val name = "collage-${System.currentTimeMillis()}.$ext"
+                withContext(Dispatchers.IO) { saveToGallery(context, name, mime, baos.toByteArray()) }
+                collage.saved = true
                 busy = false
                 busyLabel = ""
                 snackbar.showSnackbar("Saved to your gallery as $name.")
@@ -2551,8 +2815,14 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
     val collagePicker = rememberLauncherForActivityResult(ActivityResultContracts.PickMultipleVisualMedia(4)) { uris ->
         if (uris.isNotEmpty()) loadCollagePhotos(uris)
     }
-    val collageMakerPicker = rememberLauncherForActivityResult(ActivityResultContracts.PickMultipleVisualMedia(9)) { uris ->
+    val collageMakerPicker = rememberLauncherForActivityResult(ActivityResultContracts.PickMultipleVisualMedia(20)) { uris ->
         if (uris.isNotEmpty()) loadCollageMakerPhotos(uris)
+    }
+    val collageReplacePicker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
+        if (uri != null) replaceCollagePhoto(uri)
+    }
+    val photoAdjustPicker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
+        if (uri != null) loadAdjustPhoto(uri)
     }
     val convertPicker = rememberLauncherForActivityResult(ActivityResultContracts.PickMultipleVisualMedia(20)) { uris ->
         if (uris.isNotEmpty()) loadConvertPhotos(uris)
@@ -3096,12 +3366,31 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
         }
         if (act?.intent?.getStringExtra("pixelcraft.test.collage") == "1") {
             // Deterministic synthetic photos - the pickers cannot run under Robolectric.
+            collage.uris.clear()
+            collage.photos.clear()
             for (i in 0..2) {
                 val b = Bitmap.createBitmap(400, 300, Bitmap.Config.ARGB_8888)
                 b.eraseColor(when (i) { 0 -> 0xFFF95F6A.toInt(); 1 -> 0xFF42BFEF.toInt(); else -> 0xFF3ECF8E.toInt() })
-                collageMakerPhotos.add(b)
+                collage.photos.add(CollageMaker.Photo(b))
             }
+            collage.selected = act.intent.getStringExtra("pixelcraft.test.collagesel")?.toIntOrNull() ?: -1
+            collage.level = act.intent.getStringExtra("pixelcraft.test.collagelevel") ?: "edit"
             screen = Screen.Collage
+        }
+        if (act?.intent?.getStringExtra("pixelcraft.test.adjust") == "1") {
+            // Deterministic synthetic photo - the pickers cannot run under Robolectric.
+            val b = Bitmap.createBitmap(800, 600, Bitmap.Config.ARGB_8888)
+            val px = IntArray(800 * 600) { i ->
+                val x = i % 800; val y = i / 800
+                (0xFF shl 24) or ((x * 255 / 800) shl 16) or ((y * 255 / 600) shl 8) or 0x80
+            }
+            b.setPixels(px, 0, 800, 0, 0, 800, 600)
+            adjust.uri = null
+            adjust.origW = 800; adjust.origH = 600
+            adjust.base = b
+            adjust.params.copyFrom(PhotoAdjust.Params())
+            adjust.filterId = "normal"
+            screen = Screen.PhotoAdjust
         }
     }
 
@@ -3612,12 +3901,12 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
         containerColor = MaterialTheme.colorScheme.background,
         snackbarHost = { SnackbarHost(snackbar) },
         topBar = {
-            if (screen == Screen.Editor || screen == Screen.Export || screen == Screen.PrintHome || screen == Screen.PrintSetup || screen == Screen.PrintPreview || screen == Screen.PrintExport || screen == Screen.QueueOverview || screen == Screen.QueueResult || screen == Screen.Success || screen == Screen.SocialHome || screen == Screen.SocialPlatform || screen == Screen.SocialEdit || screen == Screen.ShopHome || screen == Screen.ShopOther || screen == Screen.ShopPlatform || screen == Screen.ShopEdit || screen == Screen.ShopCollage || screen == Screen.ConvertHome || screen == Screen.ConvertEdit || screen == Screen.ConvertResult || screen == Screen.CompressHome || screen == Screen.CompressSettings || screen == Screen.CompressResult || screen == Screen.Collage) {
+            if (screen == Screen.Editor || screen == Screen.Export || screen == Screen.PrintHome || screen == Screen.PrintSetup || screen == Screen.PrintPreview || screen == Screen.PrintExport || screen == Screen.QueueOverview || screen == Screen.QueueResult || screen == Screen.Success || screen == Screen.SocialHome || screen == Screen.SocialPlatform || screen == Screen.SocialEdit || screen == Screen.ShopHome || screen == Screen.ShopOther || screen == Screen.ShopPlatform || screen == Screen.ShopEdit || screen == Screen.ShopCollage || screen == Screen.ConvertHome || screen == Screen.ConvertEdit || screen == Screen.ConvertResult || screen == Screen.CompressHome || screen == Screen.CompressSettings || screen == Screen.CompressResult || screen == Screen.Collage || screen == Screen.PhotoAdjust) {
                 TopAppBar(
                     title = {
                         Text(
                             when (screen) {
-                                Screen.Editor -> "Resize Image"
+                                Screen.Editor -> if (tool == Tool.Resize) "Resize Image" else tool.label
                                 Screen.Export -> "Export"
                                 Screen.QueueOverview -> "Photos to resize"
                                 Screen.QueueResult -> "Resized photos"
@@ -3642,6 +3931,7 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                                 Screen.PrintExport -> "Export Print File"
                                 Screen.TextPhoto -> "Text on Photo"
                                 Screen.Collage -> "Collage Maker"
+                                Screen.PhotoAdjust -> "Photo Adjustments"
                                 else -> "Print Size & DPI"
                             },
                             fontWeight = FontWeight.SemiBold
@@ -3799,9 +4089,13 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                             "Compress" -> screen = Screen.CompressHome
                             "Text on Photo" -> { resetTextPhoto(); screen = Screen.TextPhoto }
                             "Collage Maker" -> {
-                                collageMakerPhotos.clear()
-                                collageMakerSaved = false
-                                collageMakerPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+                                collage.saved = false
+                                screen = Screen.Collage
+                            }
+                            "Photo Adjustments" -> {
+                                adjust.saved = false
+                                if (adjust.base == null) photoAdjustPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+                                else screen = Screen.PhotoAdjust
                             }
                             "Remove Background" -> {
                                 if (workingBitmap != null) { screen = Screen.Editor; tool = Tool.Background }
@@ -4316,17 +4610,24 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                 onSave = { saveCompressResult() },
                 onAgain = { resetCompress(); screen = Screen.CompressHome }
             )
-            Screen.Collage -> CollageMakerScreen(
+            Screen.Collage -> CollageMakerFlow(
                 modifier = Modifier.padding(padding),
-                photos = collageMakerPhotos,
-                gap = collageMakerGap,
-                bg = collageMakerBg,
-                saved = collageMakerSaved,
+                state = collage,
                 busy = busy,
-                onPick = { collageMakerPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
-                onGap = { collageMakerGap = it; collageMakerSaved = false },
-                onBg = { collageMakerBg = it; collageMakerSaved = false },
-                onSave = { saveCollageMaker(it) }
+                hasProject = collageHasProject,
+                onPick = { collageAppend = false; collageMakerPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
+                onAddMore = { collageAppend = true; collageMakerPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
+                onReplace = { collageReplacePicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
+                onSaveProject = { saveCollageProject() },
+                onOpenProject = { loadCollageProject() },
+                onSave = { saveCollageMaker() }
+            )
+            Screen.PhotoAdjust -> PhotoAdjustScreen(
+                modifier = Modifier.padding(padding),
+                state = adjust,
+                busy = busy,
+                onPick = { photoAdjustPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
+                onSave = { saveAdjustPhoto() }
             )
             Screen.TextPhoto -> RenderTextPhoto(Modifier.padding(padding))
             Screen.PrintHome -> PrintHomeScreen(
@@ -4666,68 +4967,858 @@ private fun MemeLevel(testSheetLevel: String?, layerCount: Int, imageCount: Int,
                     Button(onClick = { onApplyMeme(memeTop, memeBottom) }, enabled = memeTop.isNotBlank() || memeBottom.isNotBlank(), modifier = Modifier.fillMaxWidth().height(46.dp), colors = ButtonDefaults.buttonColors(containerColor = SkyBlue, contentColor = Color.White), shape = RoundedCornerShape(14.dp)) { Text("Apply Meme Text", fontWeight = FontWeight.Bold) }
                     if (testSheetLevel != null) Text("hook:layers=" + layerCount + ",images=" + imageCount + " t" + tick, fontSize = 8.sp, color = BorderGrey)}
 
+// ---------------------------------------------------------------------------
+// v0.17.0 Collage Maker (his 10-section spec): Home -> Workspace -> Export.
+// ONE engine (image/CollageMaker.kt) draws both the preview and the saved file,
+// so what he sees is exactly what he gets. Deferred to v0.17.1: drag & drop between
+// sections, rotation/flip controls, per-photo borders, gradients, transparent bg,
+// margins, replace-in-section, save project, custom move/resize of sections.
+// ---------------------------------------------------------------------------
+
+private data class CollagePhotoSnap(
+    val zoom: Float, val panX: Float, val panY: Float, val rotation: Float,
+    val flipH: Boolean, val flipV: Boolean, val borderPx: Int, val borderColor: Int
+)
+
+private data class CollageSnap(
+    val photos: List<CollagePhotoSnap>,
+    val family: CollageMaker.LayoutFamily,
+    val canvasW: Int, val canvasH: Int, val canvasLabel: String,
+    val gapPx: Float, val marginPx: Float, val radiusPx: Float,
+    val borderPx: Float, val borderColor: Int,
+    val bgLabel: String, val bgCustom: Int, val gradientLabel: String
+)
+
+private class CollageUiState {
+    val uris = mutableStateListOf<Uri>()
+    val photos = mutableStateListOf<CollageMaker.Photo>()
+    var family by mutableStateOf(CollageMaker.LayoutFamily.GRID)
+    var level by mutableStateOf("home")          // home | edit | export
+    var canvasW by mutableStateOf(1080)
+    var canvasH by mutableStateOf(1080)
+    var canvasLabel by mutableStateOf("Square 1080")
+    var gapPx by mutableStateOf(8f)
+    var marginPx by mutableStateOf(0f)
+    var radiusPx by mutableStateOf(0f)
+    var borderPx by mutableStateOf(0f)           // frame around EVERY photo
+    var borderColor by mutableStateOf(0xFFFFFFFF.toInt())
+    var bgLabel by mutableStateOf("White")       // White | Black | Colour | Gradient | Transparent
+    var bgCustom by mutableStateOf(0xFF3D5AFE.toInt())
+    var gradientLabel by mutableStateOf("Sunset")
+    var selected by mutableStateOf(-1)
+    var tick by mutableStateOf(0)                // drives recomposition when Photo fields change
+    var saved by mutableStateOf(false)
+    var format by mutableStateOf("JPG")          // JPG | PNG | WebP
+    var quality by mutableStateOf(90f)
+    var resLabel by mutableStateOf("Standard")   // Standard | High | Custom
+    var customResW by mutableStateOf("1600")
+    val undoStack = mutableListOf<CollageSnap>()
+    val redoStack = mutableListOf<CollageSnap>()
+
+    fun bgColor(): Int = when (bgLabel) {
+        "White" -> android.graphics.Color.WHITE
+        "Black" -> android.graphics.Color.BLACK
+        "Colour" -> bgCustom
+        else -> android.graphics.Color.WHITE   // Gradient/Transparent handled via gradient/alpha
+    }
+
+    fun gradientColors(): IntArray = when (gradientLabel) {
+        "Ocean" -> intArrayOf(0xFF42BFEF.toInt(), 0xFF3D5AFE.toInt())
+        "Mint" -> intArrayOf(0xFF3ECF8E.toInt(), 0xFF42BFEF.toInt())
+        "Berry" -> intArrayOf(0xFF9B5DE5.toInt(), 0xFFF95F6A.toInt())
+        "Dusk" -> intArrayOf(0xFF172B4D.toInt(), 0xFF3D5AFE.toInt())
+        else -> intArrayOf(0xFFFF8A32.toInt(), 0xFFF95F6A.toInt())   // Sunset
+    }
+
+    /** Style for a render at [scale] times the canvas size (preview < 1, export >= 1). */
+    fun style(scale: Float = 1f) = CollageMaker.Style(
+        gapPx = (gapPx * scale).roundToInt(),
+        marginPx = (marginPx * scale).roundToInt(),
+        radiusPx = (radiusPx * scale).roundToInt(),
+        borderPx = (borderPx * scale).roundToInt(),
+        borderColor = borderColor,
+        bgColor = if (bgLabel == "Transparent") 0 else bgColor(),
+        bgGradient = if (bgLabel == "Gradient") gradientColors() else null
+    )
+
+    fun sections(): List<CollageMaker.Section> =
+        CollageMaker.sections(family, photos.size.coerceAtLeast(2), canvasW, canvasH)
+
+    fun exportSize(): Pair<Int, Int> = when (resLabel) {
+        "High" -> {
+            val w = canvasW * 2; val h = canvasH * 2
+            if (maxOf(w, h) > 4096) { val f = 4096f / maxOf(w, h); (w * f).roundToInt() to (h * f).roundToInt() } else w to h
+        }
+        "Custom" -> {
+            val w = customResW.toIntOrNull()?.coerceIn(256, 4096) ?: canvasW
+            w to (w.toFloat() * canvasH / canvasW).roundToInt()
+        }
+        else -> canvasW to canvasH
+    }
+
+    fun snapshot() = CollageSnap(
+        photos.map { CollagePhotoSnap(it.zoom, it.panX, it.panY, it.rotation, it.flipH, it.flipV, it.borderPx, it.borderColor) },
+        family, canvasW, canvasH, canvasLabel, gapPx, marginPx, radiusPx, borderPx, borderColor, bgLabel, bgCustom, gradientLabel
+    )
+
+    /** Save an undo point before a one-tap change (layout, canvas, background, reset). */
+    fun push() {
+        undoStack.add(snapshot())
+        if (undoStack.size > 40) undoStack.removeAt(0)
+        redoStack.clear()
+    }
+
+    private fun applySnap(s: CollageSnap) {
+        s.photos.forEachIndexed { i, p ->
+            photos.getOrNull(i)?.let { ph ->
+                ph.zoom = p.zoom; ph.panX = p.panX; ph.panY = p.panY; ph.rotation = p.rotation
+                ph.flipH = p.flipH; ph.flipV = p.flipV; ph.borderPx = p.borderPx; ph.borderColor = p.borderColor
+            }
+        }
+        family = s.family; canvasW = s.canvasW; canvasH = s.canvasH; canvasLabel = s.canvasLabel
+        gapPx = s.gapPx; marginPx = s.marginPx; radiusPx = s.radiusPx
+        borderPx = s.borderPx; borderColor = s.borderColor
+        bgLabel = s.bgLabel; bgCustom = s.bgCustom; gradientLabel = s.gradientLabel
+        tick++; saved = false
+    }
+
+    fun undo() { if (undoStack.isNotEmpty()) { redoStack.add(snapshot()); applySnap(undoStack.removeAt(undoStack.lastIndex)) } }
+    fun redo() { if (redoStack.isNotEmpty()) { undoStack.add(snapshot()); applySnap(redoStack.removeAt(redoStack.lastIndex)) } }
+
+    fun resetEdits() {
+        push()
+        photos.forEach { it.zoom = 1f; it.panX = 0f; it.panY = 0f; it.rotation = 0f; it.flipH = false; it.flipV = false; it.borderPx = -1 }
+        gapPx = 8f; marginPx = 0f; radiusPx = 0f; borderPx = 0f; bgLabel = "White"; selected = -1
+        tick++; saved = false
+    }
+}
+
 @Composable
-private fun CollageMakerScreen(
+private fun CollageMakerFlow(
     modifier: Modifier,
-    photos: List<Bitmap>,
-    gap: Float,
-    bg: String,
-    saved: Boolean,
+    state: CollageUiState,
     busy: Boolean,
+    hasProject: Boolean,
     onPick: () -> Unit,
-    onGap: (Float) -> Unit,
-    onBg: (String) -> Unit,
-    onSave: (Bitmap) -> Unit
+    onAddMore: () -> Unit,
+    onReplace: () -> Unit,
+    onSaveProject: () -> Unit,
+    onOpenProject: () -> Unit,
+    onSave: () -> Unit
 ) {
+    when (state.level) {
+        "edit" -> CollageEditScreen(modifier, state, onReplace)
+        "export" -> CollageExportScreen(modifier, state, busy, onSave)
+        else -> CollageHomeScreen(modifier, state, hasProject, onPick, onAddMore, onSaveProject, onOpenProject)
+    }
+}
+
+@Composable
+private fun CollageMiniPreview(family: CollageMaker.LayoutFamily, active: Boolean) {
+    val tint = if (active) Orange else Slate
+    Canvas(Modifier.fillMaxWidth().height(40.dp).padding(horizontal = 4.dp)) {
+        val secs = CollageMaker.sections(family, 4, 100, 100)
+        secs.forEach { s ->
+            drawRoundRect(
+                color = tint,
+                topLeft = Offset(s.left * size.width + 2f, s.top * size.height + 2f),
+                size = Size((s.width() * size.width - 4f).coerceAtLeast(4f), (s.height() * size.height - 4f).coerceAtLeast(4f)),
+                cornerRadius = CornerRadius(6f, 6f)
+            )
+        }
+    }
+}
+
+@Composable
+private fun CollageChip(label: String, active: Boolean, onClick: () -> Unit) {
+    Card(
+        modifier = Modifier.clickable(onClick = onClick),
+        shape = RoundedCornerShape(10.dp),
+        colors = CardDefaults.cardColors(containerColor = if (active) Orange else Color.White),
+        border = androidx.compose.foundation.BorderStroke(1.dp, if (active) Orange else BorderGrey)
+    ) {
+        Text(label, modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp), color = if (active) Color.White else DeepNavy, fontSize = 12.sp, fontWeight = if (active) FontWeight.Bold else FontWeight.Normal)
+    }
+}
+
+@Composable
+private fun CollageHomeScreen(modifier: Modifier, state: CollageUiState, hasProject: Boolean, onPick: () -> Unit, onAddMore: () -> Unit, onSaveProject: () -> Unit, onOpenProject: () -> Unit) {
     Column(modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp)) {
         Spacer(Modifier.height(12.dp))
-        if (photos.size < 2) {
-            Text("Pick 2 to 9 photos to start your collage.", color = Slate, fontSize = 13.sp)
-            Spacer(Modifier.height(10.dp))
-            Button(onClick = onPick, modifier = Modifier.fillMaxWidth().height(50.dp), colors = ButtonDefaults.buttonColors(containerColor = Orange, contentColor = Color.White), shape = RoundedCornerShape(14.dp)) {
-                Icon(Icons.Default.Image, contentDescription = null)
-                Spacer(Modifier.width(8.dp))
-                Text("Pick Photos", fontWeight = FontWeight.Bold)
-            }
-        } else {
-            // The preview is built through the SAME engine as the saved file - what he sees is what he gets.
-            val result = remember(photos.toList(), gap, bg) {
-                Transforms.collageGrid(photos, 1600, 1600, (gap * 4).roundToInt().coerceAtLeast(0), if (bg == "Black") android.graphics.Color.BLACK else android.graphics.Color.WHITE)
-            }
-            Image(
-                bitmap = result.asImageBitmap(),
-                contentDescription = "Collage preview",
-                contentScale = ContentScale.Fit,
-                modifier = Modifier.fillMaxWidth().height(340.dp).clip(RoundedCornerShape(14.dp)).background(SoftGrey).border(1.dp, BorderGrey, RoundedCornerShape(14.dp))
+        Text("Photo Collage Maker", color = DeepNavy, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+        Text("Combine 2 to 20 photos into one collage - no watermark, fully on your phone.", color = Slate, fontSize = 13.sp)
+        Spacer(Modifier.height(14.dp))
+
+        Text("1. Choose a layout style", color = DeepNavy, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+        Spacer(Modifier.height(8.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            val fams = listOf(
+                CollageMaker.LayoutFamily.GRID to "Grid",
+                CollageMaker.LayoutFamily.MIXED to "Mixed",
+                CollageMaker.LayoutFamily.VERTICAL to "Vertical",
+                CollageMaker.LayoutFamily.HORIZONTAL to "Horizontal"
             )
-            Spacer(Modifier.height(8.dp))
-            Text("${photos.size} photos · square 1600 × 1600 · PNG", color = Slate, fontSize = 12.sp)
-            Spacer(Modifier.height(6.dp))
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("Gap", color = Slate, fontSize = 12.sp)
-                Slider(value = gap, onValueChange = onGap, valueRange = 0f..24f, modifier = Modifier.weight(1f).padding(horizontal = 8.dp))
-                Text("${gap.toInt()}", color = DeepNavy, fontSize = 12.sp)
-            }
-            Row {
-                listOf("White", "Black").forEach { opt ->
-                    OutlinedButton(
-                        onClick = { onBg(opt) },
-                        shape = RoundedCornerShape(10.dp),
-                        colors = ButtonDefaults.outlinedButtonColors(containerColor = if (bg == opt) SkyBlue else Color.Transparent, contentColor = if (bg == opt) Color.White else DeepNavy)
-                    ) { Text(opt + " background", fontSize = 12.sp) }
-                    Spacer(Modifier.width(8.dp))
+            fams.forEach { (fam, label) ->
+                val active = state.family == fam
+                Card(
+                    modifier = Modifier.weight(1f).clickable { if (!active) { state.push(); state.family = fam; state.selected = -1; state.tick++; state.saved = false } },
+                    shape = RoundedCornerShape(12.dp),
+                    colors = CardDefaults.cardColors(containerColor = Color.White),
+                    border = androidx.compose.foundation.BorderStroke(if (active) 2.dp else 1.dp, if (active) Orange else BorderGrey)
+                ) {
+                    Column(Modifier.padding(vertical = 8.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                        CollageMiniPreview(fam, active)
+                        Spacer(Modifier.height(4.dp))
+                        Text(label, color = if (active) Orange else DeepNavy, fontSize = 10.sp, maxLines = 1, softWrap = false, fontWeight = if (active) FontWeight.Bold else FontWeight.Normal)
+                    }
                 }
             }
-            Spacer(Modifier.height(10.dp))
-            Button(onClick = { onSave(result) }, enabled = !busy && !saved, modifier = Modifier.fillMaxWidth().height(50.dp), colors = ButtonDefaults.buttonColors(containerColor = Orange, contentColor = Color.White), shape = RoundedCornerShape(14.dp)) {
-                Text(if (saved) "Saved ✓ - see your gallery" else "Save to Gallery", fontWeight = FontWeight.Bold)
+        }
+        Spacer(Modifier.height(14.dp))
+
+        Text("2. Add your photos (${state.photos.size}/20)", color = DeepNavy, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+        Spacer(Modifier.height(8.dp))
+        if (state.photos.isEmpty()) {
+            Card(shape = RoundedCornerShape(14.dp), colors = CardDefaults.cardColors(containerColor = Color.White), border = androidx.compose.foundation.BorderStroke(1.dp, BorderGrey)) {
+                Column(Modifier.fillMaxWidth().padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text("Add your photos", color = DeepNavy, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                    Spacer(Modifier.height(4.dp))
+                    Text("JPG, PNG or WebP. Pick 2 to 20 photos.", color = Slate, fontSize = 12.sp)
+                    Spacer(Modifier.height(10.dp))
+                    Button(onClick = onPick, modifier = Modifier.fillMaxWidth().height(50.dp), colors = ButtonDefaults.buttonColors(containerColor = Orange, contentColor = Color.White), shape = RoundedCornerShape(14.dp)) {
+                        Icon(Icons.Default.Image, contentDescription = null)
+                        Spacer(Modifier.width(8.dp))
+                        Text("Select 2-20 photos", fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+        } else {
+            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                items(state.photos.size) { i ->
+                    val sel = state.selected == i
+                    Image(
+                        bitmap = state.photos[i].bitmap.asImageBitmap(),
+                        contentDescription = "Photo ${i + 1}",
+                        modifier = Modifier
+                            .size(72.dp)
+                            .clip(RoundedCornerShape(10.dp))
+                            .clickable { state.selected = if (sel) -1 else i },
+                        contentScale = ContentScale.Crop
+                    )
+                }
+            }
+            if (state.selected in state.photos.indices) {
+                Spacer(Modifier.height(6.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(onClick = {
+                        val i = state.selected
+                        if (i > 0) {
+                            state.photos.add(i - 1, state.photos.removeAt(i))
+                            if (i < state.uris.size) state.uris.add(i - 1, state.uris.removeAt(i))
+                            state.selected = i - 1; state.tick++; state.saved = false
+                        }
+                    }, shape = RoundedCornerShape(10.dp)) { Text("< Move left", color = DeepNavy, fontSize = 12.sp) }
+                    OutlinedButton(onClick = {
+                        val i = state.selected
+                        if (i in 0 until state.photos.size - 1) {
+                            state.photos.add(i + 1, state.photos.removeAt(i))
+                            if (i < state.uris.size) state.uris.add(i + 1, state.uris.removeAt(i))
+                            state.selected = i + 1; state.tick++; state.saved = false
+                        }
+                    }, shape = RoundedCornerShape(10.dp)) { Text("Move right >", color = DeepNavy, fontSize = 12.sp) }
+                    OutlinedButton(onClick = {
+                        val i = state.selected
+                        state.photos.removeAt(i)
+                        if (i < state.uris.size) state.uris.removeAt(i)
+                        state.selected = -1; state.tick++; state.saved = false
+                    }, shape = RoundedCornerShape(10.dp)) { Text("Remove", color = Color(0xFFD64545), fontSize = 12.sp) }
+                }
             }
             Spacer(Modifier.height(8.dp))
-            OutlinedButton(onClick = onPick, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(14.dp)) { Text("Pick different photos", color = DeepNavy) }
+            OutlinedButton(onClick = onAddMore, enabled = state.photos.size < 20, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(14.dp)) {
+                Text(if (state.photos.size < 20) "Add more photos" else "20 photos maximum", color = DeepNavy)
+            }
+        }
+        if (state.photos.size >= 2 || hasProject) {
+            Spacer(Modifier.height(8.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (state.photos.size >= 2) {
+                    OutlinedButton(onClick = onSaveProject, modifier = Modifier.weight(1f), shape = RoundedCornerShape(10.dp)) { Text("Save project", color = DeepNavy, fontSize = 12.sp) }
+                }
+                if (hasProject) {
+                    OutlinedButton(onClick = onOpenProject, modifier = Modifier.weight(1f), shape = RoundedCornerShape(10.dp)) { Text("Open saved project", color = DeepNavy, fontSize = 12.sp) }
+                }
+            }
+        }
+        Spacer(Modifier.height(14.dp))
+
+        Text("3. Start creating", color = DeepNavy, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+        Spacer(Modifier.height(8.dp))
+        Button(onClick = { state.level = "edit" }, enabled = state.photos.size >= 2, modifier = Modifier.fillMaxWidth().height(50.dp), colors = ButtonDefaults.buttonColors(containerColor = Orange, contentColor = Color.White), shape = RoundedCornerShape(14.dp)) {
+            Text(if (state.photos.size >= 2) "Start Creating" else "Pick at least 2 photos first", fontWeight = FontWeight.Bold)
         }
         Spacer(Modifier.height(16.dp))
     }
 }
+
+@Composable
+private fun CollageEditScreen(modifier: Modifier, state: CollageUiState, onReplace: () -> Unit) {
+    val sections = remember(state.family, state.photos.size, state.canvasW, state.canvasH) { state.sections() }
+    val preview = remember(state.tick, state.photos.size, state.family, state.canvasW, state.canvasH, state.gapPx, state.radiusPx, state.bgLabel, state.bgCustom) {
+        val sc = 720f / maxOf(state.canvasW, state.canvasH).toFloat()
+        CollageMaker.render(state.photos, sections, (state.canvasW * sc).roundToInt(), (state.canvasH * sc).roundToInt(), state.style(sc))
+    }
+    // Slider drags push ONE undo point per drag (captured at the first change).
+    var dragSnap by remember { mutableStateOf<CollageSnap?>(null) }
+    fun beginDrag() { if (dragSnap == null) dragSnap = state.snapshot() }
+    fun endDrag() { dragSnap?.let { state.undoStack.add(it); if (state.undoStack.size > 40) state.undoStack.removeAt(0); state.redoStack.clear() }; dragSnap = null }
+
+    Column(modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp)) {
+        Spacer(Modifier.height(10.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedButton(onClick = { state.undo() }, enabled = state.undoStack.isNotEmpty(), modifier = Modifier.weight(1f), shape = RoundedCornerShape(10.dp)) { Text("Undo", color = DeepNavy, fontSize = 13.sp) }
+            OutlinedButton(onClick = { state.redo() }, enabled = state.redoStack.isNotEmpty(), modifier = Modifier.weight(1f), shape = RoundedCornerShape(10.dp)) { Text("Redo", color = DeepNavy, fontSize = 13.sp) }
+            OutlinedButton(onClick = { state.resetEdits() }, modifier = Modifier.weight(1f), shape = RoundedCornerShape(10.dp)) { Text("Reset", color = DeepNavy, fontSize = 13.sp) }
+        }
+        Spacer(Modifier.height(10.dp))
+
+        Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+            Image(
+                bitmap = preview.asImageBitmap(),
+                contentDescription = "Collage preview",
+                modifier = Modifier
+                    .fillMaxWidth(if (state.canvasW >= state.canvasH) 1f else 0.72f)
+                    .aspectRatio(state.canvasW.toFloat() / state.canvasH.toFloat())
+                    .clip(RoundedCornerShape(8.dp))
+                    .pointerInput(sections) {
+                        // Long-press then drag onto another frame swaps the two photos.
+                        var dragPos = Offset.Zero
+                        detectDragGesturesAfterLongPress(
+                            onDragStart = { off -> dragPos = off; beginDrag() },
+                            onDragEnd = {
+                                val fx = dragPos.x / size.width; val fy = dragPos.y / size.height
+                                val from = state.selected
+                                val to = sections.indexOfFirst { fx >= it.left && fx <= it.right && fy >= it.top && fy <= it.bottom }
+                                if (from in state.photos.indices && to in state.photos.indices && from != to) {
+                                    val tmp = state.photos[from]; state.photos[from] = state.photos[to]; state.photos[to] = tmp
+                                    if (from < state.uris.size && to < state.uris.size) {
+                                        val tu = state.uris[from]; state.uris[from] = state.uris[to]; state.uris[to] = tu
+                                    }
+                                    state.selected = to; state.saved = false
+                                    dragSnap?.let { state.undoStack.add(it); state.redoStack.clear() }
+                                }
+                                dragSnap = null
+                                state.tick++
+                            },
+                            onDragCancel = { dragSnap = null }
+                        ) { change, drag ->
+                            change.consume()
+                            dragPos += drag
+                        }
+                    }
+                    .pointerInput(sections) {
+                        detectTapGestures { off ->
+                            val fx = off.x / size.width; val fy = off.y / size.height
+                            val idx = sections.indexOfFirst { fx >= it.left && fx <= it.right && fy >= it.top && fy <= it.bottom }
+                            if (idx >= 0) state.selected = idx
+                        }
+                    }
+                    .pointerInput(state.selected) {
+                        detectDragGestures(
+                            onDragStart = { beginDrag() },
+                            onDragEnd = { endDrag() },
+                            onDragCancel = { endDrag() }
+                        ) { change, drag ->
+                            change.consume()
+                            val ph = state.photos.getOrNull(state.selected) ?: return@detectDragGestures
+                            ph.panX = (ph.panX + drag.x / size.width * 2f).coerceIn(-1f, 1f)
+                            ph.panY = (ph.panY + drag.y / size.height * 2f).coerceIn(-1f, 1f)
+                            state.tick++; state.saved = false
+                        }
+                    },
+                contentScale = ContentScale.Fit
+            )
+        }
+        Spacer(Modifier.height(4.dp))
+        Text("Tap a photo to select it. Drag to move it in its frame. Hold and drop on another frame to swap.", color = Slate, fontSize = 12.sp)
+
+        val sel = state.photos.getOrNull(state.selected)
+        if (sel != null) {
+            Spacer(Modifier.height(8.dp))
+            Text("Zoom - photo ${state.selected + 1} (${"%.1f".format(sel.zoom)}x)", color = DeepNavy, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+            Slider(
+                value = sel.zoom.coerceIn(1f, 4f),
+                onValueChange = { beginDrag(); sel.zoom = it; state.tick++; state.saved = false },
+                onValueChangeFinished = { endDrag() },
+                valueRange = 1f..4f
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                OutlinedButton(onClick = { state.push(); sel.rotation = (sel.rotation + 90f) % 360f; state.tick++; state.saved = false }, shape = RoundedCornerShape(10.dp)) { Text("Rotate 90°", color = DeepNavy, fontSize = 12.sp) }
+                OutlinedButton(onClick = { state.push(); sel.flipH = !sel.flipH; state.tick++; state.saved = false }, shape = RoundedCornerShape(10.dp)) { Text("Flip H", color = DeepNavy, fontSize = 12.sp) }
+                OutlinedButton(onClick = { state.push(); sel.flipV = !sel.flipV; state.tick++; state.saved = false }, shape = RoundedCornerShape(10.dp)) { Text("Flip V", color = DeepNavy, fontSize = 12.sp) }
+            }
+            Spacer(Modifier.height(4.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                OutlinedButton(onClick = onReplace, shape = RoundedCornerShape(10.dp)) { Text("Replace photo ${state.selected + 1}", color = DeepNavy, fontSize = 12.sp) }
+                OutlinedButton(onClick = { state.push(); sel.zoom = 1f; sel.panX = 0f; sel.panY = 0f; sel.rotation = 0f; sel.flipH = false; sel.flipV = false; sel.borderPx = -1; state.tick++; state.saved = false }, shape = RoundedCornerShape(10.dp)) { Text("Reset photo", color = DeepNavy, fontSize = 12.sp) }
+            }
+            Spacer(Modifier.height(6.dp))
+            Text("Frame - photo ${state.selected + 1} (${if (sel.borderPx < 0) "same as all" else sel.borderPx.toString()})", color = DeepNavy, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+            Slider(
+                value = if (sel.borderPx < 0) 0f else sel.borderPx.toFloat(),
+                onValueChange = { beginDrag(); sel.borderPx = it.roundToInt(); state.tick++; state.saved = false },
+                onValueChangeFinished = { endDrag() },
+                valueRange = 0f..20f
+            )
+            if (sel.borderPx > 0) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    listOf(0xFFFFFFFF, 0xFF000000, 0xFFF95F6A, 0xFFFF8A32, 0xFFFFD166, 0xFF3ECF8E, 0xFF42BFEF, 0xFF3D5AFE).forEach { cl ->
+                        val ci = cl.toInt()
+                        Box(
+                            Modifier
+                                .size(28.dp)
+                                .clip(RoundedCornerShape(6.dp))
+                                .background(Color(cl))
+                                .clickable { state.push(); sel.borderColor = ci; state.tick++; state.saved = false }
+                        ) {
+                            if (sel.borderColor == ci) Text(if (ci == 0xFFFFFFFF.toInt()) "✓" else "✓", color = if (ci == 0xFFFFFFFF.toInt()) DeepNavy else Color.White, modifier = Modifier.align(Alignment.Center), fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                }
+            }
+        }
+
+        Spacer(Modifier.height(8.dp))
+        Text("Spacing between photos (${state.gapPx.roundToInt()})", color = DeepNavy, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+        Slider(
+            value = state.gapPx,
+            onValueChange = { beginDrag(); state.gapPx = it; state.tick++; state.saved = false },
+            onValueChangeFinished = { endDrag() },
+            valueRange = 0f..40f
+        )
+        Text("Rounded corners (${state.radiusPx.roundToInt()})", color = DeepNavy, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+        Slider(
+            value = state.radiusPx,
+            onValueChange = { beginDrag(); state.radiusPx = it; state.tick++; state.saved = false },
+            onValueChangeFinished = { endDrag() },
+            valueRange = 0f..60f
+        )
+        Text("Margin around the collage (${state.marginPx.roundToInt()})", color = DeepNavy, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+        Slider(
+            value = state.marginPx,
+            onValueChange = { beginDrag(); state.marginPx = it; state.tick++; state.saved = false },
+            onValueChangeFinished = { endDrag() },
+            valueRange = 0f..60f
+        )
+        Text("Frame around every photo (${state.borderPx.roundToInt()})", color = DeepNavy, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+        Slider(
+            value = state.borderPx,
+            onValueChange = { beginDrag(); state.borderPx = it; state.tick++; state.saved = false },
+            onValueChangeFinished = { endDrag() },
+            valueRange = 0f..20f
+        )
+        if (state.borderPx > 0f) {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                listOf(0xFFFFFFFF, 0xFF000000, 0xFFF95F6A, 0xFFFF8A32, 0xFFFFD166, 0xFF3ECF8E, 0xFF42BFEF, 0xFF3D5AFE).forEach { cl ->
+                    val ci = cl.toInt()
+                    Box(
+                        Modifier
+                            .size(28.dp)
+                            .clip(RoundedCornerShape(6.dp))
+                            .background(Color(cl))
+                            .clickable { state.push(); state.borderColor = ci; state.tick++; state.saved = false }
+                    ) {
+                        if (state.borderColor == ci) Text("✓", color = if (ci == 0xFFFFFFFF.toInt()) DeepNavy else Color.White, modifier = Modifier.align(Alignment.Center), fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+        }
+
+        Spacer(Modifier.height(8.dp))
+        Text("Canvas size", color = DeepNavy, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+        Spacer(Modifier.height(6.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            CollageChip("Square", state.canvasLabel == "Square 1080") { state.push(); state.canvasLabel = "Square 1080"; state.canvasW = 1080; state.canvasH = 1080 }
+            CollageChip("Portrait", state.canvasLabel == "Portrait 1080x1350") { state.push(); state.canvasLabel = "Portrait 1080x1350"; state.canvasW = 1080; state.canvasH = 1350 }
+            CollageChip("Story", state.canvasLabel == "Story 1080x1920") { state.push(); state.canvasLabel = "Story 1080x1920"; state.canvasW = 1080; state.canvasH = 1920 }
+            CollageChip("Wide", state.canvasLabel == "Landscape 1920x1080") { state.push(); state.canvasLabel = "Landscape 1920x1080"; state.canvasW = 1920; state.canvasH = 1080 }
+        }
+        Text(state.canvasLabel, color = Slate, fontSize = 11.sp)
+
+        Spacer(Modifier.height(8.dp))
+        Text("Background", color = DeepNavy, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+        Spacer(Modifier.height(6.dp))
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.height(38.dp)) {
+            item { CollageChip("White", state.bgLabel == "White") { state.push(); state.bgLabel = "White" } }
+            item { CollageChip("Black", state.bgLabel == "Black") { state.push(); state.bgLabel = "Black" } }
+            item { CollageChip("Colour", state.bgLabel == "Colour") { state.push(); state.bgLabel = "Colour" } }
+            item { CollageChip("Gradient", state.bgLabel == "Gradient") { state.push(); state.bgLabel = "Gradient" } }
+            item { CollageChip("None", state.bgLabel == "Transparent") { state.push(); state.bgLabel = "Transparent" } }
+        }
+        if (state.bgLabel == "Transparent") {
+            Spacer(Modifier.height(4.dp))
+            Text("Transparent background stays transparent in PNG and WebP exports (JPG saves on white).", color = Slate, fontSize = 11.sp)
+        }
+        if (state.bgLabel == "Gradient") {
+            Spacer(Modifier.height(6.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                listOf("Sunset" to listOf(0xFFFF8A32, 0xFFF95F6A), "Ocean" to listOf(0xFF42BFEF, 0xFF3D5AFE), "Mint" to listOf(0xFF3ECF8E, 0xFF42BFEF), "Berry" to listOf(0xFF9B5DE5, 0xFFF95F6A), "Dusk" to listOf(0xFF172B4D, 0xFF3D5AFE)).forEach { (name, cols) ->
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Box(
+                            Modifier
+                                .size(34.dp)
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(androidx.compose.ui.graphics.Brush.verticalGradient(cols.map { Color(it) }))
+                                .clickable { state.push(); state.gradientLabel = name }
+                        ) {
+                            if (state.gradientLabel == name) Text("✓", color = Color.White, modifier = Modifier.align(Alignment.Center), fontWeight = FontWeight.Bold)
+                        }
+                        Text(name, color = Slate, fontSize = 10.sp)
+                    }
+                }
+            }
+        }
+        if (state.bgLabel == "Colour") {
+            Spacer(Modifier.height(6.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                listOf(0xFFF95F6A, 0xFFFF8A32, 0xFFFFD166, 0xFF3ECF8E, 0xFF42BFEF, 0xFF3D5AFE, 0xFF9B5DE5).forEach { c ->
+                    val col = Color(c.toLong() or 0xFF000000L)
+                    Box(
+                        Modifier
+                            .size(34.dp)
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(col)
+                            .clickable { state.push(); state.bgCustom = c.toInt() }
+                    ) {
+                        if (state.bgCustom == c.toInt()) Text("✓", color = Color.White, modifier = Modifier.align(Alignment.Center), fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+        }
+
+        Spacer(Modifier.height(10.dp))
+        var showFullPreview by remember { mutableStateOf(false) }
+        OutlinedButton(onClick = { showFullPreview = true }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(14.dp)) { Text("View full screen", color = DeepNavy) }
+        if (showFullPreview) {
+            Dialog(onDismissRequest = { showFullPreview = false }) {
+                val full = remember {
+                    val sc = 1400f / maxOf(state.canvasW, state.canvasH).toFloat()
+                    CollageMaker.render(state.photos, sections, (state.canvasW * sc).roundToInt(), (state.canvasH * sc).roundToInt(), state.style(sc))
+                }
+                Box(Modifier.fillMaxSize().background(Color(0xCC000000)).clickable { showFullPreview = false }, contentAlignment = Alignment.Center) {
+                    Image(
+                        bitmap = full.asImageBitmap(),
+                        contentDescription = "Full screen collage preview",
+                        modifier = Modifier.fillMaxWidth().aspectRatio(state.canvasW.toFloat() / state.canvasH.toFloat()),
+                        contentScale = ContentScale.Fit
+                    )
+                }
+            }
+        }
+        Spacer(Modifier.height(10.dp))
+        Button(onClick = { state.level = "export" }, modifier = Modifier.fillMaxWidth().height(50.dp), colors = ButtonDefaults.buttonColors(containerColor = Orange, contentColor = Color.White), shape = RoundedCornerShape(14.dp)) {
+            Text("Continue to Export", fontWeight = FontWeight.Bold)
+        }
+        Spacer(Modifier.height(8.dp))
+        OutlinedButton(onClick = { state.level = "home" }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(14.dp)) { Text("Back to photos & layout", color = DeepNavy) }
+        Spacer(Modifier.height(16.dp))
+    }
+}
+
+@Composable
+private fun CollageExportScreen(modifier: Modifier, state: CollageUiState, busy: Boolean, onSave: () -> Unit) {
+    val sections = remember(state.family, state.photos.size, state.canvasW, state.canvasH) { state.sections() }
+    val preview = remember(state.tick, state.photos.size, state.family, state.canvasW, state.canvasH, state.gapPx, state.radiusPx, state.bgLabel, state.bgCustom) {
+        val sc = 420f / maxOf(state.canvasW, state.canvasH).toFloat()
+        CollageMaker.render(state.photos, sections, (state.canvasW * sc).roundToInt(), (state.canvasH * sc).roundToInt(), state.style(sc))
+    }
+    val (ew, eh) = state.exportSize()
+    Column(modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp)) {
+        Spacer(Modifier.height(10.dp))
+        Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+            Image(
+                bitmap = preview.asImageBitmap(),
+                contentDescription = "Collage export preview",
+                modifier = Modifier
+                    .fillMaxWidth(if (state.canvasW >= state.canvasH) 0.8f else 0.55f)
+                    .aspectRatio(state.canvasW.toFloat() / state.canvasH.toFloat())
+                    .clip(RoundedCornerShape(8.dp)),
+                contentScale = ContentScale.Fit
+            )
+        }
+        Spacer(Modifier.height(12.dp))
+
+        Text("File format", color = DeepNavy, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+        Spacer(Modifier.height(6.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            CollageChip("JPG", state.format == "JPG") { state.format = "JPG"; state.saved = false }
+            CollageChip("PNG", state.format == "PNG") { state.format = "PNG"; state.saved = false }
+            CollageChip("WebP", state.format == "WebP") { state.format = "WebP"; state.saved = false }
+        }
+        if (state.format != "PNG") {
+            Spacer(Modifier.height(8.dp))
+            Text("Quality (${state.quality.roundToInt()}%)", color = DeepNavy, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+            Slider(value = state.quality, onValueChange = { state.quality = it; state.saved = false }, valueRange = 50f..100f)
+        }
+
+        Spacer(Modifier.height(8.dp))
+        Text("Resolution", color = DeepNavy, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+        Spacer(Modifier.height(6.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            CollageChip("Standard", state.resLabel == "Standard") { state.resLabel = "Standard"; state.saved = false }
+            CollageChip("High (2x)", state.resLabel == "High") { state.resLabel = "High"; state.saved = false }
+            CollageChip("Custom", state.resLabel == "Custom") { state.resLabel = "Custom"; state.saved = false }
+        }
+        if (state.resLabel == "Custom") {
+            Spacer(Modifier.height(6.dp))
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedTextField(
+                    value = state.customResW,
+                    onValueChange = { state.customResW = it.filter { ch -> ch.isDigit() }.take(4); state.saved = false },
+                    label = { Text("Width in px") },
+                    modifier = Modifier.width(140.dp)
+                )
+                Text("256 to 4096, height follows", color = Slate, fontSize = 11.sp)
+            }
+        }
+        Spacer(Modifier.height(6.dp))
+        Text("Will save: $ew x $eh ${state.format}", color = Slate, fontSize = 12.sp)
+
+        Spacer(Modifier.height(14.dp))
+        Button(onClick = onSave, enabled = !busy && !state.saved, modifier = Modifier.fillMaxWidth().height(50.dp), colors = ButtonDefaults.buttonColors(containerColor = Orange, contentColor = Color.White), shape = RoundedCornerShape(14.dp)) {
+            Text(if (state.saved) "Saved ✓ - see your gallery" else "Save Collage", fontWeight = FontWeight.Bold)
+        }
+        Spacer(Modifier.height(8.dp))
+        OutlinedButton(onClick = { state.level = "edit" }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(14.dp)) { Text("Back to editing", color = DeepNavy) }
+        Spacer(Modifier.height(16.dp))
+    }
+}
+
+// ---------------------------------------------------------------------------
+// v0.18.0 Photo Adjustments (his spec): 12 sliders, non-destructive, live preview,
+// undo/redo/compare/reset, JPG/PNG/WebP export. One engine (image/PhotoAdjust.kt)
+// feeds preview and save. His mockup's extra tiles: Filters reuses the app's filter
+// engine inside this screen; Crop & Text already have their own full tools on Home;
+// Draw/Shapes/Frames/Blur are a separate split (reported, not silently dropped).
+// ---------------------------------------------------------------------------
+
+private class AdjustUiState {
+    var uri by mutableStateOf<Uri?>(null)
+    var base by mutableStateOf<Bitmap?>(null)      // edit copy (capped 1600px)
+    var origW by mutableStateOf(0)
+    var origH by mutableStateOf(0)
+    val params = PhotoAdjust.Params()
+    var filterId by mutableStateOf("normal")
+    var panel by mutableStateOf("adjust")          // adjust | filters
+    var compare by mutableStateOf(false)
+    var tick by mutableStateOf(0)
+    var saved by mutableStateOf(false)
+    var format by mutableStateOf("JPG")
+    var quality by mutableStateOf(90f)
+    var resLabel by mutableStateOf("Original")     // Original | Custom
+    var customW by mutableStateOf("1600")
+    val undoStack = mutableListOf<Pair<PhotoAdjust.Params, String>>()
+    val redoStack = mutableListOf<Pair<PhotoAdjust.Params, String>>()
+
+    fun snapshot() = params.copy() to filterId
+
+    fun push() {
+        undoStack.add(snapshot())
+        if (undoStack.size > 40) undoStack.removeAt(0)
+        redoStack.clear()
+    }
+
+    private fun applySnap(snap: Pair<PhotoAdjust.Params, String>) {
+        params.copyFrom(snap.first); filterId = snap.second; tick++; saved = false
+    }
+
+    fun undo() { if (undoStack.isNotEmpty()) { redoStack.add(snapshot()); applySnap(undoStack.removeAt(undoStack.lastIndex)) } }
+    fun redo() { if (redoStack.isNotEmpty()) { undoStack.add(snapshot()); applySnap(redoStack.removeAt(redoStack.lastIndex)) } }
+
+    fun resetAll() {
+        push()
+        params.copyFrom(PhotoAdjust.Params())
+        filterId = "normal"
+        tick++; saved = false
+    }
+}
+
+@Composable
+private fun AdjustSlider(
+    label: String,
+    value: Float,
+    onBegin: () -> Unit,
+    onChange: (Float) -> Unit,
+    onEnd: () -> Unit
+) {
+    Column {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(label, modifier = Modifier.weight(1f), color = DeepNavy, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+            Text("-100", color = Slate, fontSize = 10.sp)
+            Spacer(Modifier.width(8.dp))
+            Text(
+                value.roundToInt().toString(),
+                color = if (value == 0f) Slate else Orange,
+                fontSize = 13.sp,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.clickable { if (value != 0f) { onBegin(); onChange(0f); onEnd() } }
+            )
+            Spacer(Modifier.width(8.dp))
+            Text("+100", color = Slate, fontSize = 10.sp)
+        }
+        Slider(
+            value = value,
+            onValueChange = { onBegin(); onChange(it) },
+            onValueChangeFinished = { onEnd() },
+            valueRange = -100f..100f
+        )
+    }
+}
+
+@Composable
+private fun PhotoAdjustScreen(
+    modifier: Modifier,
+    state: AdjustUiState,
+    busy: Boolean,
+    onPick: () -> Unit,
+    onSave: () -> Unit
+) {
+    val base = state.base
+    Column(modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp)) {
+        Spacer(Modifier.height(12.dp))
+        if (base == null) {
+            Text("Adjust your photo", color = DeepNavy, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+            Text("Light, colour and detail sliders with a live preview. Your original photo is never changed.", color = Slate, fontSize = 13.sp)
+            Spacer(Modifier.height(14.dp))
+            Button(onClick = onPick, modifier = Modifier.fillMaxWidth().height(50.dp), colors = ButtonDefaults.buttonColors(containerColor = Orange, contentColor = Color.White), shape = RoundedCornerShape(14.dp)) {
+                Icon(Icons.Default.Image, contentDescription = null)
+                Spacer(Modifier.width(8.dp))
+                Text("Choose a photo", fontWeight = FontWeight.Bold)
+            }
+            Spacer(Modifier.height(16.dp))
+            return@Column
+        }
+
+        // Slider drags push ONE undo point per drag (captured at the first change).
+        var dragSnap by remember { mutableStateOf<Pair<PhotoAdjust.Params, String>?>(null) }
+        fun beginDrag() { if (dragSnap == null) dragSnap = state.snapshot() }
+        fun endDrag() { dragSnap?.let { state.undoStack.add(it); if (state.undoStack.size > 40) state.undoStack.removeAt(0); state.redoStack.clear() }; dragSnap = null }
+
+        val preview = remember(state.tick, state.compare) {
+            val filtered = if (state.filterId == "normal") base else FilterUtils.applyFilter(base, state.filterId)
+            val adjusted = if (state.compare) filtered else PhotoAdjust.apply(filtered, state.params)
+            val sc = 720f / maxOf(adjusted.width, adjusted.height).toFloat()
+            if (sc < 1f) Bitmap.createScaledBitmap(adjusted, (adjusted.width * sc).roundToInt(), (adjusted.height * sc).roundToInt(), true) else adjusted
+        }
+        Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+            Image(
+                bitmap = preview.asImageBitmap(),
+                contentDescription = "Photo preview",
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .aspectRatio(base.width.toFloat() / base.height.toFloat())
+                    .clip(RoundedCornerShape(8.dp)),
+                contentScale = ContentScale.Fit
+            )
+        }
+        Spacer(Modifier.height(4.dp))
+        Text("Original: ${state.origW} x ${state.origH}" + if (state.compare) " - showing the original" else "", color = Slate, fontSize = 12.sp)
+
+        Spacer(Modifier.height(8.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            OutlinedButton(onClick = { state.undo() }, enabled = state.undoStack.isNotEmpty(), modifier = Modifier.weight(1f), shape = RoundedCornerShape(10.dp), contentPadding = PaddingValues(horizontal = 2.dp)) { Text("Undo", color = DeepNavy, fontSize = 12.sp, maxLines = 1, softWrap = false) }
+            OutlinedButton(onClick = { state.redo() }, enabled = state.redoStack.isNotEmpty(), modifier = Modifier.weight(1f), shape = RoundedCornerShape(10.dp), contentPadding = PaddingValues(horizontal = 2.dp)) { Text("Redo", color = DeepNavy, fontSize = 12.sp, maxLines = 1, softWrap = false) }
+            OutlinedButton(onClick = { state.compare = !state.compare }, modifier = Modifier.weight(1f), shape = RoundedCornerShape(10.dp), contentPadding = PaddingValues(horizontal = 2.dp)) { Text(if (state.compare) "Edited" else "Compare", color = if (state.compare) Orange else DeepNavy, fontSize = 11.sp, maxLines = 1, softWrap = false) }
+            OutlinedButton(onClick = { state.resetAll() }, modifier = Modifier.weight(1f), shape = RoundedCornerShape(10.dp), contentPadding = PaddingValues(horizontal = 2.dp)) { Text("Reset", color = DeepNavy, fontSize = 12.sp, maxLines = 1, softWrap = false) }
+        }
+
+        Spacer(Modifier.height(10.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            listOf("adjust" to "Adjust", "filters" to "Filters").forEach { (id, label) ->
+                val active = state.panel == id
+                Card(
+                    modifier = Modifier.weight(1f).clickable { state.panel = id },
+                    shape = RoundedCornerShape(12.dp),
+                    colors = CardDefaults.cardColors(containerColor = Color.White),
+                    border = androidx.compose.foundation.BorderStroke(if (active) 2.dp else 1.dp, if (active) Orange else BorderGrey)
+                ) {
+                    Text(label, modifier = Modifier.fillMaxWidth().padding(vertical = 10.dp), color = if (active) Orange else DeepNavy, fontSize = 13.sp, fontWeight = if (active) FontWeight.Bold else FontWeight.Normal, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+                }
+            }
+        }
+        Spacer(Modifier.height(8.dp))
+
+        if (state.panel == "filters") {
+            Text("One-tap filters - sliders still apply on top.", color = Slate, fontSize = 12.sp)
+            Spacer(Modifier.height(6.dp))
+            LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.heightIn(max = 40.dp)) {
+                items(FilterUtils.FilterChoice.values().toList()) { choice ->
+                    CollageChip(choice.label, state.filterId == choice.id) { state.push(); state.filterId = choice.id; state.tick++ }
+                }
+            }
+        } else {
+            Text("Tap a value to reset that slider.", color = Slate, fontSize = 12.sp)
+            Spacer(Modifier.height(4.dp))
+            Text("Light", color = DeepNavy, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+            AdjustSlider("Brightness", state.params.brightness, ::beginDrag, { state.params.brightness = it; state.tick++; state.saved = false }, ::endDrag)
+            AdjustSlider("Exposure", state.params.exposure, ::beginDrag, { state.params.exposure = it; state.tick++; state.saved = false }, ::endDrag)
+            AdjustSlider("Contrast", state.params.contrast, ::beginDrag, { state.params.contrast = it; state.tick++; state.saved = false }, ::endDrag)
+            AdjustSlider("Highlights", state.params.highlights, ::beginDrag, { state.params.highlights = it; state.tick++; state.saved = false }, ::endDrag)
+            AdjustSlider("Shadows", state.params.shadows, ::beginDrag, { state.params.shadows = it; state.tick++; state.saved = false }, ::endDrag)
+            Spacer(Modifier.height(6.dp))
+            Text("Colour", color = DeepNavy, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+            AdjustSlider("Saturation", state.params.saturation, ::beginDrag, { state.params.saturation = it; state.tick++; state.saved = false }, ::endDrag)
+            AdjustSlider("Vibrance", state.params.vibrance, ::beginDrag, { state.params.vibrance = it; state.tick++; state.saved = false }, ::endDrag)
+            AdjustSlider("Temperature", state.params.temperature, ::beginDrag, { state.params.temperature = it; state.tick++; state.saved = false }, ::endDrag)
+            AdjustSlider("Tint", state.params.tint, ::beginDrag, { state.params.tint = it; state.tick++; state.saved = false }, ::endDrag)
+            Spacer(Modifier.height(6.dp))
+            Text("Details", color = DeepNavy, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+            AdjustSlider("Sharpness", state.params.sharpness, ::beginDrag, { state.params.sharpness = it; state.tick++; state.saved = false }, ::endDrag)
+            AdjustSlider("Clarity", state.params.clarity, ::beginDrag, { state.params.clarity = it; state.tick++; state.saved = false }, ::endDrag)
+            Spacer(Modifier.height(6.dp))
+            Text("Creative", color = DeepNavy, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+            AdjustSlider("Fade", state.params.fade, ::beginDrag, { state.params.fade = it; state.tick++; state.saved = false }, ::endDrag)
+        }
+
+        Spacer(Modifier.height(12.dp))
+        Text("Save settings", color = DeepNavy, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+        Spacer(Modifier.height(6.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            CollageChip("JPG", state.format == "JPG") { state.format = "JPG"; state.saved = false }
+            CollageChip("PNG", state.format == "PNG") { state.format = "PNG"; state.saved = false }
+            CollageChip("WebP", state.format == "WebP") { state.format = "WebP"; state.saved = false }
+        }
+        if (state.format != "PNG") {
+            Text("Quality (${state.quality.roundToInt()}%)", color = DeepNavy, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+            Slider(value = state.quality, onValueChange = { state.quality = it; state.saved = false }, valueRange = 50f..100f)
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            CollageChip("Original size", state.resLabel == "Original") { state.resLabel = "Original"; state.saved = false }
+            CollageChip("Custom size", state.resLabel == "Custom") { state.resLabel = "Custom"; state.saved = false }
+        }
+        if (state.resLabel == "Custom") {
+            Spacer(Modifier.height(6.dp))
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedTextField(
+                    value = state.customW,
+                    onValueChange = { state.customW = it.filter { ch -> ch.isDigit() }.take(4); state.saved = false },
+                    label = { Text("Width in px") },
+                    modifier = Modifier.width(140.dp)
+                )
+                Text("256 to 4096, height follows", color = Slate, fontSize = 11.sp)
+            }
+        }
+
+        Spacer(Modifier.height(14.dp))
+        Button(onClick = onSave, enabled = !busy && !state.saved, modifier = Modifier.fillMaxWidth().height(50.dp), colors = ButtonDefaults.buttonColors(containerColor = Orange, contentColor = Color.White), shape = RoundedCornerShape(14.dp)) {
+            Text(if (state.saved) "Saved ✓ - see your gallery" else "Save Image", fontWeight = FontWeight.Bold)
+        }
+        Spacer(Modifier.height(8.dp))
+        OutlinedButton(onClick = onPick, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(14.dp)) { Text("Choose a different photo", color = DeepNavy) }
+        Spacer(Modifier.height(16.dp))
+    }
+}
+
 
 @Composable
 private fun HomeScreen(
@@ -4750,14 +5841,15 @@ private fun HomeScreen(
         Feature("Format Converter", "Any format to any format", "⇄"),
         Feature("Compress", "Reduce file size", "↓"),
         Feature("Text on Photo", "Add text to images", "T"),
-        Feature("Collage Maker", "Combine 2-9 photos", "⊞"),
+        Feature("Collage Maker", "Combine 2-20 photos", "⊞"),
+        Feature("Photo Adjustments", "Light, colour & detail sliders", "◐"),
         Feature("Print Size & DPI", "Ready images for printing", "◉")
     )
     Column(modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).padding(horizontal = 16.dp).verticalScroll(rememberScrollState())) {
         Row(Modifier.fillMaxWidth().padding(top = 12.dp, bottom = 12.dp), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
                 Text("A2Z Image Craft", color = DeepNavy, fontSize = 25.sp, fontWeight = FontWeight.Bold)
-                Text("IMAGE RESIZER", color = SkyBlue, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 2.sp)
+                Text("PHOTO TOOLKIT", color = SkyBlue, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 2.sp)
             }
             Icon(Icons.Default.Tune, contentDescription = "Settings", tint = DeepNavy, modifier = Modifier.size(26.dp))
         }
@@ -4817,7 +5909,6 @@ private fun HomeScreen(
                 if (rowItems.size == 1) Spacer(Modifier.weight(1f))
             }
         }
-        Text("Stage 2 · Resize, adapt, rotate and export are live", modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp), color = Slate, fontSize = 11.sp)
     }
 }
 
@@ -5513,7 +6604,9 @@ private fun EditorScreen(
         }
         Text(infoText, modifier = Modifier.padding(vertical = 8.dp), fontSize = 12.sp, color = Slate)
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())) {
-            Tool.values().forEach { item ->
+            // v0.18.2 audit fix: hide chips that open nothing real yet (Presets chip navigated away
+            // mid-edit; Format chip was a dead-end snackbar). They return when they do something honest.
+            Tool.values().filter { it != Tool.Presets && it != Tool.Format }.forEach { item ->
                 val selected = tool == item
                 Surface(modifier = Modifier.clickable { onTool(item) }, shape = RoundedCornerShape(10.dp), color = if (selected) SkyBlue else SoftGrey) {
                     Text(
@@ -5632,10 +6725,10 @@ private fun EditorScreen(
                     Triple(CropTransform.FLIP_H, "Mirror", Icons.Default.SwapHoriz),
                     Triple(CropTransform.FLIP_V, "Flip V", Icons.Default.SwapVert)
                 ).forEach { (kind, label, icon) ->
-                    OutlinedButton(onClick = { onCropTransform(kind) }, shape = RoundedCornerShape(10.dp), enabled = !busy && working != null) {
-                        Icon(icon, contentDescription = label, modifier = Modifier.size(16.dp), tint = DeepNavy)
-                        Spacer(Modifier.width(4.dp))
-                        Text(label, color = DeepNavy, fontSize = 12.sp, maxLines = 1, softWrap = false)
+                    OutlinedButton(onClick = { onCropTransform(kind) }, shape = RoundedCornerShape(10.dp), enabled = !busy && working != null, contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)) {
+                        Icon(icon, contentDescription = label, modifier = Modifier.size(14.dp), tint = DeepNavy)
+                        Spacer(Modifier.width(3.dp))
+                        Text(label, color = DeepNavy, fontSize = 11.sp, maxLines = 1, softWrap = false)
                     }
                 }
             }
@@ -6608,7 +7701,7 @@ private fun PresetsScreen(
                     Column(Modifier.padding(16.dp)) {
                         Text("No verified presets yet", color = DeepNavy, fontWeight = FontWeight.SemiBold)
                         Text(
-                            "Every preset size in PixelCraft is checked against official platform documentation before it appears here, with its source and review date. That research (Stage 2B) is not finished yet, so this list is honestly empty rather than filled with unverified numbers.",
+                            "Every preset size in A2Z Image Craft is checked against official platform documentation before it appears here, with its source and review date. That research is not finished yet, so this list is honestly empty rather than filled with unverified numbers.",
                             color = Slate,
                             fontSize = 13.sp,
                             lineHeight = 18.sp,
@@ -6659,16 +7752,16 @@ private fun SettingsScreen(modifier: Modifier, darkMode: Boolean, onDarkMode: (B
         Spacer(Modifier.height(14.dp))
         Text("Privacy", color = DeepNavy, fontWeight = FontWeight.SemiBold)
         Text(
-            "Your photos stay on this phone. PixelCraft asks for no account, uploads nothing, and requests no photo-library permission: you pick each photo yourself. 'Recently edited' remembers only photos you opened, stored on this device.",
+            "Your photos stay on this phone. A2Z Image Craft asks for no account, uploads nothing, and requests no photo-library permission: you pick each photo yourself. 'Recently edited' remembers only photos you opened, stored on this device.",
             color = Slate,
             fontSize = 13.sp,
             lineHeight = 18.sp,
             modifier = Modifier.padding(top = 6.dp)
         )
         Spacer(Modifier.height(14.dp))
-        Text("PixelCraft Image Resizer", color = DeepNavy, fontWeight = FontWeight.SemiBold)
-        Text("Version 0.3.0 · Learnify Zone", color = Slate, fontSize = 13.sp)
-        Text("Stage 2C build: process-then-export, aspect-ratio choices, camera capture, multi-select, My Photos (recent, saved, drafts), quality control. Ads are not enabled in this development version.", color = Slate, fontSize = 12.sp, lineHeight = 17.sp, modifier = Modifier.padding(top = 14.dp))
+        Text("A2Z Image Craft", color = DeepNavy, fontWeight = FontWeight.SemiBold)
+        Text("Version ${BuildConfig.VERSION_NAME.removeSuffix("-debug")} · Learnify Zone", color = Slate, fontSize = 13.sp)
+        Text("Resize, crop, convert, compress, print, collage, text, stickers and photo adjustments. Every tool runs fully on this phone - no account, no uploads, no photo-library permission.", color = Slate, fontSize = 12.sp, lineHeight = 17.sp, modifier = Modifier.padding(top = 14.dp))
     }
 }
 

@@ -203,12 +203,13 @@ class TextPhotoPhoneSizeTest {
 
     @Test
     fun phoneWindowCollage() {
-        // v0.16.9 (his "Yes all 8" #7): standalone Collage Maker with 3 preloaded photos shows
-        // the live preview, gap slider and Save to Gallery.
+        // v0.17.0: Collage Maker workspace with 3 preloaded photos shows Undo/Redo/Reset,
+        // the live preview, spacing/radius sliders and the export path.
         launchRaw("pixelcraft.test.collage" to "1").use { sc ->
-            waitForText("3 photos")
-            waitForText("Save to Gallery")
-            shot(sc, "v0169_phone_collage")
+            waitForText("Undo")
+            waitForText("Spacing between photos")
+            waitForText("Continue to Export")
+            shot(sc, "v0171_phone_collage_edit")
             sc.close()
         }
     }
