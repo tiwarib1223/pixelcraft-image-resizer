@@ -140,7 +140,7 @@ class PresetsSettingsTest {
     }
 
     @Test
-    fun d_settingsPageHasProperSections() {
+    fun d_settingsPageKeepsOnlyModeAndClearRecent() {
         launch().use { sc ->
             waitForText("Settings")
             composeRule.onNodeWithText("Settings").performClick()
@@ -148,14 +148,14 @@ class PresetsSettingsTest {
             waitForText("Dark mode")
             waitForText("Privacy")
             waitForText("Clear recently edited")
-            waitForText("Support")
-            waitForText("Rate us")
-            waitForText("Share")
-            waitForText("About")
-            waitForText("Bitty")
+            // v0.20.2 (his call): Settings = mode + clear recently edited ONLY - everything else lives in the drawer.
+            listOf("Support", "Rate us", "Share", "About", "Terms & Conditions", "Privacy Policy", "Your photos stay on this phone").forEach { gone ->
+                val leaked = composeRule.onAllNodesWithText(gone).fetchSemanticsNodes()
+                assertTrue("Settings must not show: $gone", leaked.isEmpty())
+            }
             val stale = composeRule.onAllNodesWithText("Learnify Zone", substring = true).fetchSemanticsNodes()
             assertTrue("no Learnify Zone may remain in the UI", stale.isEmpty())
-            shot(sc, "v0200_phone_settings")
+            shot(sc, "v0202_phone_settings")
         }
     }
 
@@ -174,12 +174,16 @@ class PresetsSettingsTest {
             waitForText("Need support? Email us")
             waitForText("Rate us")
             waitForText("Share")
-            shot(sc, "v0201_phone_drawer")
-            // v0.20.1 (his dedup call): Terms & Privacy live in Settings only, never in the drawer.
-            val drawerTerms = composeRule.onAllNodesWithText("Terms & Conditions").fetchSemanticsNodes()
-            val drawerPrivacy = composeRule.onAllNodesWithText("Privacy Policy").fetchSemanticsNodes()
-            assertTrue("drawer must not list Terms & Conditions (Settings owns it)", drawerTerms.isEmpty())
-            assertTrue("drawer must not list Privacy Policy (Settings owns it)", drawerPrivacy.isEmpty())
+            waitForText("Terms & Conditions")
+            waitForText("Privacy Policy")
+            waitForText("0.20.2")   // version footer in the drawer
+            shot(sc, "v0202_phone_drawer")
+            // drawer Terms row -> Terms doc page (renders on the Settings tab, back-safe since v0.20.1)
+            clickText("Terms & Conditions")
+            waitForText("developed and published by Bitty")
+            shot(sc, "v0202_phone_terms")
+            composeRule.onNodeWithContentDescription("Back").performClick()
+            waitForText("Appearance")
         }
     }
 
@@ -188,15 +192,21 @@ class PresetsSettingsTest {
         launch().use { sc ->
             waitForText("Settings")
             composeRule.onNodeWithText("Settings").performClick()
-            waitForText("Terms & Conditions")
-            // Terms page via its Settings row (clickText: semantics clicks land off-viewport on this host)
+            waitForText("Appearance")
+            // doc pages open from the drawer since v0.20.2
+            composeRule.onNodeWithText("Home").performClick()
+            waitForText("PHOTO TOOLKIT")
+            composeRule.onNodeWithContentDescription("Menu").performClick()
             clickText("Terms & Conditions")
             waitForText("developed and published by Bitty")
-            shot(sc, "v0201_phone_terms")
+            shot(sc, "v0202_phone_terms_back")
             // 1) the page's own back arrow returns to Settings
             composeRule.onNodeWithContentDescription("Back").performClick()
             waitForText("Appearance")
             // 2) system back on the doc page returns to Settings too - the v0.20.0 bug was an app EXIT here
+            composeRule.onNodeWithText("Home").performClick()
+            waitForText("PHOTO TOOLKIT")
+            composeRule.onNodeWithContentDescription("Menu").performClick()
             clickText("Privacy Policy")
             waitForText("private by design")
             var finishingAfterDocBack = false
@@ -220,15 +230,13 @@ class PresetsSettingsTest {
     }
 
     @Test
-    fun f_settingsDocPagesFromSettingsRows() {
+    fun f_settingsDocPagesFromDrawerRows() {
         launch().use { sc ->
-            waitForText("Settings")
-            composeRule.onNodeWithText("Settings").performClick()
-            waitForText("Terms & Conditions")
-            composeRule.onNodeWithText("Privacy Policy").performScrollTo()
-            composeRule.onAllNodesWithText("Privacy Policy")[0].performClick()
+            waitForText("PHOTO TOOLKIT")
+            composeRule.onNodeWithContentDescription("Menu").performClick()
+            clickText("Privacy Policy")
             waitForText("private by design")
-            shot(sc, "v0201_phone_privacy")
+            shot(sc, "v0202_phone_privacy")
         }
     }
 

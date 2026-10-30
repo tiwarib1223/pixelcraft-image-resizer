@@ -1,5 +1,22 @@
 # PixelCraft Image Resizer — Progress
 
+## v0.20.2 (versionCode 69): Settings = mode + clear recent only, drawer becomes the info page, clean pre-video splash
+His two requests after testing v0.20.1 on his phone (evening 2026-10-30, his messages + a 9s screen recording):
+- Request 1 ("Setting page only mode and clear recently edited", "Rest of all move next side info page"):
+  Settings now shows ONLY Dark mode and Clear recently edited. Everything else - Email us, Rate us, Share,
+  Terms & Conditions, Privacy Policy - moved to the side drawer (now the app's info page), with the app version
+  as small footer text ("A2Z Image Craft · Version 0.20.2 · Bitty"). Nothing duplicated, nothing removed from
+  the app. The doc pages themselves are unchanged and keep the v0.20.1 back-safe navigation. (VETOABLE: version
+  footer placement; the privacy info card "Your photos stay on this phone" was removed from Settings - its facts
+  still live on the Privacy Policy page.)
+- Request 2 ("Starting scene not good", "Exactly start from 3.2 seconds"): the pre-video system splash flashed a
+  dim, muddy app icon on black before the video - looked cheap. The splash icon is now fully transparent and the
+  splash background is the same starry navy (#030B1E) as the video, so the app opens straight into deep blue and
+  his 5-second video flows in seamlessly. His video asset itself is untouched - full 5.05s, his audio, exactly as
+  he confirmed again.
+- Tests updated to the new layout (Settings minimal assertions, drawer lists all five rows + version footer, doc
+  pages open from the drawer, back-still-never-exits regression kept). Screenshots refreshed (v0202_*).
+
 ## v0.20.1 (versionCode 68): HOTFIX - back navigation on doc pages + drawer dedup + his 5s opening video
 His phone test of v0.20.0 (evening 2026-10-30, screenshots + his messages):
 - REAL BUG: on the Terms & Conditions / Privacy Policy pages, system back EXITED the app instead of returning.

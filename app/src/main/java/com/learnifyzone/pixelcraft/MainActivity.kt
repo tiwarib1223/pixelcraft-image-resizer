@@ -4280,10 +4280,7 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
                     darkMode = darkMode,
                     onDarkMode = onDarkMode,
                     doc = settingsDoc,
-                    onOpenDoc = { settingsDoc = it },
-                    onEmail = { emailSupport() },
-                    onRate = { openPlayStorePage() },
-                    onShare = { shareApp() }
+                    onOpenDoc = { settingsDoc = it }
                 )
             }
             Screen.QueueOverview -> QueueOverviewScreen(
@@ -4955,7 +4952,9 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
             onClose = { drawerOpen = false },
             onEmail = { emailSupport() },
             onRate = { openPlayStorePage() },
-            onShare = { shareApp() }
+            onShare = { shareApp() },
+            onTerms = { drawerOpen = false; tab = MainTab.Settings; settingsDoc = "terms" },
+            onPrivacy = { drawerOpen = false; tab = MainTab.Settings; settingsDoc = "privacy" }
         )
     }
 
@@ -7930,10 +7929,7 @@ private fun SettingsScreen(
     darkMode: Boolean,
     onDarkMode: (Boolean) -> Unit,
     doc: String?,
-    onOpenDoc: (String?) -> Unit,
-    onEmail: () -> Unit,
-    onRate: () -> Unit,
-    onShare: () -> Unit
+    onOpenDoc: (String?) -> Unit
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
     val scope = rememberCoroutineScope()
@@ -7971,11 +7967,6 @@ private fun SettingsScreen(
 
         SettingsSection("Privacy") {
             SettingsRow(
-                icon = { Icon(Icons.Default.Lock, null, tint = SkyBlue, modifier = Modifier.size(20.dp)) },
-                title = "Your photos stay on this phone",
-                subtitle = "No account, no uploads, no photo-library permission - you pick each photo yourself."
-            )
-            SettingsRow(
                 icon = { Icon(Icons.Default.Delete, null, tint = SkyBlue, modifier = Modifier.size(20.dp)) },
                 title = "Clear recently edited",
                 subtitle = if (recentsCount > 0) recentsCount.toString() + " photo(s) remembered on this phone" else "Nothing remembered right now",
@@ -7983,50 +7974,6 @@ private fun SettingsScreen(
             )
         }
 
-        SettingsSection("Support") {
-            SettingsRow(
-                icon = { Icon(Icons.Default.MailOutline, null, tint = SkyBlue, modifier = Modifier.size(20.dp)) },
-                title = "Need support? Email us",
-                subtitle = "Tell us what you'd like to see, or bugs you found",
-                onClick = onEmail
-            )
-            SettingsRow(
-                icon = { Icon(Icons.Default.Star, null, tint = SkyBlue, modifier = Modifier.size(20.dp)) },
-                title = "Rate us",
-                subtitle = "Like the app? Support it with 5 stars on Google Play",
-                onClick = onRate
-            )
-            SettingsRow(
-                icon = { Icon(Icons.Default.Share, null, tint = SkyBlue, modifier = Modifier.size(20.dp)) },
-                title = "Share",
-                subtitle = "Tell a friend about A2Z Image Craft",
-                onClick = onShare
-            )
-            SettingsRow(
-                icon = { Icon(Icons.Default.Description, null, tint = SkyBlue, modifier = Modifier.size(20.dp)) },
-                title = "Terms & Conditions",
-                subtitle = "The simple rules for using the app",
-                onClick = { onOpenDoc("terms") }
-            )
-            SettingsRow(
-                icon = { Icon(Icons.Default.Lock, null, tint = SkyBlue, modifier = Modifier.size(20.dp)) },
-                title = "Privacy Policy",
-                subtitle = "How your photos and data are treated",
-                onClick = { onOpenDoc("privacy") }
-            )
-        }
-
-        SettingsSection("About") {
-            SettingsRow(
-                icon = { Icon(Icons.Default.Info, null, tint = SkyBlue, modifier = Modifier.size(20.dp)) },
-                title = "A2Z Image Craft",
-                subtitle = "Version " + BuildConfig.VERSION_NAME.removeSuffix("-debug") + " · Bitty"
-            )
-            Text(
-                "Resize, crop, convert, compress, print, collage, text, stickers, frames and photo adjustments. Every tool runs fully on this phone - no account, no uploads, no photo-library permission.",
-                color = Slate, fontSize = 12.sp, lineHeight = 17.sp, modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp)
-            )
-        }
         Spacer(Modifier.height(16.dp))
     }
     if (showClearConfirm) {
@@ -8048,10 +7995,11 @@ private fun SettingsScreen(
     }
 }
 
-/** v0.20.1 (his dedup call after testing v0.20.0): side drawer keeps only the quick actions - Email us / Rate us /
- *  Share. Terms & Conditions and Privacy Policy live in Settings only, so nothing shows on both sides. */
+/** v0.20.2 (his call: "Setting page only mode and clear recently edited", rest moves to the side info page):
+ *  the drawer is now the info page - Email us / Rate us / Share / Terms & Conditions / Privacy Policy, with the
+ *  app version as small footer text. Nothing here also shows in Settings. */
 @Composable
-private fun HomeDrawer(onClose: () -> Unit, onEmail: () -> Unit, onRate: () -> Unit, onShare: () -> Unit) {
+private fun HomeDrawer(onClose: () -> Unit, onEmail: () -> Unit, onRate: () -> Unit, onShare: () -> Unit, onTerms: () -> Unit, onPrivacy: () -> Unit) {
     Box(Modifier.fillMaxSize()) {
         Box(Modifier.fillMaxSize().background(Color(0x99061722)).clickable { onClose() })
         Column(Modifier.fillMaxHeight().fillMaxWidth(0.82f).background(Color.White).verticalScroll(rememberScrollState())) {
@@ -8062,6 +8010,14 @@ private fun HomeDrawer(onClose: () -> Unit, onEmail: () -> Unit, onRate: () -> U
             DrawerRow({ Icon(Icons.Default.MailOutline, null, tint = SkyBlue, modifier = Modifier.size(22.dp)) }, "Need support? Email us", "Tell us what you'd like to see, or bugs you found") { onEmail() }
             DrawerRow({ Icon(Icons.Default.Star, null, tint = SkyBlue, modifier = Modifier.size(22.dp)) }, "Rate us", "Support the app with 5 stars") { onRate() }
             DrawerRow({ Icon(Icons.Default.Share, null, tint = SkyBlue, modifier = Modifier.size(22.dp)) }, "Share", "Tell a friend about A2Z Image Craft") { onShare() }
+            DrawerRow({ Icon(Icons.Default.Description, null, tint = SkyBlue, modifier = Modifier.size(22.dp)) }, "Terms & Conditions", "The simple rules for using the app") { onTerms() }
+            DrawerRow({ Icon(Icons.Default.Lock, null, tint = SkyBlue, modifier = Modifier.size(22.dp)) }, "Privacy Policy", "How your photos and data are treated") { onPrivacy() }
+            Spacer(Modifier.height(18.dp))
+            Text(
+                "A2Z Image Craft · Version " + BuildConfig.VERSION_NAME.removeSuffix("-debug") + " · Bitty",
+                color = Slate, fontSize = 11.sp, modifier = Modifier.padding(horizontal = 20.dp)
+            )
+            Spacer(Modifier.height(14.dp))
         }
     }
 }
