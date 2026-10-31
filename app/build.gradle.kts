@@ -15,8 +15,8 @@ android {
         // arm64 - restricting keeps the APK small instead of carrying x86 slices.
         ndk { abiFilters += "arm64-v8a" }
         targetSdk = 36
-        versionCode = 80
-        versionName = "1.0.7"
+        versionCode = 81
+        versionName = "1.0.8"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
@@ -81,6 +81,11 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.9.4")
     implementation("androidx.exifinterface:exifinterface:1.4.1")
     implementation("com.google.android.gms:play-services-mlkit-subject-segmentation:16.0.0-beta1")
+    // Document Scanner (his original Scanner recording): Google Play services supplies the
+    // camera scanning flow - edge detection, auto-capture, initial crop - fully on-device.
+    // Needs Google Play services and 1.7 GB+ RAM on the phone; the app itself still needs
+    // NO camera permission (the scanner runs inside Play services).
+    implementation("com.google.android.gms:play-services-mlkit-document-scanner:16.0.0")
     implementation("com.microsoft.onnxruntime:onnxruntime-android:1.31.1")
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.ui:ui-tooling-preview")

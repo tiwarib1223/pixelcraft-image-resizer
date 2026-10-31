@@ -2,4 +2,6 @@
 <paths>
     <!-- Camera captures for "Take a Photo" land in the app's private cache. -->
     <cache-path name="camera" path="images/" />
+    <!-- Scanner exports shared/opened from the success screen. -->
+    <cache-path name="scanner" path="scanner/" />
 </paths>

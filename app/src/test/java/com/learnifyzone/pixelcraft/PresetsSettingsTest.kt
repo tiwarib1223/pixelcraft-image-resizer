@@ -145,7 +145,7 @@ class PresetsSettingsTest {
             waitForText("Settings")
             composeRule.onNodeWithText("Settings").performClick()
             waitForText("Appearance")
-            waitForText("Dark mode")
+            waitForText("Theme")
             waitForText("Privacy")
             waitForText("Clear recently edited")
             // v1.0.2 (his call, overriding the v1.0.0 launch spec): Settings = mode + clear
@@ -211,7 +211,8 @@ class PresetsSettingsTest {
             waitForText("Terms & Conditions")
             // v1.0.2: What's new moved to the drawer (below Open-source licences).
             clickText("What's new")
-            waitForText("What's new in version 1.0.7")
+            waitForText("What's new in version 1.0.8")
+            waitForText("Document Scanner")
             shot(sc, "v100_phone_whatsnew")
             composeRule.onNodeWithContentDescription("Back").performClick()
             waitForText("Terms & Conditions")

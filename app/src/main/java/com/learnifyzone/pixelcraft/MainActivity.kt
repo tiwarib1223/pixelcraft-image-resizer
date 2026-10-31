@@ -25,6 +25,7 @@ import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.activity.result.IntentSenderRequest
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
@@ -32,6 +33,7 @@ import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.drag
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
@@ -118,6 +120,23 @@ import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.AspectRatio
+import androidx.compose.material.icons.filled.DocumentScanner
+import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.PictureAsPdf
+import androidx.compose.material.icons.filled.Straighten
+import androidx.compose.material.icons.filled.FitScreen
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.layout.onGloballyPositioned
+import com.learnifyzone.pixelcraft.image.ScanGeometry
+import com.learnifyzone.pixelcraft.image.ScanExport
+import com.google.mlkit.vision.documentscanner.GmsDocumentScannerOptions
+import com.google.mlkit.vision.documentscanner.GmsDocumentScanning
+import com.google.mlkit.vision.documentscanner.GmsDocumentScanningResult
+import com.learnifyzone.pixelcraft.data.ScansStore
+import com.learnifyzone.pixelcraft.image.ScanEnhance
+import java.util.UUID
 import androidx.compose.material.icons.filled.AutoFixHigh
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.GpsFixed
@@ -297,7 +316,7 @@ class MainActivity : ComponentActivity() {
 }
 
 private enum class MainTab { Home, MyPhotos, Presets, Settings }
-private enum class Screen { Home, Editor, Export, PrintHome, PrintSetup, PrintPreview, PrintExport, Success, QueueOverview, QueueResult, SocialHome, SocialPlatform, SocialEdit, ShopHome, ShopOther, ShopPlatform, ShopEdit, ShopCollage, ConvertHome, ConvertEdit, ConvertResult, CompressHome, CompressSettings, CompressResult, TextPhoto, Collage, PhotoAdjust }
+private enum class Screen { Home, Editor, Export, PrintHome, PrintSetup, PrintPreview, PrintExport, Success, QueueOverview, QueueResult, SocialHome, SocialPlatform, SocialEdit, ShopHome, ShopOther, ShopPlatform, ShopEdit, ShopCollage, ConvertHome, ConvertEdit, ConvertResult, CompressHome, CompressSettings, CompressResult, TextPhoto, Collage, PhotoAdjust, ScannerHome, ScannerImportImages, ScannerImportPdf, ScannerManager, ScannerMyScans, ScannerCrop, ScannerEnhance, ScannerPreview, ScannerExport, ScannerSuccess, ScannerSettings }
 private enum class Tool(val label: String) { Resize("Resize"), Presets("Presets"), Crop("Crop & Rotate"), Background("Remove Background"), Circle("Shape Cutter"), Format("Format") }
 
 private enum class CropTransform { LEFT, RIGHT, FLIP_H, FLIP_V }
@@ -311,7 +330,14 @@ private fun PixelCraftApp() {
     val context = androidx.compose.ui.platform.LocalContext.current
     // Test hook: launch in dark mode for the dark-mode screenshot sweep.
     val testDark = (context as? Activity)?.intent?.getStringExtra("pixelcraft.test.darkmode") == "1"
-    var darkMode by rememberSaveable { mutableStateOf(testDark) }
+    // v1.0.8 (his original Scanner spec, Screen 11): Light / Dark / System theme, app-wide.
+    // Default stays Light - the pre-1.0.8 behaviour - until he picks System or Dark.
+    var themeMode by rememberSaveable { mutableStateOf(if (testDark) "dark" else "light") }
+    val darkMode = when (themeMode) {
+        "dark" -> true
+        "system" -> isSystemInDarkTheme()
+        else -> false
+    }
     SideEffect { applyPalette(darkMode) }
     val colors = if (darkMode) darkColorScheme(primary = SkyBlue, secondary = Orange, background = Color(0xFF101A2B), surface = Color(0xFF17243A), onPrimary = DeepNavy) else lightColorScheme(primary = SkyBlue, secondary = Orange, background = Color.White, surface = Color.White, onPrimary = DeepNavy, onBackground = DeepNavy, onSurface = DeepNavy)
     // v0.20.1 (his call, overrides the earlier static intro): his real 5-second opening video plays on cold start.
@@ -324,7 +350,7 @@ private fun PixelCraftApp() {
         if (showIntro) {
             OpeningVideoScreen(onFinished = { showIntro = false })
         } else {
-            PixelCraftRoot(darkMode = darkMode, onDarkMode = { darkMode = it })
+            PixelCraftRoot(themeMode = themeMode, onThemeMode = { themeMode = it })
         }
     }
 }
@@ -384,7 +410,7 @@ internal fun OpeningVideoScreen(onFinished: () -> Unit) {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
+private fun PixelCraftRoot(themeMode: String, onThemeMode: (String) -> Unit) {
     val context = androidx.compose.ui.platform.LocalContext.current
     val scope = rememberCoroutineScope()
     val snackbar = remember { SnackbarHostState() }
@@ -423,6 +449,7 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
     var pendingBgTool by remember { mutableStateOf(false) }
     var pendingCropTool by remember { mutableStateOf(false) }
     var pendingExportTest by remember { mutableStateOf(false) }
+    val scanner = remember { ScannerUiState() }
     var cropRect by remember { mutableStateOf(CropMath.defaultRect()) }
     var cropAspect by rememberSaveable { mutableStateOf("Free") }
     var straightenAngle by rememberSaveable { mutableStateOf(0f) }
@@ -545,35 +572,8 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
     var printBgWhite by remember { mutableStateOf(true) }
 
     // Text on Photo (v0.16.0) - live-preview text layers over a photo; never touches the original.
-    var textPhotoBitmap by remember { mutableStateOf<Bitmap?>(null) }
-    var textPhotoName by remember { mutableStateOf("") }
-    var textPhotoBytes by remember { mutableStateOf(-1L) }
-    val textLayers = remember { mutableStateListOf<TextOverlayUtils.TextLayer>() }
-    val textImageLayers = remember { mutableStateListOf<TextOverlayUtils.ImageLayer>() }
-    var textImageSelectedId by remember { mutableStateOf<Long?>(null) }
-    var textSelectedId by remember { mutableStateOf<Long?>(null) }
-    val textUndo = remember { TextOverlayUtils.UndoRedo() }
-    var textTick by remember { mutableStateOf(0) }   // bumped on every layer mutation so the live preview repaints
-    var textSelTick by remember { mutableStateOf(0) }   // bumped on every layer SELECT (canvas tap or Layers row) so re-tapping an already-selected layer re-opens its options panel (v0.16.10: his 'no Remove background button' report)
-    var textFormat by remember { mutableStateOf("PNG") }
-    var textResultBytes by remember { mutableStateOf<ByteArray?>(null) }
-    var textResultDims by remember { mutableStateOf("") }
-    var textSaved by remember { mutableStateOf(false) }
-    var textEditOpen by remember { mutableStateOf(false) }
-    var textCropRect by remember { mutableStateOf<FloatArray?>(null) }   // canvas cutter: [l,t,r,b] fractions of the photo
-    var textCropLabel by remember { mutableStateOf("") }
-    var textCropAdjust by remember { mutableStateOf(false) }
-    var textCropZoomAbs by remember { mutableStateOf(1f) }   // v0.16.6: absolute Position-mode zoom (slider 1..5, like Social Media)
-    var textFilterId by remember { mutableStateOf("normal") }
+    val text = remember { TextUiState() }
     // v0.19.0: Frame + Perspective tools (his confirmed spec - fill the 2 empty grid slots next to Meme)
-    var textFrameStyle by remember { mutableStateOf("none") }
-    var textFrameWidth by remember { mutableStateOf(8f) }
-    var textFrameColor by remember { mutableStateOf(0xFFFFFFFF.toInt()) }
-    var textPerspV by remember { mutableStateOf(0f) }
-    var textPerspH by remember { mutableStateOf(0f) }
-    var textStylePresets by remember { mutableStateOf<List<TextStylePreset>>(emptyList()) }
-    var pendingTextStyle by remember { mutableStateOf<TextStylePreset?>(null) }
-    var textLastGestureRecord by remember { mutableStateOf(0L) }
     var printFormat by remember { mutableStateOf("JPG") }
     var printFilename by remember { mutableStateOf("print-ready") }
     var printJpgQuality by remember { mutableStateOf(92) }
@@ -835,6 +835,10 @@ snackbar.showSnackbar("This phone ran out of memory. Try a smaller size or fewer
     // Test hook (JVM UI tests): a file path in this intent extra pre-loads that photo,
     // skipping the system photo picker, which cannot run under Robolectric.
     LaunchedEffect(Unit) {
+        // Phone-height scanner UI tests: jump straight to the scanner home (no photo needed).
+        if ((context as? Activity)?.intent?.getStringExtra("pixelcraft.test.tool") == "scanner" && screen == Screen.Home) {
+            screen = Screen.ScannerHome
+        }
         val testPath = (context as? Activity)?.intent?.getStringExtra("pixelcraft.test.photo")
         if (!testPath.isNullOrBlank() && sourceUri == null && workingBitmap == null) {
             val testTool = (context as? Activity)?.intent?.getStringExtra("pixelcraft.test.tool")
@@ -3119,55 +3123,712 @@ snackbar.showSnackbar("This phone ran out of memory. Try a smaller size or fewer
         uri?.let { loadPrintPdf(it) }
     }
 
+    // ===== Document Scanner (his original Scanner recording) =====
+    fun resetScanner() {
+        scanner.reset()
+    }
+
+    fun scannerSaveDocMeta() {
+        val docId = scanner.docId ?: return
+        val meta = ScansStore.DocMeta(docId, scanner.docName, scanner.folder, scanner.createdAt, System.currentTimeMillis(), coverExport = scanner.lastExport)
+        scanner.pages.forEach { pg ->
+            meta.pages.add(ScansStore.PageMeta(pg.id, pg.rotation, pg.crop, pg.filter, pg.straighten,
+                pg.adjust.brightness, pg.adjust.contrast, pg.adjust.highlights, pg.adjust.shadows,
+                pg.adjust.sharpness, pg.adjust.whitening, pg.adjust.shadowReduction))
+        }
+        scope.launch(Dispatchers.IO) { ScansStore.saveDoc(context, meta) }
+    }
+
+    fun scannerEnsureDoc(): String {
+        scanner.docId?.let { return it }
+        val id = "doc_" + System.currentTimeMillis().toString(36)
+        scanner.docId = id
+        scanner.createdAt = System.currentTimeMillis()
+        scanner.docName = "Scan " + SimpleDateFormat("d MMM yyyy, HH:mm", Locale.getDefault()).format(Date())
+        return id
+    }
+
+    fun scannerQueueThumb(pageId: String) {
+        val idx = scanner.pages.indexOfFirst { it.id == pageId }
+        if (idx < 0) return
+        val docId = scanner.docId ?: return
+        scope.launch {
+            val bmp = withContext(Dispatchers.IO) {
+                val f = ScansStore.pageFile(context, docId, pageId)
+                val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                BitmapFactory.decodeFile(f.absolutePath, bounds)
+                var s = 1
+                while (bounds.outWidth / (s * 2) >= 240 && bounds.outHeight / (s * 2) >= 240) s *= 2
+                var b = BitmapFactory.decodeFile(f.absolutePath, BitmapFactory.Options().apply { inSampleSize = s })
+                val pg = scanner.pages.getOrNull(idx)
+                if (b != null && pg != null) {
+                    if (pg.rotation != 0) {
+                        val m = android.graphics.Matrix().apply { postRotate(pg.rotation.toFloat()) }
+                        val r = Bitmap.createBitmap(b, 0, 0, b.width, b.height, m, true)
+                        if (r != b) b.recycle()
+                        b = r
+                    }
+                    if (pg.straighten != 0f) {
+                        val st = ScanGeometry.straighten(b, pg.straighten)
+                        b.recycle()
+                        b = st
+                    }
+                    if (pg.crop != null) {
+                        val q = if (pg.straighten != 0f) ScanGeometry.rotateQuadFree(pg.crop!!, pg.straighten, b.width, b.height) else pg.crop!!
+                        val c = ScanGeometry.perspectiveCrop(b, q, maxDim = 480)
+                        b.recycle()
+                        b = c
+                    }
+                    if (pg.filter != "original" || !pg.adjust.isDefault()) {
+                        val e = ScanEnhance.render(b, pg.filter, pg.adjust)
+                        if (e !== b) b.recycle()
+                        b = e
+                    }
+                }
+                b
+            }
+            if (idx < scanner.pages.size && scanner.pages[idx].id == pageId) {
+                scanner.pages[idx].thumb = bmp?.asImageBitmap()
+            }
+        }
+    }
+
+    fun scannerQueueDocThumb(docId: String) {
+        if (scanner.docThumbs.containsKey(docId)) return
+        scanner.docThumbs[docId] = null
+        scope.launch {
+            val bmp = withContext(Dispatchers.IO) {
+                val meta = ScansStore.loadDoc(context, docId) ?: return@withContext null
+                val pid = meta.pages.firstOrNull()?.id ?: return@withContext null
+                val f = ScansStore.pageFile(context, docId, pid)
+                if (!f.exists()) return@withContext null
+                val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                BitmapFactory.decodeFile(f.absolutePath, bounds)
+                var s = 1
+                while (bounds.outWidth / (s * 2) >= 200 && bounds.outHeight / (s * 2) >= 200) s *= 2
+                BitmapFactory.decodeFile(f.absolutePath, BitmapFactory.Options().apply { inSampleSize = s })
+            }
+            scanner.docThumbs[docId] = bmp?.asImageBitmap()
+        }
+    }
+
+    fun refreshScanDocs() {
+        scope.launch {
+            val list = withContext(Dispatchers.IO) {
+                ScansStore.listDocIds(context).mapNotNull { ScansStore.loadDoc(context, it) }
+            }
+            val sizes = withContext(Dispatchers.IO) { list.associate { it.id to ScansStore.docBytes(context, it.id) } }
+            scanner.docList = list
+            scanner.docSizes.clear(); scanner.docSizes.putAll(sizes)
+        }
+    }
+
+    fun scannerDeleteDoc(docId: String) {
+        scope.launch {
+            withContext(Dispatchers.IO) { ScansStore.deleteDoc(context, docId) }
+            scanner.docThumbs.remove(docId)
+            refreshScanDocs()
+        }
+    }
+
+    fun scannerMoveDocToFolder(docId: String, folder: String) {
+        scope.launch {
+            withContext(Dispatchers.IO) {
+                val meta = ScansStore.loadDoc(context, docId) ?: return@withContext
+                meta.folder = folder.trim()
+                meta.modifiedAt = System.currentTimeMillis()
+                ScansStore.saveDoc(context, meta)
+            }
+            refreshScanDocs()
+        }
+    }
+
+    fun scannerRenameFolder(oldName: String, newName: String) {
+        val nn = newName.trim()
+        if (nn.isEmpty() || nn == oldName) return
+        scope.launch {
+            withContext(Dispatchers.IO) {
+                ScansStore.listDocIds(context).mapNotNull { ScansStore.loadDoc(context, it) }
+                    .filter { it.folder == oldName }
+                    .forEach { it.folder = nn; it.modifiedAt = System.currentTimeMillis(); ScansStore.saveDoc(context, it) }
+            }
+            if (scanner.myScansFolder == oldName) scanner.myScansFolder = nn
+            refreshScanDocs()
+        }
+    }
+
+    fun scannerDeleteFolder(name: String) {
+        // Scans are NEVER deleted with a folder (his spec: deletion is always explained and safe).
+        scope.launch {
+            withContext(Dispatchers.IO) {
+                ScansStore.listDocIds(context).mapNotNull { ScansStore.loadDoc(context, it) }
+                    .filter { it.folder == name }
+                    .forEach { it.folder = ""; it.modifiedAt = System.currentTimeMillis(); ScansStore.saveDoc(context, it) }
+            }
+            if (scanner.myScansFolder == name) scanner.myScansFolder = null
+            refreshScanDocs()
+        }
+    }
+
+
+    fun scannerRotatePage(pageId: String, times: Int = 1) {
+        val page = scanner.pages.firstOrNull { it.id == pageId } ?: return
+        page.rotation = (page.rotation + 90 * times + 360) % 360
+        scannerQueueThumb(pageId)
+        scannerSaveDocMeta()
+    }
+
+    fun scannerMovePage(pageId: String, delta: Int) {
+        val idx = scanner.pages.indexOfFirst { it.id == pageId }
+        val to = idx + delta
+        if (idx < 0 || to < 0 || to >= scanner.pages.size) return
+        val p = scanner.pages.removeAt(idx)
+        scanner.pages.add(to, p)
+        scannerSaveDocMeta()
+    }
+
+    fun scannerReplacePage(pageId: String, uri: Uri) {
+        val idx = scanner.pages.indexOfFirst { it.id == pageId }
+        val docId = scanner.docId ?: return
+        if (idx < 0) return
+        busy = true; busyLabel = "Replacing page…"
+        scope.launch {
+            try {
+                withContext(Dispatchers.IO) {
+                    val f = ScansStore.pageFile(context, docId, pageId)
+                    (context.contentResolver.openInputStream(uri)
+                        ?: throw IllegalStateException("Could not read that image")).use { inp ->
+                        f.outputStream().use { inp.copyTo(it) }
+                    }
+                }
+                val page = scanner.pages[idx]
+                page.rotation = 0; page.straighten = 0f; page.crop = null
+                page.filter = "original"; page.adjust.copyFrom(ScanEnhance.DocParams())
+                scannerQueueThumb(pageId)
+                scannerSaveDocMeta()
+                busy = false; busyLabel = ""
+            } catch (e: Exception) {
+                busy = false; busyLabel = ""
+                snackbar.showSnackbar("Could not replace that page: ${e.message ?: "unknown error"}")
+            }
+        }
+    }
+
+    fun scannerDeletePages(ids: List<String>) {
+        val docId = scanner.docId
+        ids.forEach { pid ->
+            val idx = scanner.pages.indexOfFirst { it.id == pid }
+            if (idx >= 0) scanner.pages.removeAt(idx)
+            if (docId != null) scope.launch(Dispatchers.IO) { ScansStore.pageFile(context, docId, pid).delete() }
+        }
+        scanner.selectedPages.clear()
+        scanner.selecting = false
+        scannerSaveDocMeta()
+    }
+
+    fun scannerRenameDoc(newName: String) {
+        val trimmed = newName.trim()
+        if (trimmed.isEmpty()) return
+        scanner.docName = trimmed
+        scannerSaveDocMeta()
+        refreshScanDocs()
+    }
+
+        fun scannerPrefs() = context.getSharedPreferences("a2z_state", Context.MODE_PRIVATE)
+
+    fun scannerStorageBytes(): Long = ScansStore.storageBytes(context)
+
+    fun scannerClearTemp() {
+        scope.launch {
+            withContext(Dispatchers.IO) {
+                File(context.cacheDir, "scanner").deleteRecursively()
+                context.cacheDir.listFiles()?.forEach { if (it.name.startsWith("a2z_scan_pdf_")) it.delete() }
+            }
+            snackbar.showSnackbar("Temporary files cleared. Your saved scans are untouched.")
+        }
+    }
+
+    fun scannerShareDoc(docId: String) {
+        scope.launch {
+            val meta = withContext(Dispatchers.IO) { ScansStore.loadDoc(context, docId) }
+            val export = meta?.coverExport
+            if (meta == null || export == null) {
+                snackbar.showSnackbar("Open this scan and export it first - then you can share the exported file.")
+                return@launch
+            }
+            val shared = withContext(Dispatchers.IO) {
+                val f = File(ScansStore.docDir(context, docId), export)
+                if (!f.exists()) return@withContext null
+                val copy = File(File(context.cacheDir, "scanner").apply { mkdirs() }, export)
+                f.copyTo(copy, overwrite = true)
+                copy
+            }
+            if (shared == null) {
+                snackbar.showSnackbar("The exported file is gone. Export this scan again to share it.")
+                return@launch
+            }
+            val uri = FileProvider.getUriForFile(context, context.packageName + ".fileprovider", shared)
+            val mime = when (shared.extension.lowercase()) { "pdf" -> "application/pdf"; "png" -> "image/png"; else -> "image/jpeg" }
+            context.startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).apply {
+                type = mime
+                putExtra(Intent.EXTRA_STREAM, uri)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }, "Share document"))
+        }
+    }
+
+    fun scannerRenameDocById(docId: String, newName: String) {
+        val trimmed = newName.trim()
+        if (trimmed.isEmpty()) return
+        scope.launch {
+            withContext(Dispatchers.IO) {
+                val meta = ScansStore.loadDoc(context, docId) ?: return@withContext
+                meta.name = trimmed
+                ScansStore.saveDoc(context, meta)
+            }
+            refreshScanDocs()
+        }
+    }
+
+        fun scannerExport() {
+        val docId = scanner.docId ?: return
+        val pages = scanner.pages.toList().let { all -> if (scanner.exportSelectedOnly) all.filter { scanner.exportSelectedPages.contains(it.id) } else all }
+        if (pages.isEmpty() || scanner.exporting) return
+        scanner.exporting = true
+        scanner.exportCancelled = false
+        scanner.exportProgress = 0
+        scanner.exportTotal = pages.size
+        val fmt = scanner.exportFormat
+        val baseName = scanner.exportName.trim().ifBlank { scanner.docName.trim().ifBlank { "Scan" } }
+            .replace(Regex("[^A-Za-z0-9 _-]"), "").ifBlank { "Scan" }
+        scope.launch {
+            try {
+                // Render every page once at export resolution, then reuse for every output file.
+                val rendered = mutableListOf<Bitmap>()
+                pages.forEachIndexed { i, pg ->
+                    if (scanner.exportCancelled) return@forEachIndexed
+                    val bmp = withContext(Dispatchers.IO) { renderScanPageBitmap(context, docId, pg, 3000) }
+                    if (bmp != null) rendered.add(bmp)
+                    scanner.exportProgress = i + 1
+                }
+                if (scanner.exportCancelled || rendered.isEmpty()) {
+                    rendered.forEach { it.recycle() }
+                    scanner.exporting = false
+                    return@launch
+                }
+                val result = withContext(Dispatchers.IO) {
+                    if (fmt == "PDF") {
+                        val sheets = rendered.map { ScanExport.renderPageOnSheet(it, scanner.exportPageSize, scanner.exportOrientation, scanner.exportMargin, scanner.exportQuality, scanner.exportMarginMm) }
+                        val bytes = ConvertFormats.encodePdf(sheets, android.graphics.Color.WHITE)
+                        sheets.forEach { it.recycle() }
+                        val name = "$baseName.pdf"
+                        saveToDownloads(context, name, "application/pdf", bytes)
+                        // Copy for Open/Share from the success screen and for My Scans.
+                        val shareDir = File(context.cacheDir, "scanner").apply { mkdirs() }
+                        val shareFile = File(shareDir, name)
+                        shareFile.writeBytes(bytes)
+                        File(ScansStore.docDir(context, docId), name).writeBytes(bytes)
+                        scanner.lastExport = name
+                        ScanExportResult(name, "PDF", rendered.size, bytes.size.toLong(), shareFile)
+                    } else {
+                        val ext = fmt.lowercase()
+                        val mime = if (fmt == "PNG") "image/png" else "image/jpeg"
+                        var total = 0L
+                        var firstFile: File? = null
+                        val shareDir = File(context.cacheDir, "scanner").apply { mkdirs() }
+                        rendered.forEachIndexed { i, bmp ->
+                            if (scanner.exportCancelled) return@forEachIndexed
+                            val targetW = scanner.exportJpgWidth.trim().toIntOrNull()
+                            val toEncode = if (fmt == "JPG" && targetW != null && targetW >= 16 && targetW < bmp.width) {
+                                val th = (bmp.height * (targetW.toFloat() / bmp.width)).roundToInt().coerceAtLeast(1)
+                                Bitmap.createScaledBitmap(bmp, targetW, th, true)
+                            } else bmp
+                            val bytes = if (fmt == "PNG") ConvertFormats.encode(toEncode, ConvertFormats.byId("png"), 100, android.graphics.Color.WHITE)
+                                else ConvertFormats.encode(toEncode, ConvertFormats.byId("jpg"), scanner.exportJpgQuality.toInt(), android.graphics.Color.WHITE)
+                            if (toEncode !== bmp) toEncode.recycle()
+                                else ConvertFormats.encode(bmp, ConvertFormats.byId("jpg"), scanner.exportJpgQuality.toInt(), android.graphics.Color.WHITE)
+                            val name = "${baseName}_page${i + 1}.$ext"
+                            saveToGallery(context, name, mime, bytes)
+                            val f = File(shareDir, name)
+                            f.writeBytes(bytes)
+                            if (firstFile == null) firstFile = f
+                            File(ScansStore.docDir(context, docId), name).writeBytes(bytes)
+                            if (scanner.lastExport == null) scanner.lastExport = name
+                            total += bytes.size
+                            scanner.exportProgress = i + 1
+                        }
+                        ScanExportResult(
+                            if (rendered.size == 1) "${baseName}_page1.$ext" else "${baseName}_page1-${rendered.size}.$ext",
+                            fmt, rendered.size, total, firstFile
+                        )
+                    }
+                }
+                rendered.forEach { it.recycle() }
+                if (scanner.exportCancelled) { scanner.exporting = false; return@launch }
+                scanner.successName = result.name
+                scanner.successFormat = result.format
+                scanner.successPages = result.pages
+                scanner.successSize = formatBytes(result.bytes)
+                scanner.successShareFile = result.shareFile
+                scanner.exporting = false
+                scannerSaveDocMeta()
+                refreshScanDocs()
+                screen = Screen.ScannerSuccess
+            } catch (e: OutOfMemoryError) {
+                scanner.exporting = false
+                snackbar.showSnackbar("This phone ran out of memory. Try Standard quality or fewer pages.")
+            } catch (e: Exception) {
+                scanner.exporting = false
+                snackbar.showSnackbar("Export failed: ${e.message ?: "unknown error"}. Your pages are still saved.")
+            }
+        }
+    }
+
+        fun scannerCheckBlanks() {
+        val docId = scanner.docId ?: return
+        scanner.pages.forEach { pg ->
+            scope.launch {
+                val blank = withContext(Dispatchers.IO) {
+                    val f = ScansStore.pageFile(context, docId, pg.id)
+                    if (!f.exists()) return@withContext false
+                    val b = BitmapFactory.decodeFile(f.absolutePath, BitmapFactory.Options().apply { inSampleSize = 16 }) ?: return@withContext false
+                    val px = IntArray(b.width * b.height)
+                    b.getPixels(px, 0, b.width, 0, 0, b.width, b.height)
+                    var sum = 0L; var sq = 0L
+                    for (c in px) {
+                        val lum = (((c shr 16) and 0xFF) * 299 + ((c shr 8) and 0xFF) * 587 + (c and 0xFF) * 114) / 1000
+                        sum += lum; sq += lum * lum.toLong()
+                    }
+                    b.recycle()
+                    val n = px.size
+                    val mean = sum / n
+                    val variance = sq / n - mean * mean
+                    variance < 36   // nearly uniform image ~= blank page
+                }
+                scanner.blankFlags[pg.id] = blank
+            }
+        }
+    }
+
+        fun scannerStartEdit(pageId: String) {
+        val page = scanner.pages.firstOrNull { it.id == pageId } ?: return
+        scanner.editPageId = pageId
+        scanner.editBackupRotation = page.rotation
+        scanner.editBackupStraighten = page.straighten
+        scanner.editBackupCrop = page.crop?.copyOf()
+        scanner.editBackupFilter = page.filter
+        scanner.editBackupAdjust = page.adjust.copy()
+        screen = Screen.ScannerCrop
+    }
+
+    fun scannerCancelEdit() {
+        val page = scanner.pages.firstOrNull { it.id == scanner.editPageId }
+        if (page != null) {
+            page.rotation = scanner.editBackupRotation
+            page.straighten = scanner.editBackupStraighten
+            page.crop = scanner.editBackupCrop
+            page.filter = scanner.editBackupFilter
+            scanner.editBackupAdjust?.let { page.adjust.copyFrom(it) }
+            scannerQueueThumb(page.id)
+        }
+        scanner.editPageId = null
+        screen = Screen.ScannerManager
+    }
+
+    fun scannerAddImageUris(uris: List<Uri>, thenCropFirst: Boolean = false) {
+        if (uris.isEmpty()) return
+        busy = true; busyLabel = "Adding pages…"
+        scope.launch {
+            try {
+                val docId = scannerEnsureDoc()
+                val added = withContext(Dispatchers.IO) {
+                    val ids = mutableListOf<String>()
+                    uris.forEach { uri ->
+                        val pid = UUID.randomUUID().toString().take(8)
+                        val f = ScansStore.pageFile(context, docId, pid)
+                        (context.contentResolver.openInputStream(uri)
+                            ?: throw IllegalStateException("Could not read one image")).use { inp ->
+                            f.outputStream().use { inp.copyTo(it) }
+                        }
+                        ids.add(pid)
+                    }
+                    ids
+                }
+                val sp = scannerPrefs()
+                val autoEnh = sp.getBoolean("scan_auto_enhance", false)
+                val defFilter = sp.getString("scan_default_filter", "original") ?: "original"
+                added.forEach { pid ->
+                    val pg = ScanPageUi(pid)
+                    pg.filter = if (autoEnh) "auto" else defFilter
+                    scanner.pages.add(pg)
+                    scannerQueueThumb(pid)
+                }
+                scannerSaveDocMeta()
+                busy = false; busyLabel = ""
+                // His spec flow: camera capture opens the first new page in Crop & Adjust.
+                if (thenCropFirst && added.isNotEmpty()) scannerStartEdit(added.first())
+                else screen = Screen.ScannerManager
+            } catch (e: Exception) {
+                busy = false; busyLabel = ""
+                snackbar.showSnackbar("Could not add those images: ${e.message ?: "unknown error"}")
+            }
+        }
+    }
+
+    val scannerCamLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) { result ->
+        if (result.resultCode == Activity.RESULT_OK) {
+            val scanResult = GmsDocumentScanningResult.fromActivityResultIntent(result.data)
+            val uris = scanResult?.pages?.mapNotNull { it.imageUri } ?: emptyList()
+            if (uris.isNotEmpty()) scannerAddImageUris(uris, thenCropFirst = true)
+        }
+    }
+
+    fun startScannerCamera() {
+        val activity = context as? Activity ?: return
+        try {
+            // SCANNER_MODE_BASE: Google's own capture flow (edge detection, auto-capture, crop,
+            // rotate, reorder) - the filters and enhancement happen in OUR screens per his spec.
+            val options = GmsDocumentScannerOptions.Builder()
+                .setScannerMode(GmsDocumentScannerOptions.SCANNER_MODE_BASE)
+                .setGalleryImportAllowed(true)
+                .setResultFormats(GmsDocumentScannerOptions.RESULT_FORMAT_JPEG)
+                .setPageLimit(24)
+                .build()
+            GmsDocumentScanning.getClient(options).getStartScanIntent(activity)
+                .addOnSuccessListener { sender ->
+                    scannerCamLauncher.launch(IntentSenderRequest.Builder(sender).build())
+                }
+                .addOnFailureListener { e ->
+                    scope.launch {
+                        snackbar.showSnackbar(
+                            if (e.message?.contains("UNSUPPORTED", ignoreCase = true) == true)
+                                "Camera scanning is not available on this phone. You can still import images or a PDF."
+                            else "Could not open the camera scanner: ${e.message ?: "unknown error"}"
+                        )
+                    }
+                }
+        } catch (e: Exception) {
+            scope.launch { snackbar.showSnackbar("Could not open the camera scanner: ${e.message ?: "unknown error"}") }
+        }
+    }
+
+    val scannerImagePicker = rememberLauncherForActivityResult(ActivityResultContracts.PickMultipleVisualMedia(50)) { uris ->
+        if (uris.isNotEmpty()) {
+            scanner.importReview.clear()
+            scanner.importReview.addAll(uris)
+            screen = Screen.ScannerImportImages
+        }
+    }
+    val scannerImageAddMore = rememberLauncherForActivityResult(ActivityResultContracts.PickMultipleVisualMedia(50)) { uris ->
+        if (uris.isNotEmpty()) scanner.importReview.addAll(uris.filter { it !in scanner.importReview })
+    }
+    val scannerReplacePicker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
+        val pid = scanner.replaceTargetId
+        if (uri != null && pid != null) scannerReplacePage(pid, uri)
+        scanner.replaceTargetId = null
+    }
+
+    fun scannerEnsurePdfThumb(index: Int) {
+        if (scanner.pdfThumbs.containsKey(index)) return
+        val tmp = scanner.pdfTemp ?: return
+        scanner.pdfThumbs[index] = null
+        scope.launch {
+            val bmp = withContext(Dispatchers.IO) {
+                try { ConvertFormats.renderPdfPageFromFile(tmp, index, maxDim = 280) } catch (e: Exception) { null }
+            }
+            scanner.pdfThumbs[index] = bmp?.asImageBitmap()
+        }
+    }
+
+    fun scannerLoadPdf(uri: Uri) {
+        busy = true; busyLabel = "Reading PDF…"
+        scope.launch {
+            try {
+                val (tmp, count, name, sizeBytes) = withContext(Dispatchers.IO) {
+                    val tmp = File.createTempFile("a2z_scan_pdf_", ".pdf", context.cacheDir)
+                    try {
+                        (context.contentResolver.openInputStream(uri)
+                            ?: throw IllegalStateException("Could not open the PDF")).use { input ->
+                            tmp.outputStream().use { input.copyTo(it) }
+                        }
+                        val count = ConvertFormats.pdfPageCountFromFile(tmp)
+                        if (count <= 0) throw IllegalStateException("That PDF has no pages.")
+                        if (count > 200) throw IllegalStateException("That PDF has $count pages - the scanner handles up to 200.")
+                        var nm: String? = null; var sz = -1L
+                        context.contentResolver.query(uri, null, null, null, null)?.use { c ->
+                            val ni = c.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
+                            val si = c.getColumnIndex(android.provider.OpenableColumns.SIZE)
+                            if (c.moveToFirst()) {
+                                if (ni >= 0) nm = c.getString(ni)
+                                if (si >= 0) sz = c.getLong(si)
+                            }
+                        }
+                        PdfPick(tmp, count, nm ?: "Document.pdf", sz)
+                    } catch (e: Exception) { tmp.delete(); throw e }
+                }
+                scanner.pdfTemp?.delete()
+                scanner.pdfTemp = tmp
+                scanner.pdfName = name
+                scanner.pdfSize = sizeBytes
+                scanner.pdfPageCount = count
+                scanner.pdfSelected.clear()
+                scanner.pdfSelected.addAll(0 until count)
+                scanner.pdfThumbs.clear()
+                busy = false; busyLabel = ""
+                screen = Screen.ScannerImportPdf
+            } catch (e: Exception) {
+                busy = false; busyLabel = ""
+                snackbar.showSnackbar("Could not read that PDF: ${e.message ?: "unknown error"}")
+            }
+        }
+    }
+
+    val scannerPdfPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        uri?.let { scannerLoadPdf(it) }
+    }
+
+    fun scannerImportPdfPages() {
+        val tmp = scanner.pdfTemp ?: return
+        val indices = scanner.pdfSelected.sorted()
+        if (indices.isEmpty()) return
+        busy = true
+        scope.launch {
+            try {
+                val docId = scannerEnsureDoc()
+                val added = withContext(Dispatchers.IO) {
+                    val ids = mutableListOf<String>()
+                    indices.forEachIndexed { n, idx ->
+                        busyLabel = "Importing page ${n + 1} of ${indices.size}…"
+                        val bmp = ConvertFormats.renderPdfPageFromFile(tmp, idx, maxDim = 3000, minLongSide = 2048)
+                        val pid = UUID.randomUUID().toString().take(8)
+                        val f = ScansStore.pageFile(context, docId, pid)
+                        f.outputStream().use { bmp.compress(Bitmap.CompressFormat.JPEG, 95, it) }
+                        bmp.recycle()
+                        ids.add(pid)
+                    }
+                    ids
+                }
+                added.forEach { pid -> scanner.pages.add(ScanPageUi(pid)); scannerQueueThumb(pid) }
+                scannerSaveDocMeta()
+                busy = false; busyLabel = ""
+                screen = Screen.ScannerManager
+            } catch (e: OutOfMemoryError) {
+                busy = false; busyLabel = ""
+                snackbar.showSnackbar("This phone ran out of memory. Try fewer pages.")
+            } catch (e: Exception) {
+                busy = false; busyLabel = ""
+                snackbar.showSnackbar("Could not import that PDF: ${e.message ?: "unknown error"}")
+            }
+        }
+    }
+
+    fun scannerDeletePage(pageId: String) {
+        val idx = scanner.pages.indexOfFirst { it.id == pageId }
+        if (idx < 0) return
+        scanner.pages.removeAt(idx)
+        val docId = scanner.docId
+        if (docId != null) scope.launch(Dispatchers.IO) { ScansStore.pageFile(context, docId, pageId).delete() }
+        scannerSaveDocMeta()
+    }
+
+    fun scannerDuplicatePage(pageId: String) {
+        val idx = scanner.pages.indexOfFirst { it.id == pageId }
+        if (idx < 0) return
+        val docId = scanner.docId ?: return
+        val srcPage = scanner.pages[idx]
+        val pid = UUID.randomUUID().toString().take(8)
+        scope.launch {
+            withContext(Dispatchers.IO) {
+                ScansStore.pageFile(context, docId, srcPage.id).copyTo(ScansStore.pageFile(context, docId, pid), overwrite = true)
+            }
+            val copy = ScanPageUi(pid)
+            copy.rotation = srcPage.rotation; copy.filter = srcPage.filter; copy.crop = srcPage.crop?.copyOf(); copy.straighten = srcPage.straighten
+            copy.adjust.copyFrom(srcPage.adjust)
+            scanner.pages.add(idx + 1, copy)
+            scannerQueueThumb(pid)
+            scannerSaveDocMeta()
+        }
+    }
+
+    fun scannerOpenDoc(docId: String, thenExport: Boolean = false) {
+        busy = true; busyLabel = "Opening…"
+        scope.launch {
+            val meta = withContext(Dispatchers.IO) { ScansStore.loadDoc(context, docId) }
+            if (meta == null) {
+                busy = false; busyLabel = ""
+                snackbar.showSnackbar("Could not open that scan.")
+                return@launch
+            }
+            scanner.reset()
+            scanner.docId = meta.id
+            scanner.docName = meta.name
+            scanner.folder = meta.folder
+            scanner.createdAt = meta.createdAt
+            scanner.lastExport = meta.coverExport
+            meta.pages.forEach { pm ->
+                val pg = ScanPageUi(pm.id)
+                pg.rotation = pm.rotation; pg.filter = pm.filter; pg.crop = pm.crop; pg.straighten = pm.straighten
+                pg.adjust.brightness = pm.brightness; pg.adjust.contrast = pm.contrast
+                pg.adjust.highlights = pm.highlights; pg.adjust.shadows = pm.shadows
+                pg.adjust.sharpness = pm.sharpness; pg.adjust.whitening = pm.whitening
+                pg.adjust.shadowReduction = pm.shadowReduction
+                scanner.pages.add(pg)
+                scannerQueueThumb(pm.id)
+            }
+            busy = false; busyLabel = ""
+            screen = if (thenExport) Screen.ScannerExport else Screen.ScannerManager
+        }
+    }
+
     fun resetTextPhoto() {
-        textPhotoBitmap = null
-        textPhotoName = ""
-        textPhotoBytes = -1L
-        textLayers.clear()
-        textSelectedId = null
-        textImageLayers.clear()
-        textImageSelectedId = null
-        textUndo.clear()
-        textFormat = "PNG"
-        textResultBytes = null
-        textSaved = false
-        textEditOpen = false
-        textCropRect = null
-        textCropLabel = ""
-        textCropAdjust = false
-        textCropZoomAbs = 1f
-        textTick++
+        text.textPhotoBitmap = null
+        text.textPhotoName = ""
+        text.textPhotoBytes = -1L
+        text.textLayers.clear()
+        text.textSelectedId = null
+        text.textImageLayers.clear()
+        text.textImageSelectedId = null
+        text.textUndo.clear()
+        text.textFormat = "PNG"
+        text.textResultBytes = null
+        text.textSaved = false
+        text.textEditOpen = false
+        text.textCropRect = null
+        text.textCropLabel = ""
+        text.textCropAdjust = false
+        text.textCropZoomAbs = 1f
+        text.textTick++
     }
 
     /** His v0.16.3 "Add reset button": start over on the SAME photo - clears layers, crop, undo and results. */
     fun resetTextEdits() {
-        textFilterId = "normal"
-        textFrameStyle = "none"
-        textFrameWidth = 8f
-        textFrameColor = 0xFFFFFFFF.toInt()
-        textPerspV = 0f
-        textPerspH = 0f
-        textLayers.clear()
-        textSelectedId = null
-        textImageLayers.clear()
-        textImageSelectedId = null
-        textUndo.clear()
-        textCropRect = null
-        textCropLabel = ""
-        textCropAdjust = false
-        textCropZoomAbs = 1f
-        textResultBytes = null
-        textSaved = false
-        textEditOpen = false
-        textTick++
+        text.textFilterId = "normal"
+        text.textFrameStyle = "none"
+        text.textFrameWidth = 8f
+        text.textFrameColor = 0xFFFFFFFF.toInt()
+        text.textPerspV = 0f
+        text.textPerspH = 0f
+        text.textLayers.clear()
+        text.textSelectedId = null
+        text.textImageLayers.clear()
+        text.textImageSelectedId = null
+        text.textUndo.clear()
+        text.textCropRect = null
+        text.textCropLabel = ""
+        text.textCropAdjust = false
+        text.textCropZoomAbs = 1f
+        text.textResultBytes = null
+        text.textSaved = false
+        text.textEditOpen = false
+        text.textTick++
     }
 
     /** One undo entry per change; gesture drags and typing coalesce into 1-1.5s windows so the stack stays meaningful. */
     fun recordTextUndo(coalesceMs: Long = 0L) {
         val now = System.currentTimeMillis()
-        if (coalesceMs > 0L && now - textLastGestureRecord < coalesceMs) return
-        textLastGestureRecord = now
-        textUndo.record(textLayers.toList())
+        if (coalesceMs > 0L && now - text.textLastGestureRecord < coalesceMs) return
+        text.textLastGestureRecord = now
+        text.textUndo.record(text.textLayers.toList())
     }
 
     /** v0.16.9 (his "Yes all 8" #8): classic meme top/bottom captions on the shared text engine. */
@@ -3188,39 +3849,39 @@ snackbar.showSnackbar("This phone ran out of memory. Try a smaller size or fewer
             l.cy = y
         }
         if (topText.isNotBlank()) {
-            val existing = textLayers.firstOrNull { it.id == memeTopId }
+            val existing = text.textLayers.firstOrNull { it.id == memeTopId }
             if (existing != null) {
                 styleMeme(existing, topText, 0.10f)
             } else {
                 var id = System.currentTimeMillis()
-                while (textLayers.any { it.id == id } || textImageLayers.any { it.id == id }) id++
+                while (text.textLayers.any { it.id == id } || text.textImageLayers.any { it.id == id }) id++
                 val l = TextOverlayUtils.TextLayer(id = id)
                 styleMeme(l, topText, 0.10f)
-                textLayers.add(l)
+                text.textLayers.add(l)
                 memeTopId = id
             }
         }
         if (bottomText.isNotBlank()) {
-            val existing = textLayers.firstOrNull { it.id == memeBottomId }
+            val existing = text.textLayers.firstOrNull { it.id == memeBottomId }
             if (existing != null) {
                 styleMeme(existing, bottomText, 0.90f)
             } else {
                 var id = System.currentTimeMillis() + 1
-                while (textLayers.any { it.id == id } || textImageLayers.any { it.id == id }) id++
+                while (text.textLayers.any { it.id == id } || text.textImageLayers.any { it.id == id }) id++
                 val l = TextOverlayUtils.TextLayer(id = id)
                 styleMeme(l, bottomText, 0.90f)
-                textLayers.add(l)
+                text.textLayers.add(l)
                 memeBottomId = id
             }
         }
-        textResultBytes = null
-        textSaved = false
-        textTick++
+        text.textResultBytes = null
+        text.textSaved = false
+        text.textTick++
     }
 
     /** v0.16.9 (his "Yes all 8" #6): remove the background of the selected image layer, fully on-device. */
     fun removeBgOnSelectedImageLayer() {
-        val layer = textImageLayers.firstOrNull { it.id == textImageSelectedId } ?: return
+        val layer = text.textImageLayers.firstOrNull { it.id == text.textImageSelectedId } ?: return
         scope.launch {
             busy = true
             busyLabel = "Removing background…"
@@ -3247,9 +3908,9 @@ snackbar.showSnackbar("This phone ran out of memory. Try a smaller size or fewer
                 if (outcome.second >= 0.02f) {
                     recordTextUndo()
                     layer.bitmap = outcome.first
-                    textResultBytes = null
-                    textSaved = false
-                    textTick++
+                    text.textResultBytes = null
+                    text.textSaved = false
+                    text.textTick++
                     snackbar.showSnackbar("Background removed - drag the layer to place it.")
                 } else {
                     snackbar.showSnackbar("No clear background found on this image - it works best on one clear subject or a plain background.")
@@ -3264,46 +3925,46 @@ snackbar.showSnackbar("This photo is too big for this phone's memory. Try a smal
         }
     }
 
-    fun selectedTextLayer(): TextOverlayUtils.TextLayer? = textLayers.firstOrNull { it.id == textSelectedId }
+    fun selectedTextLayer(): TextOverlayUtils.TextLayer? = text.textLayers.firstOrNull { it.id == text.textSelectedId }
 
     fun addTextLayer() {
         recordTextUndo()
         val layer = TextOverlayUtils.TextLayer(id = System.currentTimeMillis())
-        textLayers.add(layer)
-        textSelectedId = layer.id
-        textResultBytes = null
-        textSaved = false
-        textTick++
+        text.textLayers.add(layer)
+        text.textSelectedId = layer.id
+        text.textResultBytes = null
+        text.textSaved = false
+        text.textTick++
     }
 
     fun deleteTextLayer(id: Long) {
         recordTextUndo()
-        textLayers.removeAll { it.id == id }
-        if (textSelectedId == id) textSelectedId = textLayers.lastOrNull()?.id
-        textResultBytes = null
-        textSaved = false
-        textTick++
+        text.textLayers.removeAll { it.id == id }
+        if (text.textSelectedId == id) text.textSelectedId = text.textLayers.lastOrNull()?.id
+        text.textResultBytes = null
+        text.textSaved = false
+        text.textTick++
     }
 
     fun moveTextLayer(id: Long, dir: Int) {
-        val i = textLayers.indexOfFirst { it.id == id }
+        val i = text.textLayers.indexOfFirst { it.id == id }
         val j = i + dir
-        if (i < 0 || j !in textLayers.indices) return
+        if (i < 0 || j !in text.textLayers.indices) return
         recordTextUndo()
-        val l = textLayers.removeAt(i)
-        textLayers.add(j, l)
-        textResultBytes = null
-        textSaved = false
-        textTick++
+        val l = text.textLayers.removeAt(i)
+        text.textLayers.add(j, l)
+        text.textResultBytes = null
+        text.textSaved = false
+        text.textTick++
     }
 
     fun mutateSelectedLayer(coalesceMs: Long = 0L, block: (TextOverlayUtils.TextLayer) -> Unit) {
         val layer = selectedTextLayer() ?: return
         recordTextUndo(coalesceMs)
         block(layer)
-        textResultBytes = null
-        textSaved = false
-        textTick++
+        text.textResultBytes = null
+        text.textSaved = false
+        text.textTick++
     }
 
     // ---- Image overlay layers (his v0.16.1 "Add image" spec: a logo/sticker photo ON TOP of the
@@ -3321,12 +3982,12 @@ snackbar.showSnackbar("This photo is too big for this phone's memory. Try a smal
                     Bitmap.createScaledBitmap(loaded, (loaded.width * fct).roundToInt(), (loaded.height * fct).roundToInt(), true)
                 } else loaded
                 val layer = TextOverlayUtils.ImageLayer(System.currentTimeMillis() + 1L, capped, cx = 0.5f, cy = 0.4f)
-                textImageLayers.add(layer)
-                textImageSelectedId = layer.id
-                textSelectedId = null
-                textResultBytes = null
-                textSaved = false
-                textTick++
+                text.textImageLayers.add(layer)
+                text.textImageSelectedId = layer.id
+                text.textSelectedId = null
+                text.textResultBytes = null
+                text.textSaved = false
+                text.textTick++
                         } catch (e: OutOfMemoryError) {
 snackbar.showSnackbar("This phone ran out of memory. Try a smaller size or fewer pages.")
                 } catch (e: Exception) {
@@ -3341,101 +4002,101 @@ snackbar.showSnackbar("This phone ran out of memory. Try a smaller size or fewer
         }
     }
 
-    fun selectedImageLayer(): TextOverlayUtils.ImageLayer? = textImageLayers.firstOrNull { it.id == textImageSelectedId }
+    fun selectedImageLayer(): TextOverlayUtils.ImageLayer? = text.textImageLayers.firstOrNull { it.id == text.textImageSelectedId }
 
     fun mutateSelectedImageLayer(block: (TextOverlayUtils.ImageLayer) -> Unit) {
         val layer = selectedImageLayer() ?: return
         block(layer)
-        textResultBytes = null
-        textSaved = false
-        textTick++
+        text.textResultBytes = null
+        text.textSaved = false
+        text.textTick++
     }
 
     fun deleteImageLayer(id: Long) {
-        textImageLayers.removeAll { it.id == id }
-        if (textImageSelectedId == id) textImageSelectedId = null
-        textResultBytes = null
-        textSaved = false
-        textTick++
+        text.textImageLayers.removeAll { it.id == id }
+        if (text.textImageSelectedId == id) text.textImageSelectedId = null
+        text.textResultBytes = null
+        text.textSaved = false
+        text.textTick++
     }
 
     fun moveImageLayer(id: Long, dir: Int) {
-        val i = textImageLayers.indexOfFirst { it.id == id }
+        val i = text.textImageLayers.indexOfFirst { it.id == id }
         val j = i + dir
-        if (i < 0 || j !in textImageLayers.indices) return
-        val l = textImageLayers.removeAt(i)
-        textImageLayers.add(j, l)
-        textResultBytes = null
-        textSaved = false
-        textTick++
+        if (i < 0 || j !in text.textImageLayers.indices) return
+        val l = text.textImageLayers.removeAt(i)
+        text.textImageLayers.add(j, l)
+        text.textResultBytes = null
+        text.textSaved = false
+        text.textTick++
     }
 
     fun undoTextLayers() {
-        textUndo.undo(textLayers.toList())?.let { snap ->
-            textLayers.clear()
-            textLayers.addAll(snap)
-            if (textLayers.none { it.id == textSelectedId }) textSelectedId = textLayers.lastOrNull()?.id
+        text.textUndo.undo(text.textLayers.toList())?.let { snap ->
+            text.textLayers.clear()
+            text.textLayers.addAll(snap)
+            if (text.textLayers.none { it.id == text.textSelectedId }) text.textSelectedId = text.textLayers.lastOrNull()?.id
         }
-        textResultBytes = null
-        textSaved = false
-        textTick++
+        text.textResultBytes = null
+        text.textSaved = false
+        text.textTick++
     }
 
     fun redoTextLayers() {
-        textUndo.redo(textLayers.toList())?.let { snap ->
-            textLayers.clear()
-            textLayers.addAll(snap)
-            if (textLayers.none { it.id == textSelectedId }) textSelectedId = textLayers.lastOrNull()?.id
+        text.textUndo.redo(text.textLayers.toList())?.let { snap ->
+            text.textLayers.clear()
+            text.textLayers.addAll(snap)
+            if (text.textLayers.none { it.id == text.textSelectedId }) text.textSelectedId = text.textLayers.lastOrNull()?.id
         }
-        textResultBytes = null
-        textSaved = false
-        textTick++
+        text.textResultBytes = null
+        text.textSaved = false
+        text.textTick++
     }
 
     /** Canvas size in effect: the crop when one is set, else the whole photo. */
     fun textEffectiveSize(): IntArray {
-        val bmp = textPhotoBitmap ?: return intArrayOf(0, 0)
-        val r = textCropRect ?: return intArrayOf(bmp.width, bmp.height)
+        val bmp = text.textPhotoBitmap ?: return intArrayOf(0, 0)
+        val r = text.textCropRect ?: return intArrayOf(bmp.width, bmp.height)
         return TextOverlayUtils.cropPixelSize(bmp.width, bmp.height, r)
     }
 
     fun setTextCrop(label: String, rw: Int, rh: Int) {
-        val bmp = textPhotoBitmap ?: return
-        textCropRect = TextOverlayUtils.maxCropForRatio(bmp.width, bmp.height, rw, rh)
-        textCropLabel = "$label $rw:$rh"
-        textCropAdjust = true
-        textCropZoomAbs = 1f
-        textResultBytes = null
-        textSaved = false
-        textTick++
+        val bmp = text.textPhotoBitmap ?: return
+        text.textCropRect = TextOverlayUtils.maxCropForRatio(bmp.width, bmp.height, rw, rh)
+        text.textCropLabel = "$label $rw:$rh"
+        text.textCropAdjust = true
+        text.textCropZoomAbs = 1f
+        text.textResultBytes = null
+        text.textSaved = false
+        text.textTick++
     }
 
     fun clearTextCrop() {
-        textCropRect = null
-        textCropLabel = ""
-        textCropAdjust = false
-        textCropZoomAbs = 1f
-        textResultBytes = null
-        textSaved = false
-        textTick++
+        text.textCropRect = null
+        text.textCropLabel = ""
+        text.textCropAdjust = false
+        text.textCropZoomAbs = 1f
+        text.textResultBytes = null
+        text.textSaved = false
+        text.textTick++
     }
 
     /** Drag the crop frame; deltas are photo-space fractions. Moves freely, clamped at the photo edges - no snapping. */
     fun nudgeTextCrop(dxFrac: Float, dyFrac: Float) {
-        val r = textCropRect ?: return
-        textCropRect = com.learnifyzone.pixelcraft.image.CropMath.move(r, dxFrac, dyFrac)
-        textResultBytes = null
-        textSaved = false
-        textTick++
+        val r = text.textCropRect ?: return
+        text.textCropRect = com.learnifyzone.pixelcraft.image.CropMath.move(r, dxFrac, dyFrac)
+        text.textResultBytes = null
+        text.textSaved = false
+        text.textTick++
     }
 
     /** Pinch-zoom the crop frame around its centre (his Position interaction, like Social Media Sizes). */
     fun zoomTextCrop(zoom: Float) {
-        val r = textCropRect ?: return
-        textCropRect = TextOverlayUtils.zoomCrop(r, zoom)
-        textResultBytes = null
-        textSaved = false
-        textTick++
+        val r = text.textCropRect ?: return
+        text.textCropRect = TextOverlayUtils.zoomCrop(r, zoom)
+        text.textResultBytes = null
+        text.textSaved = false
+        text.textTick++
     }
 
     /**
@@ -3444,41 +4105,41 @@ snackbar.showSnackbar("This phone ran out of memory. Try a smaller size or fewer
      * zoom around the frame's CURRENT centre, so a pan is never lost when the slider moves.
      */
     fun setTextCropZoomAbs(newZoom: Float) {
-        val old = textCropZoomAbs
+        val old = text.textCropZoomAbs
         val z = newZoom.coerceIn(1f, 5f)
-        val r = textCropRect
-        if (r == null || kotlin.math.abs(z - old) < 0.0001f) { textCropZoomAbs = z; return }
-        textCropRect = TextOverlayUtils.zoomCrop(r, z / old)
-        textCropZoomAbs = z
-        textResultBytes = null
-        textSaved = false
-        textTick++
+        val r = text.textCropRect
+        if (r == null || kotlin.math.abs(z - old) < 0.0001f) { text.textCropZoomAbs = z; return }
+        text.textCropRect = TextOverlayUtils.zoomCrop(r, z / old)
+        text.textCropZoomAbs = z
+        text.textResultBytes = null
+        text.textSaved = false
+        text.textTick++
     }
 
     /** Pinch in Position mode: same absolute model, so the slider follows the fingers. */
     fun pinchTextCropZoom(factor: Float) {
-        val old = textCropZoomAbs
+        val old = text.textCropZoomAbs
         val newAbs = (old * factor).coerceIn(1f, 5f)
         if (kotlin.math.abs(newAbs - old) > 0.0001f) {
             zoomTextCrop(newAbs / old)
-            textCropZoomAbs = newAbs
+            text.textCropZoomAbs = newAbs
         }
     }
 
     /** v0.16.7 eyedropper (his approved idea): sample the photo colour at an effective-canvas point and apply it to the selected text layer. */
     fun pickColourAt(xEff: Float, yEff: Float, target: String): Boolean {
-        val bmp = textPhotoBitmap ?: return false
+        val bmp = text.textPhotoBitmap ?: return false
         val layer = selectedTextLayer() ?: return false
-        val r = textCropRect
+        val r = text.textCropRect
         val px = ((r?.get(0) ?: 0f) * bmp.width + xEff).toInt()
         val py = ((r?.get(1) ?: 0f) * bmp.height + yEff).toInt()
         if (px !in 0 until bmp.width || py !in 0 until bmp.height) return false
         recordTextUndo()
         val c = bmp.getPixel(px, py)
         if (target == "background") layer.bgColorArgb = c else layer.colorArgb = c
-        textResultBytes = null
-        textSaved = false
-        textTick++
+        text.textResultBytes = null
+        text.textSaved = false
+        text.textTick++
         return true
     }
 
@@ -3490,9 +4151,9 @@ snackbar.showSnackbar("This phone ran out of memory. Try a smaller size or fewer
         recordTextUndo()
         t?.let { it.flipH = !it.flipH }
         im?.let { it.flipH = !it.flipH }
-        textResultBytes = null
-        textSaved = false
-        textTick++
+        text.textResultBytes = null
+        text.textSaved = false
+        text.textTick++
     }
 
     /** v0.16.7: duplicate the selected layer with a small offset - one tap. */
@@ -3501,40 +4162,40 @@ snackbar.showSnackbar("This phone ran out of memory. Try a smaller size or fewer
         if (t != null) {
             recordTextUndo()
             var newId = System.currentTimeMillis()
-            while (textLayers.any { it.id == newId } || textImageLayers.any { it.id == newId }) newId++
+            while (text.textLayers.any { it.id == newId } || text.textImageLayers.any { it.id == newId }) newId++
             val c = t.copy(id = newId, cx = (t.cx + 0.05f).coerceAtMost(0.95f), cy = (t.cy + 0.05f).coerceAtMost(0.95f))
-            textLayers.add(c)
-            textSelectedId = c.id
-            textImageSelectedId = null
+            text.textLayers.add(c)
+            text.textSelectedId = c.id
+            text.textImageSelectedId = null
         } else {
             val im = selectedImageLayer() ?: return
             var newId = System.currentTimeMillis()
-            while (textLayers.any { it.id == newId } || textImageLayers.any { it.id == newId }) newId++
+            while (text.textLayers.any { it.id == newId } || text.textImageLayers.any { it.id == newId }) newId++
             val c = TextOverlayUtils.ImageLayer(newId, im.bitmap, (im.cx + 0.05f).coerceAtMost(0.95f), (im.cy + 0.05f).coerceAtMost(0.95f), im.widthFrac, im.rotation, im.opacity)
             c.flipH = im.flipH
-            textImageLayers.add(c)
-            textImageSelectedId = c.id
-            textSelectedId = null
+            text.textImageLayers.add(c)
+            text.textImageSelectedId = c.id
+            text.textSelectedId = null
         }
-        textResultBytes = null
-        textSaved = false
-        textTick++
+        text.textResultBytes = null
+        text.textSaved = false
+        text.textTick++
     }
 
     /** v0.16.8: emoji from the Stickers tab - added as an editable text layer (resize/rotate/effects all work). */
     fun addEmojiTextLayer(emoji: String) {
         recordTextUndo()
         var newId = System.currentTimeMillis()
-        while (textLayers.any { it.id == newId } || textImageLayers.any { it.id == newId }) newId++
+        while (text.textLayers.any { it.id == newId } || text.textImageLayers.any { it.id == newId }) newId++
         val layer = TextOverlayUtils.TextLayer(id = newId)
         layer.text = emoji
         layer.sizeFrac = 0.16f
-        textLayers.add(layer)
-        textSelectedId = layer.id
-        textImageSelectedId = null
-        textResultBytes = null
-        textSaved = false
-        textTick++
+        text.textLayers.add(layer)
+        text.textSelectedId = layer.id
+        text.textImageSelectedId = null
+        text.textResultBytes = null
+        text.textSaved = false
+        text.textTick++
     }
 
     /** v0.16.8: drawn shape sticker (heart/star/arrow/burst) - added as an image layer under the text. */
@@ -3542,20 +4203,20 @@ snackbar.showSnackbar("This phone ran out of memory. Try a smaller size or fewer
         recordTextUndo()
         val bmp = TextOverlayUtils.makeStickerBitmap(kind, 512, colorArgb)
         var newId = System.currentTimeMillis()
-        while (textLayers.any { it.id == newId } || textImageLayers.any { it.id == newId }) newId++
+        while (text.textLayers.any { it.id == newId } || text.textImageLayers.any { it.id == newId }) newId++
         val layer = TextOverlayUtils.ImageLayer(newId, bmp, cx = 0.5f, cy = 0.4f, widthFrac = 0.3f)
-        textImageLayers.add(layer)
-        textImageSelectedId = layer.id
-        textSelectedId = null
-        textResultBytes = null
-        textSaved = false
-        textTick++
+        text.textImageLayers.add(layer)
+        text.textImageSelectedId = layer.id
+        text.textSelectedId = null
+        text.textResultBytes = null
+        text.textSaved = false
+        text.textTick++
     }
 
     fun refreshTextStylePresets() {
         scope.launch(Dispatchers.IO) {
             val list = TextStylePresetsStore.load(context)
-            withContext(Dispatchers.Main) { textStylePresets = list }
+            withContext(Dispatchers.Main) { text.textStylePresets = list }
         }
     }
 
@@ -3579,9 +4240,9 @@ snackbar.showSnackbar("This phone ran out of memory. Try a smaller size or fewer
         layer.arcSweep = p.arcSweep
         layer.letterSpacing = p.letterSpacing
         layer.lineSpacing = p.lineSpacing
-        textResultBytes = null
-        textSaved = false
-        textTick++
+        text.textResultBytes = null
+        text.textSaved = false
+        text.textTick++
     }
 
     fun saveTextStylePreset(name: String) {
@@ -3608,16 +4269,16 @@ snackbar.showSnackbar("This phone ran out of memory. Try a smaller size or fewer
             busyLabel = "Loading photo…"
             try {
                 val loaded = withContext(Dispatchers.IO) { decodeOrientedBitmap(context, uri) }
-                textPhotoBitmap = loaded
-                textPhotoName = queryDisplayName(context, uri) ?: "image"
-                textPhotoBytes = querySourceSize(context, uri)
-                textResultBytes = null
-                textSaved = false
+                text.textPhotoBitmap = loaded
+                text.textPhotoName = queryDisplayName(context, uri) ?: "image"
+                text.textPhotoBytes = querySourceSize(context, uri)
+                text.textResultBytes = null
+                text.textSaved = false
                 // His v0.16.2 rule: the photo opens CLEAN - no default "Your text" layer.
                 // A text layer appears only when he taps + Text (or a saved style needs one).
                 refreshTextStylePresets()
-                pendingTextStyle?.let { p -> pendingTextStyle = null; applyTextStylePreset(p) }
-                textTick++
+                text.pendingTextStyle?.let { p -> text.pendingTextStyle = null; applyTextStylePreset(p) }
+                text.textTick++
                         } catch (e: OutOfMemoryError) {
 snackbar.showSnackbar("This phone ran out of memory. Try a smaller size or fewer pages.")
                 } catch (e: Exception) {
@@ -3644,12 +4305,12 @@ snackbar.showSnackbar("This phone ran out of memory. Try a smaller size or fewer
             if (act.intent.getStringExtra("pixelcraft.test.textlayer") == "1") {
                 addTextLayer()
                 selectedTextLayer()?.text = "Hello"
-                textTick++
+                text.textTick++
             }
             act.intent.getStringExtra("pixelcraft.test.overlay")?.let { addTextImageLayer(Uri.fromFile(File(it))) }
             // v0.16.10: simulate one tap on the already-selected layer (Robolectric cannot drive the
             // canvas detectTapGestures reliably) - runs the same state change as onSelectImageLayer.
-            if (act.intent.getStringExtra("pixelcraft.test.seltap") == "1") { textSelTick++ }
+            if (act.intent.getStringExtra("pixelcraft.test.seltap") == "1") { text.textSelTick++ }
             // v0.16.9: deterministic meme content for UI tests ("top|bottom") - Robolectric
             // semantics clicks deliver stale field text to the Apply button (documented in tests).
             act.intent.getStringExtra("pixelcraft.test.memetext")?.let { spec ->
@@ -3705,8 +4366,8 @@ snackbar.showSnackbar("This phone ran out of memory. Try a smaller size or fewer
     fun textLayerAt(xEff: Float, yEff: Float): TextOverlayUtils.TextLayer? {
         val eff = textEffectiveSize()
         if (eff[0] == 0) return null
-        for (i in textLayers.indices.reversed()) {
-            val l = textLayers[i]
+        for (i in text.textLayers.indices.reversed()) {
+            val l = text.textLayers[i]
             val b = TextOverlayUtils.measure(l, eff[0])
             val pad = b.textSize * 0.5f
             val halfW: Float
@@ -3729,14 +4390,14 @@ snackbar.showSnackbar("This phone ran out of memory. Try a smaller size or fewer
     }
 
     fun processTextPhoto() {
-        val bmp = textPhotoBitmap ?: return
+        val bmp = text.textPhotoBitmap ?: return
         scope.launch {
             busy = true
             busyLabel = "Processing…"
             try {
                 val eff = textEffectiveSize()
                 val bytes = withContext(Dispatchers.IO) {
-                    val crop = textCropRect
+                    val crop = text.textCropRect
                     val source = if (crop == null) bmp else Bitmap.createBitmap(
                         bmp,
                         (crop[0] * bmp.width).toInt().coerceIn(0, bmp.width - 16),
@@ -3744,25 +4405,25 @@ snackbar.showSnackbar("This phone ran out of memory. Try a smaller size or fewer
                         eff[0].coerceAtMost(bmp.width - (crop[0] * bmp.width).toInt().coerceIn(0, bmp.width - 16)),
                         eff[1].coerceAtMost(bmp.height - (crop[1] * bmp.height).toInt().coerceIn(0, bmp.height - 16))
                     )
-                    val filtered = if (textFilterId == "normal") source else FilterUtils.applyFilter(source, textFilterId)
+                    val filtered = if (text.textFilterId == "normal") source else FilterUtils.applyFilter(source, text.textFilterId)
                     val out = TextOverlayUtils.renderToBitmap(
-                        filtered, textLayers.toList(), textImageLayers.toList(),
-                        frameStyle = TextOverlayUtils.FrameStyle.fromId(textFrameStyle),
-                        frameWidthPx = textFrameWidth * minOf(filtered.width, filtered.height) / 400f,
-                        frameColor = textFrameColor,
-                        perspV = textPerspV, perspH = textPerspH
+                        filtered, text.textLayers.toList(), text.textImageLayers.toList(),
+                        frameStyle = TextOverlayUtils.FrameStyle.fromId(text.textFrameStyle),
+                        frameWidthPx = text.textFrameWidth * minOf(filtered.width, filtered.height) / 400f,
+                        frameColor = text.textFrameColor,
+                        perspV = text.textPerspV, perspH = text.textPerspH
                     )
                     val baos = java.io.ByteArrayOutputStream()
-                    if (textFormat == "PNG") out.compress(Bitmap.CompressFormat.PNG, 100, baos)
+                    if (text.textFormat == "PNG") out.compress(Bitmap.CompressFormat.PNG, 100, baos)
                     else out.compress(Bitmap.CompressFormat.JPEG, 95, baos)
                     out.recycle()
                     if (filtered !== source) filtered.recycle()
                     if (source !== bmp) source.recycle()
                     baos.toByteArray()
                 }
-                textResultBytes = bytes
-                textResultDims = "${eff[0]} × ${eff[1]} px"
-                textSaved = false
+                text.textResultBytes = bytes
+                text.textResultDims = "${eff[0]} × ${eff[1]} px"
+                text.textSaved = false
                         } catch (e: OutOfMemoryError) {
 snackbar.showSnackbar("This phone ran out of memory. Try a smaller size or fewer pages.")
                 } catch (e: Exception) {
@@ -3774,16 +4435,16 @@ snackbar.showSnackbar("This phone ran out of memory. Try a smaller size or fewer
     }
 
     fun saveTextPhoto() {
-        val bytes = textResultBytes ?: return
+        val bytes = text.textResultBytes ?: return
         scope.launch {
             busy = true
             busyLabel = "Saving…"
             try {
-                val ext = if (textFormat == "PNG") "png" else "jpg"
-                val mime = if (textFormat == "PNG") "image/png" else "image/jpeg"
+                val ext = if (text.textFormat == "PNG") "png" else "jpg"
+                val mime = if (text.textFormat == "PNG") "image/png" else "image/jpeg"
                 val name = "text-on-photo-${System.currentTimeMillis()}.$ext"
                 withContext(Dispatchers.IO) { saveToGallery(context, name, mime, bytes) }
-                textSaved = true
+                text.textSaved = true
                 snackbar.showSnackbar("Saved to your gallery as $name. The original photo is untouched.")
                         } catch (e: OutOfMemoryError) {
 snackbar.showSnackbar("This phone ran out of memory. Try a smaller size or fewer pages.")
@@ -4042,6 +4703,17 @@ snackbar.showSnackbar("This phone ran out of memory. Try a smaller size or fewer
             Screen.PrintHome -> { resetPrint(); screen = Screen.Home }
                                 Screen.TextPhoto -> { resetTextPhoto(); screen = Screen.Home }
             Screen.CompressHome -> { resetCompress(); screen = Screen.Home }
+            Screen.ScannerCrop -> scannerCancelEdit()
+            Screen.ScannerPreview -> screen = Screen.ScannerManager
+            Screen.ScannerExport -> screen = Screen.ScannerPreview
+            Screen.ScannerSuccess -> screen = Screen.ScannerManager
+            Screen.ScannerSettings -> screen = Screen.ScannerHome
+            Screen.ScannerEnhance -> screen = Screen.ScannerCrop
+            Screen.ScannerImportImages -> screen = Screen.ScannerHome
+            Screen.ScannerImportPdf -> { scanner.clearPdf(); screen = Screen.ScannerHome }
+            Screen.ScannerManager -> { scannerSaveDocMeta(); screen = Screen.ScannerHome }
+            Screen.ScannerMyScans -> screen = Screen.ScannerHome
+            Screen.ScannerHome -> { resetScanner(); screen = Screen.Home }
             else -> screen = Screen.Home
         }
     }
@@ -4054,52 +4726,329 @@ snackbar.showSnackbar("This phone ran out of memory. Try a smaller size or fewer
     BackHandler(enabled = drawerOpen) { drawerOpen = false }
 
 
+    val scannerActions = ScannerRootActions().apply {
+        resetScanner = { resetScanner() }
+        startScannerCamera = { startScannerCamera() }
+        refreshScanDocs = { refreshScanDocs() }
+        scannerSaveDocMeta = { scannerSaveDocMeta() }
+        scannerCheckBlanks = { scannerCheckBlanks() }
+        scannerImportPdfPages = { scannerImportPdfPages() }
+        scannerCancelEdit = { scannerCancelEdit() }
+        scannerExport = { scannerExport() }
+        scannerClearTemp = { scannerClearTemp() }
+        scannerStorageBytes = { scannerStorageBytes() }
+        scannerPrefs = { scannerPrefs() }
+        scannerOpenDoc = { scannerOpenDoc(it) }
+        scannerDeleteDoc = { scannerDeleteDoc(it) }
+        scannerShareDoc = { scannerShareDoc(it) }
+        scannerQueueDocThumb = { scannerQueueDocThumb(it) }
+        scannerQueueThumb = { scannerQueueThumb(it) }
+        scannerStartEdit = { scannerStartEdit(it) }
+        scannerDeletePage = { scannerDeletePage(it) }
+        scannerDuplicatePage = { scannerDuplicatePage(it) }
+        scannerRotatePage = { scannerRotatePage(it) }
+        scannerRenameDoc = { scannerRenameDoc(it) }
+        scannerDeletePages = { scannerDeletePages(it) }
+        scannerMovePage = { pid, d -> scannerMovePage(pid, d) }
+        scannerRenameDocById = { id, n -> scannerRenameDocById(id, n) }
+        scannerAddImageUris = { scannerAddImageUris(it) }
+        scannerEnsurePdfThumb = { scannerEnsurePdfThumb(it) }
+        pickImages = { scannerImagePicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) }
+        pickAddMore = { scannerImageAddMore.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) }
+        pickReplace = { scannerReplacePicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) }
+        pickPdf = { scannerPdfPicker.launch(arrayOf("application/pdf")) }
+        scannerMoveDocToFolder = { id, f -> scannerMoveDocToFolder(id, f) }
+        scannerRenameFolder = { o, n -> scannerRenameFolder(o, n) }
+        scannerDeleteFolder = { scannerDeleteFolder(it) }
+        scannerExportAgain = { scannerOpenDoc(it, thenExport = true) }
+    }
+    @Composable
+    fun RenderScanner(modifier: Modifier, a: ScannerRootActions) {
+        when (screen) {
+            Screen.ScannerHome -> ScannerHomeScreen(
+                modifier = modifier,
+                docs = scanner.docList,
+                docThumbs = scanner.docThumbs,
+                onBack = { a.resetScanner(); screen = Screen.Home },
+                onCamera = { a.startScannerCamera() },
+                onImportImages = { a.pickImages() },
+                onImportPdf = { a.pickPdf() },
+                onMyScans = { a.refreshScanDocs(); screen = Screen.ScannerMyScans },
+                onOpenDoc = { a.scannerOpenDoc(it) },
+                onDocThumbNeeded = { a.scannerQueueDocThumb(it) },
+                onSettings = { screen = Screen.ScannerSettings }
+            )
+            Screen.ScannerImportImages -> ScannerImportImagesScreen(
+                modifier = modifier,
+                uris = scanner.importReview,
+                onBack = { screen = Screen.ScannerHome },
+                onRemove = { scanner.importReview.remove(it) },
+                onAddMore = { a.pickAddMore() },
+                onCancel = { scanner.importReview.clear(); screen = Screen.ScannerHome },
+                onContinue = { a.scannerAddImageUris(scanner.importReview.toList()); scanner.importReview.clear() }
+            )
+            Screen.ScannerImportPdf -> ScannerImportPdfScreen(
+                modifier = modifier,
+                name = scanner.pdfName,
+                sizeBytes = scanner.pdfSize,
+                pageCount = scanner.pdfPageCount,
+                selected = scanner.pdfSelected,
+                thumbs = scanner.pdfThumbs,
+                onThumbNeeded = { a.scannerEnsurePdfThumb(it) },
+                onToggle = { idx -> if (scanner.pdfSelected.contains(idx)) scanner.pdfSelected.remove(idx) else scanner.pdfSelected.add(idx) },
+                onSelectAll = { scanner.pdfSelected.clear(); scanner.pdfSelected.addAll(0 until scanner.pdfPageCount) },
+                onDeselectAll = { scanner.pdfSelected.clear() },
+                onCancel = { scanner.clearPdf(); screen = Screen.ScannerHome },
+                onImport = { a.scannerImportPdfPages() }
+            )
+            Screen.ScannerManager -> ScannerManagerScreen(
+                modifier = modifier,
+                docName = scanner.docName,
+                pages = scanner.pages,
+                selecting = scanner.selecting,
+                selectedPages = scanner.selectedPages,
+                onBack = { a.scannerSaveDocMeta(); screen = Screen.ScannerHome },
+                onEdit = { a.scannerStartEdit(it) },
+                onDelete = { a.scannerDeletePage(it) },
+                onDuplicate = { a.scannerDuplicatePage(it) },
+                onRotate = { a.scannerRotatePage(it) },
+                onReplace = { pid -> scanner.replaceTargetId = pid; a.pickReplace() },
+                onMove = { pid, d -> a.scannerMovePage(pid, d) },
+                onToggleSelect = { pid -> if (scanner.selectedPages.contains(pid)) scanner.selectedPages.remove(pid) else scanner.selectedPages.add(pid) },
+                onSelectAll = { scanner.selectedPages.clear(); scanner.selectedPages.addAll(scanner.pages.map { it.id }) },
+                onDeleteSelected = { a.scannerDeletePages(scanner.selectedPages.toList()) },
+                onRotateSelected = { scanner.selectedPages.toList().forEach { a.scannerRotatePage(it) }; scanner.selectedPages.clear(); scanner.selecting = false },
+                onSelectingChange = { scanner.selecting = it; if (!it) scanner.selectedPages.clear() },
+                onAddCamera = { a.startScannerCamera() },
+                onAddImages = { a.pickImages() },
+                onAddPdf = { a.pickPdf() },
+                onRename = { a.scannerRenameDoc(it) },
+                onPreview = { a.scannerCheckBlanks(); screen = Screen.ScannerPreview }
+            )
+            Screen.ScannerPreview -> ScannerPreviewScreen(
+                modifier = modifier,
+                docId = scanner.docId ?: "",
+                docName = scanner.docName,
+                pages = scanner.pages,
+                blankFlags = scanner.blankFlags,
+                onBack = { screen = Screen.ScannerManager },
+                onExport = {
+                    val sp = a.scannerPrefs()
+                    if (scanner.exportName.isBlank()) scanner.exportName = scanner.docName
+                    scanner.exportFormat = sp.getString("scan_default_format", "PDF") ?: "PDF"
+                    scanner.exportPageSize = sp.getString("scan_default_pagesize", "A4") ?: "A4"
+                    scanner.exportQuality = sp.getString("scan_default_quality", "High") ?: "High"
+                    screen = Screen.ScannerExport
+                },
+                onShare = { scanner.docId?.let { id -> a.scannerShareDoc(id) } }
+            )
+            Screen.ScannerMyScans -> ScannerMyScansScreen(
+                modifier = modifier,
+                docs = scanner.docList,
+                docThumbs = scanner.docThumbs,
+                query = scanner.myScansQuery,
+                onQuery = { scanner.myScansQuery = it },
+                sort = scanner.myScansSort,
+                onSort = { scanner.myScansSort = it },
+                onBack = { screen = Screen.ScannerHome },
+                onOpen = { a.scannerOpenDoc(it) },
+                onDelete = { a.scannerDeleteDoc(it) },
+                onRename = { id, nm -> a.scannerRenameDocById(id, nm) },
+                onShare = { a.scannerShareDoc(it) },
+                onThumbNeeded = { a.scannerQueueDocThumb(it) },
+                docSizes = scanner.docSizes,
+                folder = scanner.myScansFolder,
+                onFolder = { scanner.myScansFolder = it },
+                onMoveToFolder = { id, f -> a.scannerMoveDocToFolder(id, f) },
+                onRenameFolder = { o, n -> a.scannerRenameFolder(o, n) },
+                onDeleteFolder = { a.scannerDeleteFolder(it) },
+                onExportAgain = { a.scannerExportAgain(it) }
+            )
+            Screen.ScannerSettings -> ScannerSettingsScreen(
+                modifier = modifier,
+                prefs = a.scannerPrefs(),
+                storageBytes = a.scannerStorageBytes(),
+                onClearTemp = { a.scannerClearTemp() },
+                onPrivacy = { a.resetScanner(); screen = Screen.Home; settingsDoc = "privacy" },
+                onAbout = { a.resetScanner(); screen = Screen.Home; settingsDoc = "about" },
+                themeMode = themeMode,
+                onThemeMode = onThemeMode,
+                onBack = { screen = Screen.ScannerHome }
+            )
+            Screen.ScannerCrop -> {
+                val editPage = scanner.pages.firstOrNull { it.id == scanner.editPageId }
+                if (editPage == null || scanner.docId == null) {
+                    LaunchedEffect(Unit) { a.scannerCancelEdit() }
+                } else ScannerCropScreen(
+                    modifier = modifier,
+                    docId = scanner.docId!!,
+                    page = editPage,
+                    onCancel = { a.scannerCancelEdit() },
+                    onApply = { pageId ->
+                        a.scannerQueueThumb(pageId)
+                        a.scannerSaveDocMeta()
+                        screen = Screen.ScannerEnhance
+                    }
+                )
+            }
+            Screen.ScannerEnhance -> {
+                val editPage = scanner.pages.firstOrNull { it.id == scanner.editPageId }
+                if (editPage == null || scanner.docId == null) {
+                    LaunchedEffect(Unit) { a.scannerCancelEdit() }
+                } else ScannerEnhanceScreen(
+                    modifier = modifier,
+                    docId = scanner.docId!!,
+                    page = editPage,
+                    onCancel = { a.scannerCancelEdit() },
+                    onApply = { pageId ->
+                        a.scannerQueueThumb(pageId)
+                        a.scannerSaveDocMeta()
+                        scanner.editPageId = null
+                        screen = Screen.ScannerManager
+                    }
+                )
+            }
+            Screen.ScannerExport -> ScannerExportScreen(
+                modifier = modifier,
+                docName = scanner.docName,
+                pageCount = scanner.pages.size,
+                format = scanner.exportFormat,
+                onFormat = { scanner.exportFormat = it },
+                pageSize = scanner.exportPageSize,
+                onPageSize = { scanner.exportPageSize = it },
+                orientation = scanner.exportOrientation,
+                onOrientation = { scanner.exportOrientation = it },
+                margin = scanner.exportMargin,
+                onMargin = { scanner.exportMargin = it },
+                quality = scanner.exportQuality,
+                onQuality = { scanner.exportQuality = it },
+                jpgQuality = scanner.exportJpgQuality,
+                onJpgQuality = { scanner.exportJpgQuality = it },
+                name = scanner.exportName,
+                onName = { scanner.exportName = it },
+                exporting = scanner.exporting,
+                progress = scanner.exportProgress,
+                total = scanner.exportTotal,
+                onCancelExport = { scanner.exportCancelled = true },
+                onBack = { screen = Screen.ScannerPreview },
+                onExport = { a.scannerExport() },
+                marginMm = scanner.exportMarginMm,
+                onMarginMm = { scanner.exportMarginMm = it },
+                selectedOnly = scanner.exportSelectedOnly,
+                onSelectedOnly = { scanner.exportSelectedOnly = it },
+                pages = scanner.pages,
+                selectedPages = scanner.exportSelectedPages,
+                onTogglePage = { pid -> if (scanner.exportSelectedPages.contains(pid)) scanner.exportSelectedPages.remove(pid) else scanner.exportSelectedPages.add(pid) },
+                jpgWidth = scanner.exportJpgWidth,
+                onJpgWidth = { scanner.exportJpgWidth = it },
+                jpgEstimate = scanner.jpgEstimate,
+                onEstimateJpg = { q, w ->
+                    scope.launch {
+                        scanner.jpgEstimate = ""
+                        val docId = scanner.docId ?: return@launch
+                        val target = scanner.pages.firstOrNull { !scanner.exportSelectedOnly || scanner.exportSelectedPages.contains(it.id) } ?: return@launch
+                        val est = withContext(Dispatchers.IO) {
+                            val bmp = renderScanPageBitmap(context, docId, target, 1500) ?: return@withContext null
+                            val tw = w.trim().toIntOrNull()
+                            val enc = if (tw != null && tw >= 16 && tw < bmp.width) Bitmap.createScaledBitmap(bmp, tw, (bmp.height * (tw.toFloat() / bmp.width)).roundToInt().coerceAtLeast(1), true) else bmp
+                            val bytes = ConvertFormats.encode(enc, ConvertFormats.byId("jpg"), q.toInt().coerceIn(1, 100), android.graphics.Color.WHITE)
+                            if (enc !== bmp) enc.recycle(); bmp.recycle()
+                            bytes.size.toLong()
+                        }
+                        if (est != null) {
+                            val n = if (scanner.exportSelectedOnly) scanner.exportSelectedPages.size else scanner.pages.size
+                            scanner.jpgEstimate = "Estimated total: about " + formatBytes(est * n) + " for " + n + " page" + (if (n == 1) "" else "s") + " (approximate - exact sizes show after export)."
+                        }
+                    }
+                }
+            )
+            Screen.ScannerSuccess -> ScannerSuccessScreen(
+                modifier = modifier,
+                name = scanner.successName,
+                format = scanner.successFormat,
+                pages = scanner.successPages,
+                size = scanner.successSize,
+                onOpen = {
+                    val f = scanner.successShareFile
+                    if (f != null && f.exists()) {
+                        try {
+                            val uri = FileProvider.getUriForFile(context, context.packageName + ".fileprovider", f)
+                            val mime = when (scanner.successFormat) { "PDF" -> "application/pdf"; "PNG" -> "image/png"; else -> "image/jpeg" }
+                            context.startActivity(Intent(Intent.ACTION_VIEW).apply {
+                                setDataAndType(uri, mime)
+                                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                            })
+                        } catch (e: Exception) {
+                            scope.launch { snackbar.showSnackbar("No app on this phone can open that file. It is saved in your Downloads or gallery.") }
+                        }
+                    }
+                },
+                onShare = {
+                    val f = scanner.successShareFile
+                    if (f != null && f.exists()) {
+                        val uri = FileProvider.getUriForFile(context, context.packageName + ".fileprovider", f)
+                        val mime = when (scanner.successFormat) { "PDF" -> "application/pdf"; "PNG" -> "image/png"; else -> "image/jpeg" }
+                        val intent = Intent(Intent.ACTION_SEND).apply {
+                            type = mime
+                            putExtra(Intent.EXTRA_STREAM, uri)
+                            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                        }
+                        context.startActivity(Intent.createChooser(intent, "Share document"))
+                    }
+                },
+                onMyScans = { a.refreshScanDocs(); screen = Screen.ScannerMyScans }
+            )
+            // Stage 5 (Scanner Settings) is wired in its build stage; nothing navigates to it yet.
+            else -> {}
+        }
+    }
+
     @Composable
     fun RenderTextPhoto(modifier: Modifier) {
         TextOnPhotoScreen(
             modifier = modifier,
-                bitmap = textPhotoBitmap,
-                name = textPhotoName,
-                sizeBytes = textPhotoBytes,
-                layers = textLayers,
-                tick = textTick,
-                selTick = textSelTick,
-                selectedId = textSelectedId,
-                canUndo = textUndo.canUndo,
-                canRedo = textUndo.canRedo,
-                format = textFormat,
-                resultBytes = textResultBytes,
-                resultDims = textResultDims,
-                saved = textSaved,
-                editOpen = textEditOpen,
+                bitmap = text.textPhotoBitmap,
+                name = text.textPhotoName,
+                sizeBytes = text.textPhotoBytes,
+                layers = text.textLayers,
+                tick = text.textTick,
+                selTick = text.textSelTick,
+                selectedId = text.textSelectedId,
+                canUndo = text.textUndo.canUndo,
+                canRedo = text.textUndo.canRedo,
+                format = text.textFormat,
+                resultBytes = text.textResultBytes,
+                resultDims = text.textResultDims,
+                saved = text.textSaved,
+                editOpen = text.textEditOpen,
                 busy = busy,
                 onSelectPhoto = { textPhotoPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
                 onResetEdits = { resetTextEdits() },
-                filterId = textFilterId,
-                onFilter = { id -> textFilterId = id; textResultBytes = null; textSaved = false; textTick++ },
-                frameStyle = textFrameStyle,
-                frameWidth = textFrameWidth,
-                frameColor = textFrameColor,
-                perspV = textPerspV,
-                perspH = textPerspH,
-                onFrameStyle = { id -> textFrameStyle = id; textResultBytes = null; textSaved = false; textTick++ },
-                onFrameWidth = { v -> textFrameWidth = v; textResultBytes = null; textSaved = false; textTick++ },
-                onFrameColor = { c -> textFrameColor = c; textResultBytes = null; textSaved = false; textTick++ },
-                onPerspV = { v -> textPerspV = v; textResultBytes = null; textSaved = false; textTick++ },
-                onPerspH = { v -> textPerspH = v; textResultBytes = null; textSaved = false; textTick++ },
-                onResetPerspective = { textPerspV = 0f; textPerspH = 0f; textResultBytes = null; textSaved = false; textTick++ },
-                onSelectLayer = { textSelectedId = it; textImageSelectedId = null; textTick++; textSelTick++ },
-                onAddLayer = { textImageSelectedId = null; addTextLayer() },
+                filterId = text.textFilterId,
+                onFilter = { id -> text.textFilterId = id; text.textResultBytes = null; text.textSaved = false; text.textTick++ },
+                frameStyle = text.textFrameStyle,
+                frameWidth = text.textFrameWidth,
+                frameColor = text.textFrameColor,
+                perspV = text.textPerspV,
+                perspH = text.textPerspH,
+                onFrameStyle = { id -> text.textFrameStyle = id; text.textResultBytes = null; text.textSaved = false; text.textTick++ },
+                onFrameWidth = { v -> text.textFrameWidth = v; text.textResultBytes = null; text.textSaved = false; text.textTick++ },
+                onFrameColor = { c -> text.textFrameColor = c; text.textResultBytes = null; text.textSaved = false; text.textTick++ },
+                onPerspV = { v -> text.textPerspV = v; text.textResultBytes = null; text.textSaved = false; text.textTick++ },
+                onPerspH = { v -> text.textPerspH = v; text.textResultBytes = null; text.textSaved = false; text.textTick++ },
+                onResetPerspective = { text.textPerspV = 0f; text.textPerspH = 0f; text.textResultBytes = null; text.textSaved = false; text.textTick++ },
+                onSelectLayer = { text.textSelectedId = it; text.textImageSelectedId = null; text.textTick++; text.textSelTick++ },
+                onAddLayer = { text.textImageSelectedId = null; addTextLayer() },
                 onDeleteLayer = { deleteTextLayer(it) },
                 onMoveLayer = { id, dir -> moveTextLayer(id, dir) },
                 onMutate = { coalesce, block -> mutateSelectedLayer(coalesce, block) },
-                imageLayers = textImageLayers,
-                selectedImageId = textImageSelectedId,
+                imageLayers = text.textImageLayers,
+                selectedImageId = text.textImageSelectedId,
                 onAddImageLayer = { textImagePicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
-                onSelectImageLayer = { textImageSelectedId = it; textSelectedId = null; textTick++; textSelTick++ },
+                onSelectImageLayer = { text.textImageSelectedId = it; text.textSelectedId = null; text.textTick++; text.textSelTick++ },
                 onMutateImageLayer = { block -> mutateSelectedImageLayer(block) },
                 onTransform = { dx, dy, z, r ->
-                    if (textImageSelectedId != null && selectedImageLayer() != null) {
+                    if (text.textImageSelectedId != null && selectedImageLayer() != null) {
                         mutateSelectedImageLayer { im ->
                             im.cx = (im.cx + dx).coerceIn(0f, 1f)
                             im.cy = (im.cy + dy).coerceIn(0f, 1f)
@@ -4117,12 +5066,12 @@ snackbar.showSnackbar("This phone ran out of memory. Try a smaller size or fewer
                 },
                 onDoubleTapAt = { x, y ->
                     val hit = textLayerAt(x, y)
-                    if (hit != null) { textSelectedId = hit.id; textImageSelectedId = null; textTick++; textEditOpen = true }
+                    if (hit != null) { text.textSelectedId = hit.id; text.textImageSelectedId = null; text.textTick++; text.textEditOpen = true }
                     else {
                         val eff2 = textEffectiveSize()
-                        val im2 = textImageLayers.lastOrNull { TextOverlayUtils.imageLayerHit(it, x, y, eff2[0], eff2[1]) }
-                        if (im2 != null) { textImageSelectedId = im2.id; textSelectedId = null; textTick++ }
-                        else textEditOpen = true
+                        val im2 = text.textImageLayers.lastOrNull { TextOverlayUtils.imageLayerHit(it, x, y, eff2[0], eff2[1]) }
+                        if (im2 != null) { text.textImageSelectedId = im2.id; text.textSelectedId = null; text.textTick++ }
+                        else text.textEditOpen = true
                     }
                 },
                 onDeleteImageLayer = { deleteImageLayer(it) },
@@ -4132,44 +5081,44 @@ snackbar.showSnackbar("This phone ran out of memory. Try a smaller size or fewer
                     // first (textLayerAt walks topmost-first), then image layers (topmost first).
                     // (v0.16.6 briefly had images first - corrected here to match the real draw order.)
                     val hit = textLayerAt(x, y)
-                    if (hit != null) { textSelectedId = hit.id; textImageSelectedId = null; textTick++; textSelTick++ }
+                    if (hit != null) { text.textSelectedId = hit.id; text.textImageSelectedId = null; text.textTick++; text.textSelTick++ }
                     else {
                         val eff = textEffectiveSize()
-                        val im = textImageLayers.lastOrNull { TextOverlayUtils.imageLayerHit(it, x, y, eff[0], eff[1]) }
-                        if (im != null) { textImageSelectedId = im.id; textSelectedId = null; textTick++; textSelTick++ }
+                        val im = text.textImageLayers.lastOrNull { TextOverlayUtils.imageLayerHit(it, x, y, eff[0], eff[1]) }
+                        if (im != null) { text.textImageSelectedId = im.id; text.textSelectedId = null; text.textTick++; text.textSelTick++ }
                     }
                 },
-                onEditOpen = { textEditOpen = it },
+                onEditOpen = { text.textEditOpen = it },
                 onUndo = { undoTextLayers() },
                 onRedo = { redoTextLayers() },
-                onFormat = { textFormat = it; textResultBytes = null; textSaved = false },
+                onFormat = { text.textFormat = it; text.textResultBytes = null; text.textSaved = false },
                 onProcess = { processTextPhoto() },
                 onSave = { saveTextPhoto() },
-                cropRect = textCropRect,
-                cropLabel = textCropLabel,
-                cropAdjust = textCropAdjust,
+                cropRect = text.textCropRect,
+                cropLabel = text.textCropLabel,
+                cropAdjust = text.textCropAdjust,
                 canvasDims = textEffectiveSize().let { "${it[0]} × ${it[1]} px" },
                 onSetCrop = { label, rw, rh -> setTextCrop(label, rw, rh) },
                 onClearCrop = { clearTextCrop() },
                 onCropAdjust = { on ->
-                    textCropZoomAbs = 1f
-                    if (on && textCropRect == null) {
+                    text.textCropZoomAbs = 1f
+                    if (on && text.textCropRect == null) {
                         // His "I want to zoom and crop" - Position must work WITHOUT picking a size first:
                         // start from the full-photo frame; pinch zooms in, drag pans, Done keeps the region.
-                        textCropRect = floatArrayOf(0f, 0f, 1f, 1f)
-                        textCropLabel = "Custom"
+                        text.textCropRect = floatArrayOf(0f, 0f, 1f, 1f)
+                        text.textCropLabel = "Custom"
                     }
-                    if (!on && textCropLabel == "Custom" && textCropRect != null) {
-                        val r = textCropRect!!
+                    if (!on && text.textCropLabel == "Custom" && text.textCropRect != null) {
+                        val r = text.textCropRect!!
                         val untouched = kotlin.math.abs(r[0]) < 0.001f && kotlin.math.abs(r[1]) < 0.001f && kotlin.math.abs(r[2] - 1f) < 0.001f && kotlin.math.abs(r[3] - 1f) < 0.001f
-                        if (untouched) { textCropRect = null; textCropLabel = "" }
+                        if (untouched) { text.textCropRect = null; text.textCropLabel = "" }
                     }
-                    textCropAdjust = on
-                    textTick++
+                    text.textCropAdjust = on
+                    text.textTick++
                 },
                 onCropNudge = { dx, dy -> nudgeTextCrop(dx, dy) },
                 onCropZoom = { z -> pinchTextCropZoom(z) },
-                cropZoomAbs = textCropZoomAbs,
+                cropZoomAbs = text.textCropZoomAbs,
                 onCropZoomAbs = { z -> setTextCropZoomAbs(z) },
                 onPickColourAt = { x, y, t -> pickColourAt(x, y, t) },
                 onFlipSelected = { flipSelectedLayer() },
@@ -4178,7 +5127,7 @@ snackbar.showSnackbar("This phone ran out of memory. Try a smaller size or fewer
                 onAddSticker = { k, c -> addStickerLayer(k, c) },
                 onApplyMeme = { t, b -> applyMeme(t, b) },
                 onRemoveBgImageLayer = { removeBgOnSelectedImageLayer() },
-                stylePresets = textStylePresets,
+                stylePresets = text.textStylePresets,
                 onLoadStyles = { refreshTextStylePresets() },
                 onApplyStyle = { p -> applyTextStylePreset(p) },
                 onSaveStyle = { name -> saveTextStylePreset(name) }
@@ -4537,6 +5486,7 @@ snackbar.showSnackbar("This phone ran out of memory. Try a smaller size or fewer
                         when (feature) {
                             "Resize" -> pickPhotos()
                             "Print Size & DPI" -> { resetPrint(); screen = Screen.PrintHome }
+                            "Document Scanner" -> { scannerActions.resetScanner(); scannerActions.refreshScanDocs(); screen = Screen.ScannerHome }
                             "Social Media Sizes" -> screen = Screen.SocialHome
                             "Online Shop Sizes" -> screen = Screen.ShopHome
                             "Format Converter" -> screen = Screen.ConvertHome
@@ -4581,14 +5531,14 @@ snackbar.showSnackbar("This phone ran out of memory. Try a smaller size or fewer
                 )
                 MainTab.Presets -> PresetsScreen(
                     modifier = Modifier.padding(padding),
-                    textStyles = textStylePresets,
+                    textStyles = text.textStylePresets,
                     onRefreshTextStyles = { refreshTextStylePresets() },
                     onTextStyle = { p ->
-                        if (textPhotoBitmap != null) {
+                        if (text.textPhotoBitmap != null) {
                             applyTextStylePreset(p)
                         } else {
                             resetTextPhoto()
-                            pendingTextStyle = p
+                            text.pendingTextStyle = p
                         }
                         tab = MainTab.Home
                         screen = Screen.TextPhoto
@@ -4613,8 +5563,8 @@ snackbar.showSnackbar("This phone ran out of memory. Try a smaller size or fewer
                 )
                 MainTab.Settings -> SettingsScreen(
                     Modifier.padding(padding),
-                    darkMode = darkMode,
-                    onDarkMode = onDarkMode
+                    themeMode = themeMode,
+                    onThemeMode = onThemeMode
                 )
             }
             Screen.QueueOverview -> QueueOverviewScreen(
@@ -5101,6 +6051,7 @@ snackbar.showSnackbar("This phone ran out of memory. Try a smaller size or fewer
                 onPick = { photoAdjustPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
                 onSave = { saveAdjustPhoto() }
             )
+            Screen.ScannerHome, Screen.ScannerImportImages, Screen.ScannerImportPdf, Screen.ScannerManager, Screen.ScannerMyScans, Screen.ScannerCrop, Screen.ScannerEnhance, Screen.ScannerPreview, Screen.ScannerExport, Screen.ScannerSuccess, Screen.ScannerSettings -> RenderScanner(Modifier.padding(padding), scannerActions)
             Screen.TextPhoto -> RenderTextPhoto(Modifier.padding(padding))
             Screen.PrintHome -> PrintHomeScreen(
                 modifier = Modifier.padding(padding),
@@ -6469,7 +7420,8 @@ private fun HomeScreen(
         Feature("Text on Photo", "Add text to images", Icons.Default.TextFields),
         Feature("Collage Maker", "Combine 2-20 photos", Icons.Default.GridOn),
         Feature("Photo Adjustments", "Light, colour & detail sliders", Icons.Default.Tune),
-        Feature("Print Size & DPI", "Ready images for printing", Icons.Default.Print)
+        Feature("Print Size & DPI", "Ready images for printing", Icons.Default.Print),
+        Feature("Document Scanner", "Scan papers to PDF & images", Icons.Default.DocumentScanner)
     )
     Column(modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).padding(horizontal = 16.dp).verticalScroll(rememberScrollState())) {
         Row(Modifier.fillMaxWidth().padding(top = 12.dp, bottom = 12.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -8469,6 +9421,7 @@ Column(modifier.fillMaxSize().padding(18.dp).verticalScroll(rememberScrollState(
                     "privacy" -> "Privacy Policy"
                     "licences" -> "Open-source licences"
                     "help" -> "Help & tips"
+                    "about" -> "About A2Z Image Craft"
                     else -> "What's new"
                 },
                 color = DeepNavy, fontSize = 22.sp, fontWeight = FontWeight.Bold
@@ -8484,6 +9437,13 @@ Column(modifier.fillMaxSize().padding(18.dp).verticalScroll(rememberScrollState(
                     Text(entry.body, color = DocBody, fontSize = 15.sp, lineHeight = 22.sp, modifier = Modifier.padding(top = 2.dp))
                 }
                 Text(LICENCES_OUTRO, color = DocBody, fontSize = 13.sp, lineHeight = 19.sp, modifier = Modifier.padding(top = 14.dp))
+            }
+            "about" -> Column(Modifier.padding(top = 10.dp)) {
+                Text("A2Z Image Craft", color = DeepNavy, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                Text("Version " + BuildConfig.VERSION_NAME.removeSuffix("-debug"), color = DocBody, fontSize = 15.sp, lineHeight = 22.sp, modifier = Modifier.padding(top = 6.dp))
+                Text("A complete photo toolkit that works entirely on your phone - no account, no uploads.", color = DocBody, fontSize = 15.sp, lineHeight = 22.sp, modifier = Modifier.padding(top = 8.dp))
+                Text("Made by Bitty", color = DocBody, fontSize = 15.sp, lineHeight = 22.sp, modifier = Modifier.padding(top = 8.dp))
+                Text("Support: bittyjee1223@gmail.com", color = DocBody, fontSize = 15.sp, lineHeight = 22.sp, modifier = Modifier.padding(top = 4.dp))
             }
             "help" -> HELP_ENTRIES.forEach { entry ->
                 Text(entry.heading, color = DeepNavy, fontSize = 15.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 12.dp))
@@ -8505,8 +9465,8 @@ Column(modifier.fillMaxSize().padding(18.dp).verticalScroll(rememberScrollState(
 @Composable
 private fun SettingsScreen(
     modifier: Modifier,
-    darkMode: Boolean,
-    onDarkMode: (Boolean) -> Unit
+    themeMode: String,
+    onThemeMode: (String) -> Unit
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
     val scope = rememberCoroutineScope()
@@ -8521,10 +9481,17 @@ private fun SettingsScreen(
         SettingsSection("Appearance") {
             SettingsRow(
                 icon = { Icon(Icons.Default.DarkMode, null, tint = SkyBlue, modifier = Modifier.size(20.dp)) },
-                title = "Dark mode",
-                subtitle = if (darkMode) "On - easier on the eyes" else "Off - light theme"
+                title = "Theme",
+                subtitle = "Light, Dark, or System (follows your phone's theme)"
             ) {
-                Switch(checked = darkMode, onCheckedChange = onDarkMode, colors = SwitchDefaults.colors(checkedTrackColor = SkyBlue))
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    listOf("light", "dark", "system").forEach { m ->
+                        val sel = themeMode == m
+                        Box(Modifier.clip(RoundedCornerShape(10.dp)).background(if (sel) SkyBlue else PaleBlue).clickable { onThemeMode(m) }.padding(horizontal = 10.dp, vertical = 7.dp)) {
+                            Text(m.replaceFirstChar { it.uppercase() }, color = if (sel) Color.White else DeepNavy, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                        }
+                    }
+                }
             }
         }
 
@@ -8666,6 +9633,8 @@ private const val PRIVACY_TEXT = "A2Z Image Craft - Privacy Policy\n\n" +
     "- Saved images, written only when you tap Save, to the folder shown in the app. We cannot see any of this data. It is deleted when you clear it in the app, clear the app's storage, or uninstall the app. If you have turned on Android's own backup in your Google account, Android may include the app's settings in that backup, under Google's control.\n\n" +
     "4. Google services used by the app\n\n" +
     "- Google ML Kit (background removal backup): the app removes backgrounds with a built-in model on your phone. If that model cannot start, the app uses Google ML Kit, provided through Google Play services. The photo is still processed on your phone and is not sent to Google. Google Play services may download the ML Kit model once, and Google may collect basic device information and usage and performance data about ML Kit to maintain and improve it.\n\n" +
+    // His verbatim addition (WhatsApp 2026-10-31 11:29) for the Document Scanner:
+    "- Document Scanner: When you scan a document, A2Z Image Craft uses Google ML Kit Document Scanner, provided through Google Play services. The camera screen and scanning are handled by Google on your device. Your scans are processed on your phone and are not uploaded by A2Z Image Craft. Google Play services may download the scanner module the first time you use it. Google's own privacy policy applies to Google Play services.\n\n" +
     "- Google Play: when you download or update the app, Google Play may collect information such as crash reports and install statistics, which Google may share with us in summary form. These services are covered by Google's Privacy Policy: https://policies.google.com/privacy\n\n" +
     "5. What we do not do\n\n" +
     "- No advertising in the app.\n\n" +
@@ -8692,7 +9661,9 @@ private val LICENCE_ENTRIES = listOf(
     DocEntry("ONNX Runtime", "Runs the background removal model. Copyright (c) Microsoft Corporation. Licensed under the MIT License. https://github.com/microsoft/onnxruntime"),
     DocEntry("Android Jetpack and Jetpack Compose (AndroidX)", "Copyright The Android Open Source Project. Licensed under the Apache License, Version 2.0."),
     DocEntry("Kotlin and kotlinx.coroutines", "Copyright JetBrains s.r.o. and Kotlin Programming Language contributors. Licensed under the Apache License, Version 2.0."),
-    DocEntry("Google ML Kit (subject segmentation)", "Provided by Google under the ML Kit Terms of Service: https://developers.google.com/ml-kit/terms")
+    DocEntry("Google ML Kit (subject segmentation)", "Provided by Google under the ML Kit Terms of Service: https://developers.google.com/ml-kit/terms"),
+    // His verbatim addition (WhatsApp 2026-10-31 11:29), regular dash per parent:
+    DocEntry("Google ML Kit Document Scanner", "Google ML Kit Terms of Service: https://developers.google.com/ml-kit/terms")
 )
 private const val LICENCES_OUTRO = "Apache License, Version 2.0: https://www.apache.org/licenses/LICENSE-2.0\nMIT License: https://opensource.org/licenses/MIT"
 
@@ -8715,6 +9686,9 @@ private val HELP_ENTRIES = listOf(
 )
 
 private val WHATS_NEW_ITEMS = listOf(
+    "NEW: Document Scanner - scan with your camera or import images and PDFs, crop and enhance pages, then export as PDF, PNG or JPG",
+    "Scanner library: My Scans with folders, search, sorting (including file size) and sharing",
+    "Theme choice: Light, Dark or System (follows your phone)",
     "Dark mode now covers every screen",
     "Saved files now live in the A2Z Image Craft folder and their names start with a2z",
     "Sharper true-perspective tilt, checkerboard for transparent previews, one slider style everywhere",
@@ -12949,5 +13923,1426 @@ private fun TextOnPhotoScreen(
                 OutlinedButton(onClick = { onEditOpen(false) }) { Text("Cancel", color = DeepNavy) }
             }
         )
+    }
+}
+
+// ============================ Document Scanner (his original Scanner recording) ============================
+
+private data class PdfPick(val tmp: File, val count: Int, val name: String, val sizeBytes: Long)
+
+private data class ScanExportResult(val name: String, val format: String, val pages: Int, val bytes: Long, val shareFile: File?)
+
+/** Full export-quality render of one scanner page: rotate -> straighten -> perspective crop -> filter + adjustments. */
+private fun renderScanPageBitmap(context: Context, docId: String, page: ScanPageUi, maxDim: Int): Bitmap? {
+    val f = ScansStore.pageFile(context, docId, page.id)
+    if (!f.exists()) return null
+    val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+    BitmapFactory.decodeFile(f.absolutePath, bounds)
+    var s = 1
+    while (bounds.outWidth / (s * 2) >= maxDim && bounds.outHeight / (s * 2) >= maxDim) s *= 2
+    var b = BitmapFactory.decodeFile(f.absolutePath, BitmapFactory.Options().apply { inSampleSize = s }) ?: return null
+    if (page.rotation != 0) {
+        val m = android.graphics.Matrix().apply { postRotate(page.rotation.toFloat()) }
+        val r = Bitmap.createBitmap(b, 0, 0, b.width, b.height, m, true)
+        if (r != b) b.recycle()
+        b = r
+    }
+    if (page.straighten != 0f) {
+        val r = ScanGeometry.straighten(b, page.straighten)
+        b.recycle(); b = r
+    }
+    if (page.crop != null) {
+        val q = if (page.straighten != 0f) ScanGeometry.rotateQuadFree(page.crop!!, page.straighten, b.width, b.height) else page.crop!!
+        val c = ScanGeometry.perspectiveCrop(b, q, maxDim = maxDim)
+        b.recycle(); b = c
+    }
+    if (page.filter != "original" || !page.adjust.isDefault()) {
+        val e = ScanEnhance.render(b, page.filter, page.adjust)
+        if (e !== b) b.recycle()
+        b = e
+    }
+    return b
+}
+
+private class ScanPageUi(val id: String) {
+    var rotation by mutableStateOf(0)
+    var straighten by mutableStateOf(0f)
+    var crop by mutableStateOf<FloatArray?>(null)
+    var filter by mutableStateOf("original")
+    val adjust = ScanEnhance.DocParams()
+    var thumb by mutableStateOf<ImageBitmap?>(null)
+}
+
+private class TextUiState {
+    var textPhotoBitmap by mutableStateOf<Bitmap?>(null)
+    var textPhotoName by mutableStateOf("")
+    var textPhotoBytes by mutableStateOf(-1L)
+    val textLayers = mutableStateListOf<TextOverlayUtils.TextLayer>()
+    val textImageLayers = mutableStateListOf<TextOverlayUtils.ImageLayer>()
+    var textImageSelectedId by mutableStateOf<Long?>(null)
+    var textSelectedId by mutableStateOf<Long?>(null)
+    val textUndo = TextOverlayUtils.UndoRedo()
+    var textTick by mutableStateOf(0)
+    var textSelTick by mutableStateOf(0)
+    var textFormat by mutableStateOf("PNG")
+    var textResultBytes by mutableStateOf<ByteArray?>(null)
+    var textResultDims by mutableStateOf("")
+    var textSaved by mutableStateOf(false)
+    var textEditOpen by mutableStateOf(false)
+    var textCropRect by mutableStateOf<FloatArray?>(null)
+    var textCropLabel by mutableStateOf("")
+    var textCropAdjust by mutableStateOf(false)
+    var textCropZoomAbs by mutableStateOf(1f)
+    var textFilterId by mutableStateOf("normal")
+    var textFrameStyle by mutableStateOf("none")
+    var textFrameWidth by mutableStateOf(8f)
+    var textFrameColor by mutableStateOf(0xFFFFFFFF.toInt())
+    var textPerspV by mutableStateOf(0f)
+    var textPerspH by mutableStateOf(0f)
+    var textStylePresets by mutableStateOf<List<TextStylePreset>>(emptyList())
+    var pendingTextStyle by mutableStateOf<TextStylePreset?>(null)
+    var textLastGestureRecord by mutableStateOf(0L)
+}
+private class ScannerRootActions {
+    lateinit var resetScanner: () -> Unit
+    lateinit var startScannerCamera: () -> Unit
+    lateinit var refreshScanDocs: () -> Unit
+    lateinit var scannerSaveDocMeta: () -> Unit
+    lateinit var scannerCheckBlanks: () -> Unit
+    lateinit var scannerImportPdfPages: () -> Unit
+    lateinit var scannerCancelEdit: () -> Unit
+    lateinit var scannerExport: () -> Unit
+    lateinit var scannerClearTemp: () -> Unit
+    lateinit var scannerStorageBytes: () -> Long
+    lateinit var scannerPrefs: () -> android.content.SharedPreferences
+    lateinit var scannerOpenDoc: (String) -> Unit
+    lateinit var scannerDeleteDoc: (String) -> Unit
+    lateinit var scannerShareDoc: (String) -> Unit
+    lateinit var scannerQueueDocThumb: (String) -> Unit
+    lateinit var scannerQueueThumb: (String) -> Unit
+    lateinit var scannerStartEdit: (String) -> Unit
+    lateinit var scannerDeletePage: (String) -> Unit
+    lateinit var scannerDuplicatePage: (String) -> Unit
+    lateinit var scannerRotatePage: (String) -> Unit
+    lateinit var scannerRenameDoc: (String) -> Unit
+    lateinit var scannerDeletePages: (List<String>) -> Unit
+    lateinit var scannerMovePage: (String, Int) -> Unit
+    lateinit var scannerRenameDocById: (String, String) -> Unit
+    lateinit var scannerAddImageUris: (List<Uri>) -> Unit
+    lateinit var scannerEnsurePdfThumb: (Int) -> Unit
+    lateinit var pickImages: () -> Unit
+    lateinit var pickAddMore: () -> Unit
+    lateinit var pickReplace: () -> Unit
+    lateinit var pickPdf: () -> Unit
+    lateinit var scannerMoveDocToFolder: (String, String) -> Unit
+    lateinit var scannerRenameFolder: (String, String) -> Unit
+    lateinit var scannerDeleteFolder: (String) -> Unit
+    lateinit var scannerExportAgain: (String) -> Unit
+}
+private class ScannerUiState {
+    var docId by mutableStateOf<String?>(null)
+    var docName by mutableStateOf("Scanned document")
+    var folder by mutableStateOf("")
+    var createdAt by mutableLongStateOf(System.currentTimeMillis())
+    val pages = mutableStateListOf<ScanPageUi>()
+    val importReview = mutableStateListOf<Uri>()
+    var pdfTemp by mutableStateOf<File?>(null)
+    var pdfName by mutableStateOf("")
+    var pdfSize by mutableLongStateOf(-1L)
+    var pdfPageCount by mutableStateOf(0)
+    val pdfSelected = mutableStateListOf<Int>()
+    val pdfThumbs = mutableStateMapOf<Int, ImageBitmap?>()
+    var docList by mutableStateOf<List<ScansStore.DocMeta>>(emptyList())
+    val docThumbs = mutableStateMapOf<String, ImageBitmap?>()
+    val selectedPages = mutableStateListOf<String>()
+    var selecting by mutableStateOf(false)
+    var replaceTargetId by mutableStateOf<String?>(null)
+    val blankFlags = mutableStateMapOf<String, Boolean>()
+    var exportFormat by mutableStateOf("PDF")
+    var exportPageSize by mutableStateOf("A4")
+    var exportOrientation by mutableStateOf("Automatic")
+    var exportMargin by mutableStateOf("None")
+    var exportQuality by mutableStateOf("High")
+    var exportName by mutableStateOf("")
+    var exportJpgQuality by mutableStateOf(90f)
+    var exporting by mutableStateOf(false)
+    var exportCancelled by mutableStateOf(false)
+    var exportProgress by mutableStateOf(0)
+    var exportTotal by mutableStateOf(0)
+    var successName by mutableStateOf("")
+    var successFormat by mutableStateOf("")
+    var successPages by mutableStateOf(0)
+    var successSize by mutableStateOf("")
+    var successShareFile by mutableStateOf<File?>(null)
+    var lastExport by mutableStateOf<String?>(null)
+    var myScansQuery by mutableStateOf("")
+    var myScansSort by mutableStateOf("Newest First")
+    var myScansFolder by mutableStateOf<String?>(null)   // null = All; "" = scans with no folder
+    val docSizes = mutableStateMapOf<String, Long>()
+    var exportMarginMm by mutableStateOf(10f)
+    var exportSelectedOnly by mutableStateOf(false)
+    val exportSelectedPages = mutableStateSetOf<String>()
+    var exportJpgWidth by mutableStateOf("")             // "" = Original dimensions
+    var jpgEstimate by mutableStateOf("")
+    var editPageId by mutableStateOf<String?>(null)
+    var editBackupRotation by mutableStateOf(0)
+    var editBackupStraighten by mutableStateOf(0f)
+    var editBackupCrop by mutableStateOf<FloatArray?>(null)
+    var editBackupFilter by mutableStateOf("original")
+    var editBackupAdjust: ScanEnhance.DocParams? = null
+    fun clearPdf() {
+        pdfTemp?.delete(); pdfTemp = null; pdfName = ""; pdfSize = -1L; pdfPageCount = 0
+        pdfSelected.clear(); pdfThumbs.clear()
+    }
+    fun reset() {
+        docId = null; docName = "Scanned document"; folder = ""; createdAt = System.currentTimeMillis()
+        pages.clear(); importReview.clear(); clearPdf()
+    }
+}
+
+private data class ScanHomeEntry(val icon: androidx.compose.ui.graphics.vector.ImageVector, val title: String, val subtitle: String, val action: () -> Unit)
+
+@Composable
+private fun ScannerHomeScreen(
+    modifier: Modifier,
+    docs: List<ScansStore.DocMeta>,
+    docThumbs: Map<String, ImageBitmap?>,
+    onBack: () -> Unit,
+    onCamera: () -> Unit,
+    onImportImages: () -> Unit,
+    onImportPdf: () -> Unit,
+    onMyScans: () -> Unit,
+    onOpenDoc: (String) -> Unit,
+    onDocThumbNeeded: (String) -> Unit,
+    onSettings: () -> Unit
+) {
+    Column(modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).verticalScroll(rememberScrollState()).padding(horizontal = 16.dp)) {
+        Row(Modifier.fillMaxWidth().padding(top = 12.dp, bottom = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = onBack) { Icon(Icons.Default.ArrowBack, contentDescription = "Back", tint = DeepNavy, modifier = Modifier.size(24.dp)) }
+            Text("Document Scanner", color = DeepNavy, fontSize = 20.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+            IconButton(onClick = onSettings) { Icon(Icons.Default.Settings, contentDescription = "Scanner settings", tint = DeepNavy, modifier = Modifier.size(22.dp)) }
+        }
+        val entries = listOf(
+            ScanHomeEntry(Icons.Default.DocumentScanner, "Scan with Camera", "Capture paper documents with your camera", onCamera),
+            ScanHomeEntry(Icons.Default.PhotoLibrary, "Import Images", "Select JPG, JPEG or PNG images", onImportImages),
+            ScanHomeEntry(Icons.Default.PictureAsPdf, "Import PDF", "Open an existing PDF document", onImportPdf),
+            ScanHomeEntry(Icons.Default.Folder, "My Scans", "Open, manage and share saved scans", onMyScans)
+        )
+        entries.chunked(2).forEach { rowItems ->
+            Row(Modifier.fillMaxWidth().padding(bottom = 10.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                rowItems.forEach { e ->
+                    Card(
+                        modifier = Modifier.weight(1f).clickable { e.action() },
+                        shape = RoundedCornerShape(16.dp),
+                        border = BorderStroke(1.dp, BorderGrey),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+                    ) {
+                        Column(Modifier.padding(14.dp).height(150.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Box(Modifier.size(44.dp).clip(CircleShape).background(PaleBlue), contentAlignment = Alignment.Center) { Icon(e.icon, contentDescription = null, tint = SkyBlue, modifier = Modifier.size(26.dp)) }
+                            Text(e.title, color = DeepNavy, fontWeight = FontWeight.SemiBold, fontSize = 14.sp, lineHeight = 17.sp)
+                            Text(e.subtitle, color = Slate, fontSize = 11.sp, lineHeight = 14.sp)
+                        }
+                    }
+                }
+            }
+        }
+        // Honest disclosure (parent + engine docs): first camera scan may download the
+        // on-device scanner models; needs Google Play services. Imports always work.
+        Text(
+            "Camera scanning runs on your phone using Google's document scanner. The first scan may take a moment while it downloads; after that it works offline.",
+            color = Slate, fontSize = 11.sp, lineHeight = 15.sp, modifier = Modifier.padding(top = 4.dp)
+        )
+        Row(Modifier.fillMaxWidth().padding(top = 16.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text("Recent Scans", fontWeight = FontWeight.Bold, fontSize = 16.sp, color = DeepNavy, modifier = Modifier.weight(1f))
+            if (docs.isNotEmpty()) Text("View All", color = SkyBlue, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.clip(RoundedCornerShape(8.dp)).clickable { onMyScans() }.padding(horizontal = 8.dp, vertical = 4.dp))
+        }
+        if (docs.isEmpty()) {
+            Text("Your scanned documents will appear here.", color = Slate, fontSize = 13.sp, lineHeight = 18.sp)
+        } else {
+            docs.take(3).forEach { doc ->
+                LaunchedEffect(doc.id) { onDocThumbNeeded(doc.id) }
+                ScanDocRow(doc, docThumbs[doc.id], onClick = { onOpenDoc(doc.id) })
+            }
+        }
+        Spacer(Modifier.height(24.dp))
+    }
+}
+
+@Composable
+private fun ScanDocRow(doc: ScansStore.DocMeta, thumb: ImageBitmap?, onClick: () -> Unit, onDelete: (() -> Unit)? = null) {
+    var confirmDelete by remember(doc.id) { mutableStateOf(false) }
+    Card(
+        modifier = Modifier.fillMaxWidth().padding(bottom = 10.dp).clickable { onClick() },
+        shape = RoundedCornerShape(14.dp),
+        border = BorderStroke(1.dp, BorderGrey),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+    ) {
+        Row(Modifier.padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.size(52.dp).clip(RoundedCornerShape(10.dp)).background(SoftGrey).border(1.dp, BorderGrey, RoundedCornerShape(10.dp)), contentAlignment = Alignment.Center) {
+                if (thumb != null) Image(bitmap = thumb, contentDescription = null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+                else Icon(Icons.Default.Description, contentDescription = null, tint = Slate, modifier = Modifier.size(24.dp))
+            }
+            Spacer(Modifier.width(12.dp))
+            Column(Modifier.weight(1f)) {
+                Text(doc.name, color = DeepNavy, fontWeight = FontWeight.SemiBold, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text("${doc.pages.size} page${if (doc.pages.size == 1) "" else "s"} · " + SimpleDateFormat("d MMM yyyy", Locale.getDefault()).format(Date(doc.modifiedAt)), color = Slate, fontSize = 12.sp)
+            }
+            if (onDelete != null) {
+                IconButton(onClick = { confirmDelete = true }) { Icon(Icons.Default.Delete, contentDescription = "Delete", tint = Slate, modifier = Modifier.size(20.dp)) }
+            } else {
+                Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = null, tint = Slate)
+            }
+        }
+    }
+    if (confirmDelete) {
+        // His spec: always ask before deleting; explain that only the saved copy goes away.
+        AlertDialog(
+            onDismissRequest = { confirmDelete = false },
+            title = { Text("Delete this scan?") },
+            text = { Text("\"${doc.name}\" will be removed from My Scans. The original files you imported stay untouched.") },
+            confirmButton = { TextButton(onClick = { confirmDelete = false; onDelete?.invoke() }) { Text("Delete", color = Color(0xFFD32F2F)) } },
+            dismissButton = { TextButton(onClick = { confirmDelete = false }) { Text("Cancel") } }
+        )
+    }
+}
+
+@Composable
+private fun ScanUriThumb(uri: Uri, modifier: Modifier) {
+    var bmp by remember(uri) { mutableStateOf<ImageBitmap?>(null) }
+    val context = androidx.compose.ui.platform.LocalContext.current
+    LaunchedEffect(uri) {
+        bmp = withContext(Dispatchers.IO) {
+            try {
+                val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                context.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, bounds) }
+                var s = 1
+                while (bounds.outWidth / (s * 2) >= 240 && bounds.outHeight / (s * 2) >= 240) s *= 2
+                val opts = BitmapFactory.Options().apply { inSampleSize = s }
+                context.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, opts) }
+            } catch (e: Exception) { null }
+        }?.asImageBitmap()
+    }
+    Box(modifier.clip(RoundedCornerShape(12.dp)).background(SoftGrey).border(1.dp, BorderGrey, RoundedCornerShape(12.dp)), contentAlignment = Alignment.Center) {
+        if (bmp != null) Image(bitmap = bmp!!, contentDescription = null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+        else Icon(Icons.Default.Image, contentDescription = null, tint = Slate, modifier = Modifier.size(26.dp))
+    }
+}
+
+@Composable
+private fun ScannerImportImagesScreen(
+    modifier: Modifier,
+    uris: List<Uri>,
+    onBack: () -> Unit,
+    onRemove: (Uri) -> Unit,
+    onAddMore: () -> Unit,
+    onCancel: () -> Unit,
+    onContinue: () -> Unit
+) {
+    Column(modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).padding(horizontal = 16.dp)) {
+        Row(Modifier.fillMaxWidth().padding(top = 12.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = onBack) { Icon(Icons.Default.ArrowBack, contentDescription = "Back", tint = DeepNavy, modifier = Modifier.size(24.dp)) }
+            Text("Import Images", color = DeepNavy, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+        }
+        Text("${uris.size} image${if (uris.size == 1) "" else "s"} selected", color = Slate, fontSize = 13.sp, modifier = Modifier.padding(bottom = 10.dp))
+        LazyVerticalGrid(columns = GridCells.Fixed(3), modifier = Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            items(uris, key = { it.toString() }) { uri ->
+                Box {
+                    ScanUriThumb(uri, Modifier.aspectRatio(0.75f).fillMaxWidth())
+                    Box(Modifier.align(Alignment.TopEnd).padding(4.dp).size(24.dp).clip(CircleShape).background(DeepNavy).clickable { onRemove(uri) }, contentAlignment = Alignment.Center) {
+                        Icon(Icons.Default.Close, contentDescription = "Remove", tint = Color.White, modifier = Modifier.size(14.dp))
+                    }
+                }
+            }
+            item {
+                Box(Modifier.aspectRatio(0.75f).fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(PaleBlue).clickable { onAddMore() }, contentAlignment = Alignment.Center) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Icon(Icons.Default.Add, contentDescription = null, tint = SkyBlue, modifier = Modifier.size(26.dp))
+                        Text("Add more", color = SkyBlue, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                    }
+                }
+            }
+        }
+        Row(Modifier.fillMaxWidth().padding(vertical = 12.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            OutlinedButton(onClick = onCancel, modifier = Modifier.weight(1f).height(50.dp), shape = RoundedCornerShape(14.dp)) { Text("Cancel", color = DeepNavy, fontWeight = FontWeight.SemiBold) }
+            Button(onClick = onContinue, enabled = uris.isNotEmpty(), modifier = Modifier.weight(2f).height(50.dp), colors = ButtonDefaults.buttonColors(containerColor = Orange, contentColor = Color.White), shape = RoundedCornerShape(14.dp)) {
+                Text("Continue with ${uris.size} Image${if (uris.size == 1) "" else "s"}", fontWeight = FontWeight.Bold)
+            }
+        }
+    }
+}
+
+@Composable
+private fun ScannerImportPdfScreen(
+    modifier: Modifier,
+    name: String,
+    sizeBytes: Long,
+    pageCount: Int,
+    selected: List<Int>,
+    thumbs: Map<Int, ImageBitmap?>,
+    onThumbNeeded: (Int) -> Unit,
+    onToggle: (Int) -> Unit,
+    onSelectAll: () -> Unit,
+    onDeselectAll: () -> Unit,
+    onCancel: () -> Unit,
+    onImport: () -> Unit
+) {
+    Column(modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).padding(horizontal = 16.dp)) {
+        Row(Modifier.fillMaxWidth().padding(top = 12.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = onCancel) { Icon(Icons.Default.ArrowBack, contentDescription = "Back", tint = DeepNavy, modifier = Modifier.size(24.dp)) }
+            Text("Import PDF", color = DeepNavy, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+        }
+        Card(shape = RoundedCornerShape(14.dp), border = BorderStroke(1.dp, BorderGrey), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface), modifier = Modifier.fillMaxWidth().padding(bottom = 10.dp)) {
+            Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Default.PictureAsPdf, contentDescription = null, tint = Orange, modifier = Modifier.size(30.dp))
+                Spacer(Modifier.width(10.dp))
+                Column {
+                    Text(name, color = DeepNavy, fontWeight = FontWeight.SemiBold, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text("$pageCount page${if (pageCount == 1) "" else "s"}" + (if (sizeBytes > 0) " · ${formatBytes(sizeBytes)}" else ""), color = Slate, fontSize = 12.sp)
+                }
+            }
+        }
+        Row(Modifier.fillMaxWidth().padding(bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text("${selected.size} of $pageCount selected", color = Slate, fontSize = 13.sp, modifier = Modifier.weight(1f))
+            Text("Select All", color = SkyBlue, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.clip(RoundedCornerShape(8.dp)).clickable { onSelectAll() }.padding(horizontal = 8.dp, vertical = 4.dp))
+            Text("None", color = SkyBlue, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.clip(RoundedCornerShape(8.dp)).clickable { onDeselectAll() }.padding(horizontal = 8.dp, vertical = 4.dp))
+        }
+        LazyVerticalGrid(columns = GridCells.Fixed(3), modifier = Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            items(pageCount) { idx ->
+                LaunchedEffect(idx) { onThumbNeeded(idx) }
+                val picked = selected.contains(idx)
+                Box(Modifier.aspectRatio(0.72f).fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(SoftGrey).border(if (picked) 2.dp else 1.dp, if (picked) SkyBlue else BorderGrey, RoundedCornerShape(10.dp)).clickable { onToggle(idx) }) {
+                    val t = thumbs[idx]
+                    if (t != null) Image(bitmap = t, contentDescription = "Page ${idx + 1}", modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Fit)
+                    else Icon(Icons.Default.Description, contentDescription = null, tint = Slate, modifier = Modifier.align(Alignment.Center).size(24.dp))
+                    Text("${idx + 1}", color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.Bold, modifier = Modifier.align(Alignment.BottomStart).padding(4.dp).background(DeepNavy, RoundedCornerShape(6.dp)).padding(horizontal = 5.dp, vertical = 1.dp))
+                    if (picked) Box(Modifier.align(Alignment.TopEnd).padding(4.dp).size(22.dp).clip(CircleShape).background(SkyBlue), contentAlignment = Alignment.Center) {
+                        Icon(Icons.Default.CheckCircle, contentDescription = "Selected", tint = Color.White, modifier = Modifier.size(16.dp))
+                    }
+                }
+            }
+        }
+        Row(Modifier.fillMaxWidth().padding(vertical = 12.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            OutlinedButton(onClick = onCancel, modifier = Modifier.weight(1f).height(50.dp), shape = RoundedCornerShape(14.dp)) { Text("Cancel", color = DeepNavy, fontWeight = FontWeight.SemiBold) }
+            Button(onClick = onImport, enabled = selected.isNotEmpty(), modifier = Modifier.weight(2f).height(50.dp), colors = ButtonDefaults.buttonColors(containerColor = Orange, contentColor = Color.White), shape = RoundedCornerShape(14.dp)) {
+                Text(if (selected.size == pageCount) "Import All Pages" else "Import ${selected.size} Page${if (selected.size == 1) "" else "s"}", fontWeight = FontWeight.Bold)
+            }
+        }
+    }
+}
+
+@Composable
+private fun ScannerManagerScreen(
+    modifier: Modifier,
+    docName: String,
+    pages: List<ScanPageUi>,
+    selecting: Boolean,
+    selectedPages: List<String>,
+    onBack: () -> Unit,
+    onEdit: (String) -> Unit,
+    onDelete: (String) -> Unit,
+    onDuplicate: (String) -> Unit,
+    onRotate: (String) -> Unit,
+    onReplace: (String) -> Unit,
+    onMove: (String, Int) -> Unit,
+    onToggleSelect: (String) -> Unit,
+    onSelectAll: () -> Unit,
+    onDeleteSelected: () -> Unit,
+    onRotateSelected: () -> Unit,
+    onSelectingChange: (Boolean) -> Unit,
+    onAddCamera: () -> Unit,
+    onAddImages: () -> Unit,
+    onAddPdf: () -> Unit,
+    onRename: (String) -> Unit,
+    onPreview: () -> Unit
+) {
+    var addOpen by remember { mutableStateOf(false) }
+    var moreOpen by remember { mutableStateOf(false) }
+    var renameOpen by remember { mutableStateOf(false) }
+    var pageMenuId by remember { mutableStateOf<String?>(null) }
+    Column(modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).padding(horizontal = 16.dp)) {
+        Row(Modifier.fillMaxWidth().padding(top = 12.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = onBack) { Icon(Icons.Default.ArrowBack, contentDescription = "Back", tint = DeepNavy, modifier = Modifier.size(24.dp)) }
+            Column(Modifier.weight(1f)) {
+                Text(docName, color = DeepNavy, fontSize = 18.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text("${pages.size} page${if (pages.size == 1) "" else "s"}", color = Slate, fontSize = 12.sp)
+            }
+            IconButton(onClick = { moreOpen = true }) { Icon(Icons.Default.MoreVert, contentDescription = "More options", tint = DeepNavy, modifier = Modifier.size(22.dp)) }
+        }
+        if (selecting) {
+            Row(Modifier.fillMaxWidth().padding(bottom = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text("${selectedPages.size} selected", color = Slate, fontSize = 13.sp, modifier = Modifier.weight(1f))
+                Text("Select All", color = SkyBlue, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.clip(RoundedCornerShape(8.dp)).clickable { onSelectAll() }.padding(horizontal = 8.dp, vertical = 4.dp))
+                Text("Done", color = SkyBlue, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.clip(RoundedCornerShape(8.dp)).clickable { onSelectingChange(false) }.padding(horizontal = 8.dp, vertical = 4.dp))
+            }
+        }
+        if (pages.isEmpty()) {
+            Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+                Text("No pages yet. Add a page to get started.", color = Slate, fontSize = 14.sp)
+            }
+        } else {
+            LazyVerticalGrid(columns = GridCells.Fixed(2), modifier = Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                items(pages.size, key = { pages[it].id }) { idx ->
+                    val page = pages[idx]
+                    val picked = selectedPages.contains(page.id)
+                    Card(
+                        shape = RoundedCornerShape(14.dp),
+                        border = BorderStroke(if (picked) 2.dp else 1.dp, if (picked) SkyBlue else BorderGrey),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                        modifier = Modifier.clickable { if (selecting) onToggleSelect(page.id) else onEdit(page.id) }
+                    ) {
+                        Column {
+                            Box(Modifier.fillMaxWidth().aspectRatio(0.75f).clip(RoundedCornerShape(topStart = 14.dp, topEnd = 14.dp)).background(SoftGrey), contentAlignment = Alignment.Center) {
+                                if (page.thumb != null) Image(bitmap = page.thumb!!, contentDescription = "Page ${idx + 1}", modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Fit)
+                                else Icon(Icons.Default.Description, contentDescription = null, tint = Slate, modifier = Modifier.size(28.dp))
+                                Text("${idx + 1}", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold, modifier = Modifier.align(Alignment.TopStart).padding(6.dp).background(DeepNavy, RoundedCornerShape(6.dp)).padding(horizontal = 6.dp, vertical = 2.dp))
+                                if (picked) Box(Modifier.align(Alignment.TopEnd).padding(6.dp).size(22.dp).clip(CircleShape).background(SkyBlue), contentAlignment = Alignment.Center) {
+                                    Icon(Icons.Default.CheckCircle, contentDescription = "Selected", tint = Color.White, modifier = Modifier.size(16.dp))
+                                }
+                            }
+                            if (!selecting) {
+                                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
+                                    IconButton(onClick = { onEdit(page.id) }) { Icon(Icons.Default.Crop, contentDescription = "Edit page", tint = SkyBlue, modifier = Modifier.size(20.dp)) }
+                                    IconButton(onClick = { pageMenuId = page.id }) { Icon(Icons.Default.MoreVert, contentDescription = "Page options", tint = Slate, modifier = Modifier.size(20.dp)) }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        if (selecting) {
+            Row(Modifier.fillMaxWidth().padding(vertical = 12.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                OutlinedButton(onClick = onRotateSelected, enabled = selectedPages.isNotEmpty(), modifier = Modifier.weight(1f).height(50.dp), shape = RoundedCornerShape(14.dp)) { Text("Rotate Selected", color = DeepNavy, fontWeight = FontWeight.SemiBold, fontSize = 13.sp) }
+                Button(onClick = onDeleteSelected, enabled = selectedPages.isNotEmpty(), modifier = Modifier.weight(1f).height(50.dp), colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFD32F2F), contentColor = Color.White), shape = RoundedCornerShape(14.dp)) { Text("Delete Selected", fontWeight = FontWeight.Bold, fontSize = 13.sp) }
+            }
+        } else {
+            Button(onClick = { addOpen = true }, modifier = Modifier.fillMaxWidth().padding(vertical = 12.dp).height(52.dp), colors = ButtonDefaults.buttonColors(containerColor = Orange, contentColor = Color.White), shape = RoundedCornerShape(14.dp)) {
+                Icon(Icons.Default.Add, contentDescription = null); Spacer(Modifier.width(8.dp)); Text("Add Page", fontWeight = FontWeight.Bold)
+            }
+        }
+    }
+    if (addOpen) {
+        AlertDialog(
+            onDismissRequest = { addOpen = false },
+            title = { Text("Add Page") },
+            text = {
+                Column {
+                    Text("Scan with Camera", color = DeepNavy, fontSize = 15.sp, modifier = Modifier.fillMaxWidth().clickable { addOpen = false; onAddCamera() }.padding(vertical = 12.dp))
+                    Text("Import Images", color = DeepNavy, fontSize = 15.sp, modifier = Modifier.fillMaxWidth().clickable { addOpen = false; onAddImages() }.padding(vertical = 12.dp))
+                    Text("Import PDF", color = DeepNavy, fontSize = 15.sp, modifier = Modifier.fillMaxWidth().clickable { addOpen = false; onAddPdf() }.padding(vertical = 12.dp))
+                }
+            },
+            confirmButton = { TextButton(onClick = { addOpen = false }) { Text("Cancel") } }
+        )
+    }
+    if (moreOpen) {
+        AlertDialog(
+            onDismissRequest = { moreOpen = false },
+            title = { Text(docName, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+            text = {
+                Column {
+                    Text("Preview Document", color = DeepNavy, fontSize = 15.sp, modifier = Modifier.fillMaxWidth().clickable { moreOpen = false; onPreview() }.padding(vertical = 12.dp))
+                    Text("Rename", color = DeepNavy, fontSize = 15.sp, modifier = Modifier.fillMaxWidth().clickable { moreOpen = false; renameOpen = true }.padding(vertical = 12.dp))
+                    Text("Select Pages", color = DeepNavy, fontSize = 15.sp, modifier = Modifier.fillMaxWidth().clickable { moreOpen = false; onSelectingChange(true) }.padding(vertical = 12.dp))
+                }
+            },
+            confirmButton = { TextButton(onClick = { moreOpen = false }) { Text("Cancel") } }
+        )
+    }
+    if (renameOpen) {
+        var nameText by remember { mutableStateOf(docName) }
+        AlertDialog(
+            onDismissRequest = { renameOpen = false },
+            title = { Text("Rename") },
+            text = {
+                OutlinedTextField(value = nameText, onValueChange = { nameText = it }, singleLine = true, modifier = Modifier.fillMaxWidth())
+            },
+            confirmButton = { TextButton(onClick = { renameOpen = false; onRename(nameText) }) { Text("Save") } },
+            dismissButton = { TextButton(onClick = { renameOpen = false }) { Text("Cancel") } }
+        )
+    }
+    val menuPageId = pageMenuId
+    if (menuPageId != null) {
+        AlertDialog(
+            onDismissRequest = { pageMenuId = null },
+            title = { Text("Page ${pages.indexOfFirst { it.id == menuPageId } + 1}") },
+            text = {
+                Column {
+                    Text("Edit (Crop & Enhance)", color = DeepNavy, fontSize = 15.sp, modifier = Modifier.fillMaxWidth().clickable { pageMenuId = null; onEdit(menuPageId) }.padding(vertical = 12.dp))
+                    Text("Rotate 90°", color = DeepNavy, fontSize = 15.sp, modifier = Modifier.fillMaxWidth().clickable { pageMenuId = null; onRotate(menuPageId) }.padding(vertical = 12.dp))
+                    Text("Duplicate", color = DeepNavy, fontSize = 15.sp, modifier = Modifier.fillMaxWidth().clickable { pageMenuId = null; onDuplicate(menuPageId) }.padding(vertical = 12.dp))
+                    Text("Replace with Image", color = DeepNavy, fontSize = 15.sp, modifier = Modifier.fillMaxWidth().clickable { pageMenuId = null; onReplace(menuPageId) }.padding(vertical = 12.dp))
+                    Text("Move Earlier", color = DeepNavy, fontSize = 15.sp, modifier = Modifier.fillMaxWidth().clickable { pageMenuId = null; onMove(menuPageId, -1) }.padding(vertical = 12.dp))
+                    Text("Move Later", color = DeepNavy, fontSize = 15.sp, modifier = Modifier.fillMaxWidth().clickable { pageMenuId = null; onMove(menuPageId, 1) }.padding(vertical = 12.dp))
+                    Text("Delete", color = Color(0xFFD32F2F), fontSize = 15.sp, modifier = Modifier.fillMaxWidth().clickable { pageMenuId = null; onDelete(menuPageId) }.padding(vertical = 12.dp))
+                }
+            },
+            confirmButton = { TextButton(onClick = { pageMenuId = null }) { Text("Cancel") } }
+        )
+    }
+}
+
+/** Render one scanner page at preview resolution: rotate -> straighten -> perspective crop -> filter + adjustments. */
+@Composable
+private fun ScanPageImage(docId: String, page: ScanPageUi, modifier: Modifier, maxDim: Int = 1200, applyEnhance: Boolean = true) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    var bmp by remember(page.id, page.rotation, page.straighten, page.crop, page.filter, page.adjust.isDefault()) { mutableStateOf<Bitmap?>(null) }
+    LaunchedEffect(page.id, page.rotation, page.straighten, page.crop?.toList(), page.filter, page.adjust.brightness, page.adjust.contrast, page.adjust.highlights, page.adjust.shadows, page.adjust.sharpness, page.adjust.whitening, page.adjust.shadowReduction) {
+        bmp = withContext(Dispatchers.IO) {
+            val f = ScansStore.pageFile(context, docId, page.id)
+            if (!f.exists()) return@withContext null
+            val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            BitmapFactory.decodeFile(f.absolutePath, bounds)
+            var s = 1
+            while (bounds.outWidth / (s * 2) >= maxDim && bounds.outHeight / (s * 2) >= maxDim) s *= 2
+            var b = BitmapFactory.decodeFile(f.absolutePath, BitmapFactory.Options().apply { inSampleSize = s }) ?: return@withContext null
+            if (page.rotation != 0) {
+                val m = android.graphics.Matrix().apply { postRotate(page.rotation.toFloat()) }
+                val r = Bitmap.createBitmap(b, 0, 0, b.width, b.height, m, true)
+                if (r != b) b.recycle()
+                b = r
+            }
+            if (page.straighten != 0f) {
+                val r = ScanGeometry.straighten(b, page.straighten)
+                b.recycle(); b = r
+            }
+            if (page.crop != null) {
+                val q = if (page.straighten != 0f) ScanGeometry.rotateQuadFree(page.crop!!, page.straighten, b.width, b.height) else page.crop!!
+                val c = ScanGeometry.perspectiveCrop(b, q, maxDim = maxDim * 2)
+                b.recycle(); b = c
+            }
+            if (applyEnhance && (page.filter != "original" || !page.adjust.isDefault())) {
+                val e = ScanEnhance.render(b, page.filter, page.adjust)
+                if (e !== b) b.recycle()
+                b = e
+            }
+            b
+        }
+    }
+    Box(modifier.background(SoftGrey), contentAlignment = Alignment.Center) {
+        if (bmp != null) Image(bitmap = bmp!!.asImageBitmap(), contentDescription = null, modifier = Modifier.fillMaxWidth(), contentScale = ContentScale.Fit)
+        else Icon(Icons.Default.Description, contentDescription = null, tint = Slate, modifier = Modifier.size(32.dp))
+    }
+}
+
+@Composable
+private fun ScannerPreviewScreen(
+    modifier: Modifier,
+    docId: String,
+    docName: String,
+    pages: List<ScanPageUi>,
+    blankFlags: Map<String, Boolean>,
+    onBack: () -> Unit,
+    onExport: () -> Unit,
+    onShare: () -> Unit
+) {
+    Column(modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).padding(horizontal = 16.dp)) {
+        Row(Modifier.fillMaxWidth().padding(top = 12.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = onBack) { Icon(Icons.Default.ArrowBack, contentDescription = "Back to Edit", tint = DeepNavy, modifier = Modifier.size(24.dp)) }
+            Column(Modifier.weight(1f)) {
+                Text(docName, color = DeepNavy, fontSize = 18.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text("${pages.size} page${if (pages.size == 1) "" else "s"}", color = Slate, fontSize = 12.sp)
+            }
+            IconButton(onClick = onShare) { Icon(Icons.Default.Share, contentDescription = "Share", tint = DeepNavy, modifier = Modifier.size(22.dp)) }
+        }
+        val blanks = pages.filter { blankFlags[it.id] == true }
+        if (blanks.isNotEmpty()) {
+            Text(
+                "Heads up: page ${blanks.map { pages.indexOfFirst { p -> p.id == it.id } + 1 }.joinToString(", ")} look${if (blanks.size == 1) "s" else ""} blank. Check before exporting.",
+                color = Color(0xFFB26A00), fontSize = 12.sp, lineHeight = 16.sp, modifier = Modifier.padding(bottom = 6.dp)
+            )
+        }
+        Column(Modifier.weight(1f).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            pages.forEachIndexed { idx, page ->
+                Card(shape = RoundedCornerShape(12.dp), border = BorderStroke(1.dp, BorderGrey), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
+                    Box {
+                        ScanPageImage(docId, page, Modifier.fillMaxWidth())
+                        Text("${idx + 1}", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold, modifier = Modifier.align(Alignment.TopStart).padding(8.dp).background(DeepNavy, RoundedCornerShape(6.dp)).padding(horizontal = 6.dp, vertical = 2.dp))
+                    }
+                }
+            }
+        }
+        Row(Modifier.fillMaxWidth().padding(vertical = 12.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            OutlinedButton(onClick = onBack, modifier = Modifier.weight(1f).height(50.dp), shape = RoundedCornerShape(14.dp)) { Text("Edit Pages", color = DeepNavy, fontWeight = FontWeight.SemiBold) }
+            Button(onClick = onExport, enabled = pages.isNotEmpty(), modifier = Modifier.weight(1.6f).height(50.dp), colors = ButtonDefaults.buttonColors(containerColor = Orange, contentColor = Color.White), shape = RoundedCornerShape(14.dp)) {
+                Text("Export Document", fontWeight = FontWeight.Bold)
+            }
+        }
+    }
+}
+
+@Composable
+private fun ScannerMyScansScreen(
+    modifier: Modifier,
+    docs: List<ScansStore.DocMeta>,
+    docThumbs: Map<String, ImageBitmap?>,
+    docSizes: Map<String, Long>,
+    query: String,
+    onQuery: (String) -> Unit,
+    sort: String,
+    onSort: (String) -> Unit,
+    folder: String?,
+    onFolder: (String?) -> Unit,
+    onBack: () -> Unit,
+    onOpen: (String) -> Unit,
+    onDelete: (String) -> Unit,
+    onRename: (String, String) -> Unit,
+    onShare: (String) -> Unit,
+    onMoveToFolder: (String, String) -> Unit,
+    onRenameFolder: (String, String) -> Unit,
+    onDeleteFolder: (String) -> Unit,
+    onExportAgain: (String) -> Unit,
+    onThumbNeeded: (String) -> Unit
+) {
+    // His spec, Screen 10: search, full sort set (incl. file size), folder management,
+    // per-scan Open / Rename / Share / Export Again / Move to Folder / Delete.
+    var renameId by remember { mutableStateOf<String?>(null) }
+    var menuId by remember { mutableStateOf<String?>(null) }
+    var moveId by remember { mutableStateOf<String?>(null) }
+    var manageOpen by remember { mutableStateOf(false) }
+    var folderRename by remember { mutableStateOf<String?>(null) }
+    var folderDelete by remember { mutableStateOf<String?>(null) }
+    val folders = docs.map { it.folder }.filter { it.isNotBlank() }.distinct().sorted()
+    val anyUnfiled = docs.any { it.folder.isBlank() }
+    val filtered = docs
+        .filter { query.isBlank() || it.name.contains(query.trim(), ignoreCase = true) }
+        .filter { d -> folder == null || (if (folder.isEmpty()) d.folder.isBlank() else d.folder == folder) }
+        .sortedWith { a, b ->
+            when (sort) {
+                "Oldest First" -> a.modifiedAt.compareTo(b.modifiedAt)
+                "Name A-Z" -> a.name.lowercase().compareTo(b.name.lowercase())
+                "Name Z-A" -> b.name.lowercase().compareTo(a.name.lowercase())
+                "Largest File" -> (docSizes[b.id] ?: 0L).compareTo(docSizes[a.id] ?: 0L)
+                "Smallest File" -> (docSizes[a.id] ?: Long.MAX_VALUE).compareTo(docSizes[b.id] ?: Long.MAX_VALUE)
+                else -> b.modifiedAt.compareTo(a.modifiedAt)   // Newest First
+            }
+        }
+    Column(modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).padding(horizontal = 16.dp)) {
+        Row(Modifier.fillMaxWidth().padding(top = 12.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = onBack) { Icon(Icons.Default.ArrowBack, contentDescription = "Back", tint = DeepNavy, modifier = Modifier.size(24.dp)) }
+            Text("My Scans", color = DeepNavy, fontSize = 20.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+            IconButton(onClick = { manageOpen = true }) { Icon(Icons.Default.Folder, contentDescription = "Manage folders", tint = DeepNavy, modifier = Modifier.size(22.dp)) }
+        }
+        OutlinedTextField(
+            value = query, onValueChange = onQuery, singleLine = true,
+            placeholder = { Text("Search by name", fontSize = 14.sp) },
+            leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, tint = Slate, modifier = Modifier.size(20.dp)) },
+            modifier = Modifier.fillMaxWidth()
+        )
+        if (folders.isNotEmpty() || anyUnfiled) {
+            Row(Modifier.fillMaxWidth().padding(top = 8.dp).horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                val chipMod: (Boolean) -> Modifier = { sel -> Modifier.clip(RoundedCornerShape(12.dp)).background(if (sel) SkyBlue else PaleBlue).padding(horizontal = 14.dp, vertical = 9.dp) }
+                Box(chipMod(folder == null).clickable { onFolder(null) }) { Text("All", color = if (folder == null) Color.White else DeepNavy, fontSize = 12.sp, fontWeight = FontWeight.SemiBold) }
+                if (anyUnfiled) Box(chipMod(folder == "").clickable { onFolder("") }) { Text("No folder", color = if (folder == "") Color.White else DeepNavy, fontSize = 12.sp, fontWeight = FontWeight.SemiBold) }
+                folders.forEach { f -> Box(chipMod(folder == f).clickable { onFolder(f) }) { Text(f, color = if (folder == f) Color.White else DeepNavy, fontSize = 12.sp, fontWeight = FontWeight.SemiBold) } }
+            }
+        }
+        ScanChipRow(listOf("Newest First", "Oldest First", "Name A-Z", "Name Z-A", "Largest File", "Smallest File"), sort, onSort)
+        Spacer(Modifier.height(8.dp))
+        if (filtered.isEmpty()) {
+            Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+                Text(if (docs.isEmpty()) "No saved scans yet." else "No scans match that search or folder.", color = Slate, fontSize = 14.sp)
+            }
+        } else {
+            Column(Modifier.weight(1f).verticalScroll(rememberScrollState())) {
+                filtered.forEach { doc ->
+                    LaunchedEffect(doc.id) { onThumbNeeded(doc.id) }
+                    Card(
+                        modifier = Modifier.fillMaxWidth().padding(bottom = 10.dp).clickable { onOpen(doc.id) },
+                        shape = RoundedCornerShape(14.dp),
+                        border = BorderStroke(1.dp, BorderGrey),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+                    ) {
+                        Row(Modifier.padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Box(Modifier.size(52.dp).clip(RoundedCornerShape(10.dp)).background(SoftGrey).border(1.dp, BorderGrey, RoundedCornerShape(10.dp)), contentAlignment = Alignment.Center) {
+                                val t = docThumbs[doc.id]
+                                if (t != null) Image(bitmap = t, contentDescription = null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+                                else Icon(Icons.Default.Description, contentDescription = null, tint = Slate, modifier = Modifier.size(24.dp))
+                            }
+                            Spacer(Modifier.width(12.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text(doc.name, color = DeepNavy, fontWeight = FontWeight.SemiBold, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                val fmtLabel = doc.coverExport?.substringAfterLast('.', "")?.uppercase()?.ifBlank { null }
+                                val sizeLabel = docSizes[doc.id]?.let { formatBytes(it) }
+                                Text(
+                                    listOfNotNull(
+                                        "${doc.pages.size} page${if (doc.pages.size == 1) "" else "s"}",
+                                        fmtLabel ?: "Not exported",
+                                        sizeLabel,
+                                        SimpleDateFormat("d MMM yyyy", Locale.getDefault()).format(Date(doc.modifiedAt))
+                                    ).joinToString(" · "),
+                                    color = Slate, fontSize = 12.sp
+                                )
+                                if (doc.folder.isNotBlank()) Text(doc.folder, color = SkyBlue, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                            }
+                            IconButton(onClick = { menuId = doc.id }) { Icon(Icons.Default.MoreVert, contentDescription = "Document options", tint = Slate, modifier = Modifier.size(20.dp)) }
+                        }
+                    }
+                }
+                Spacer(Modifier.height(12.dp))
+            }
+        }
+    }
+    val menuDocId = menuId
+    if (menuDocId != null) {
+        AlertDialog(
+            onDismissRequest = { menuId = null },
+            title = { Text(docs.firstOrNull { it.id == menuDocId }?.name ?: "Scan", maxLines = 1, overflow = TextOverflow.Ellipsis) },
+            text = {
+                Column {
+                    Text("Open", color = DeepNavy, fontSize = 15.sp, modifier = Modifier.fillMaxWidth().clickable { menuId = null; onOpen(menuDocId) }.padding(vertical = 12.dp))
+                    Text("Rename", color = DeepNavy, fontSize = 15.sp, modifier = Modifier.fillMaxWidth().clickable { menuId = null; renameId = menuDocId }.padding(vertical = 12.dp))
+                    Text("Share", color = DeepNavy, fontSize = 15.sp, modifier = Modifier.fillMaxWidth().clickable { menuId = null; onShare(menuDocId) }.padding(vertical = 12.dp))
+                    Text("Export Again", color = DeepNavy, fontSize = 15.sp, modifier = Modifier.fillMaxWidth().clickable { menuId = null; onExportAgain(menuDocId) }.padding(vertical = 12.dp))
+                    Text("Move to Folder", color = DeepNavy, fontSize = 15.sp, modifier = Modifier.fillMaxWidth().clickable { menuId = null; moveId = menuDocId }.padding(vertical = 12.dp))
+                    Text("Delete", color = Color(0xFFD32F2F), fontSize = 15.sp, modifier = Modifier.fillMaxWidth().clickable { menuId = null; onDelete(menuDocId) }.padding(vertical = 12.dp))
+                }
+            },
+            confirmButton = { TextButton(onClick = { menuId = null }) { Text("Cancel") } }
+        )
+    }
+    val renameDocId = renameId
+    if (renameDocId != null) {
+        var nameText by remember(renameDocId) { mutableStateOf(docs.firstOrNull { it.id == renameDocId }?.name ?: "") }
+        AlertDialog(
+            onDismissRequest = { renameId = null },
+            title = { Text("Rename") },
+            text = { OutlinedTextField(value = nameText, onValueChange = { nameText = it }, singleLine = true, modifier = Modifier.fillMaxWidth()) },
+            confirmButton = { TextButton(onClick = { renameId = null; onRename(renameDocId, nameText) }) { Text("Save") } },
+            dismissButton = { TextButton(onClick = { renameId = null }) { Text("Cancel") } }
+        )
+    }
+    val moveDocId = moveId
+    if (moveDocId != null) {
+        var newFolder by remember(moveDocId) { mutableStateOf("") }
+        AlertDialog(
+            onDismissRequest = { moveId = null },
+            title = { Text("Move to Folder") },
+            text = {
+                Column {
+                    Text("No folder", color = DeepNavy, fontSize = 15.sp, modifier = Modifier.fillMaxWidth().clickable { moveId = null; onMoveToFolder(moveDocId, "") }.padding(vertical = 10.dp))
+                    folders.forEach { f ->
+                        Text(f, color = DeepNavy, fontSize = 15.sp, modifier = Modifier.fillMaxWidth().clickable { moveId = null; onMoveToFolder(moveDocId, f) }.padding(vertical = 10.dp))
+                    }
+                    OutlinedTextField(value = newFolder, onValueChange = { newFolder = it }, singleLine = true, placeholder = { Text("New folder name", fontSize = 14.sp) }, modifier = Modifier.fillMaxWidth().padding(top = 6.dp))
+                }
+            },
+            confirmButton = { TextButton(onClick = { moveId = null; onMoveToFolder(moveDocId, newFolder) }, enabled = newFolder.isNotBlank()) { Text("Create & Move") } },
+            dismissButton = { TextButton(onClick = { moveId = null }) { Text("Cancel") } }
+        )
+    }
+    if (manageOpen) {
+        AlertDialog(
+            onDismissRequest = { manageOpen = false },
+            title = { Text("Folders") },
+            text = {
+                Column {
+                    if (folders.isEmpty()) {
+                        Text("No folders yet. Use Move to Folder on a scan to create one - for example Personal Documents, Work Documents, Bills & Invoices or Certificates.", color = Slate, fontSize = 13.sp, lineHeight = 18.sp)
+                    } else {
+                        folders.forEach { f ->
+                            val count = docs.count { it.folder == f }
+                            Row(Modifier.fillMaxWidth().padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Text(f, color = DeepNavy, fontSize = 15.sp, modifier = Modifier.weight(1f))
+                                Text("$count", color = Slate, fontSize = 13.sp)
+                                TextButton(onClick = { folderRename = f }) { Text("Rename", fontSize = 13.sp) }
+                                TextButton(onClick = { folderDelete = f }) { Text("Delete", color = Color(0xFFD32F2F), fontSize = 13.sp) }
+                            }
+                        }
+                        Text("Folders are created from a scan's Move to Folder action.", color = Slate, fontSize = 12.sp, lineHeight = 16.sp, modifier = Modifier.padding(top = 6.dp))
+                    }
+                }
+            },
+            confirmButton = { TextButton(onClick = { manageOpen = false }) { Text("Done") } }
+        )
+    }
+    val fr = folderRename
+    if (fr != null) {
+        var t by remember(fr) { mutableStateOf(fr) }
+        AlertDialog(
+            onDismissRequest = { folderRename = null },
+            title = { Text("Rename folder") },
+            text = { OutlinedTextField(value = t, onValueChange = { t = it }, singleLine = true, modifier = Modifier.fillMaxWidth()) },
+            confirmButton = { TextButton(onClick = { folderRename = null; onRenameFolder(fr, t) }, enabled = t.isNotBlank() && t.trim() != fr) { Text("Save") } },
+            dismissButton = { TextButton(onClick = { folderRename = null }) { Text("Cancel") } }
+        )
+    }
+    val fd = folderDelete
+    if (fd != null) {
+        AlertDialog(
+            onDismissRequest = { folderDelete = null },
+            title = { Text("Delete folder?") },
+            text = { Text("Only the folder is removed. Your scans stay saved and move back to No folder - nothing is deleted.", color = DocBody, fontSize = 14.sp, lineHeight = 20.sp) },
+            confirmButton = { TextButton(onClick = { folderDelete = null; manageOpen = false; onDeleteFolder(fd) }) { Text("Delete Folder", color = Color(0xFFD32F2F)) } },
+            dismissButton = { TextButton(onClick = { folderDelete = null }) { Text("Cancel") } }
+        )
+    }
+}
+
+
+@Composable
+private fun ScannerSettingsScreen(
+    modifier: Modifier,
+    prefs: android.content.SharedPreferences,
+    storageBytes: Long,
+    onClearTemp: () -> Unit,
+    onPrivacy: () -> Unit,
+    onBack: () -> Unit,
+    onAbout: () -> Unit,
+    themeMode: String,
+    onThemeMode: (String) -> Unit
+) {
+    // Local copies so chips/switches redraw instantly; written straight through to prefs.
+    var defaultFilter by remember { mutableStateOf(prefs.getString("scan_default_filter", "original") ?: "original") }
+    var autoEnhance by remember { mutableStateOf(prefs.getBoolean("scan_auto_enhance", false)) }
+    var defaultPageSize by remember { mutableStateOf(prefs.getString("scan_default_pagesize", "A4") ?: "A4") }
+    var defaultFormat by remember { mutableStateOf(prefs.getString("scan_default_format", "PDF") ?: "PDF") }
+    var defaultQuality by remember { mutableStateOf(prefs.getString("scan_default_quality", "High") ?: "High") }
+    Column(modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).verticalScroll(rememberScrollState()).padding(horizontal = 16.dp)) {
+        Row(Modifier.fillMaxWidth().padding(top = 12.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = onBack) { Icon(Icons.Default.ArrowBack, contentDescription = "Back", tint = DeepNavy, modifier = Modifier.size(24.dp)) }
+            Text("Scanner Settings", color = DeepNavy, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+        }
+        Text("Scanning", color = DeepNavy, fontWeight = FontWeight.Bold, fontSize = 14.sp, modifier = Modifier.padding(top = 8.dp, bottom = 6.dp))
+        Text("Default filter for new pages", color = Slate, fontSize = 12.sp, modifier = Modifier.padding(bottom = 6.dp))
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            items(ScanEnhance.FILTERS.size) { i ->
+                val fid = ScanEnhance.FILTERS[i]
+                val sel = defaultFilter == fid
+                Box(Modifier.clip(RoundedCornerShape(12.dp)).background(if (sel) SkyBlue else PaleBlue).clickable {
+                    defaultFilter = fid; prefs.edit().putString("scan_default_filter", fid).apply()
+                }.padding(horizontal = 12.dp, vertical = 9.dp)) {
+                    Text(ScanEnhance.filterLabel(fid), color = if (sel) Color.White else DeepNavy, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                }
+            }
+        }
+        Row(Modifier.fillMaxWidth().padding(top = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text("Automatic enhancement", color = DeepNavy, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                Text("Apply Auto Enhance to new pages", color = Slate, fontSize = 12.sp)
+            }
+            Switch(checked = autoEnhance, onCheckedChange = { autoEnhance = it; prefs.edit().putBoolean("scan_auto_enhance", it).apply() })
+        }
+        Text("Export Defaults", color = DeepNavy, fontWeight = FontWeight.Bold, fontSize = 14.sp, modifier = Modifier.padding(top = 16.dp, bottom = 6.dp))
+        Text("Default page size", color = Slate, fontSize = 12.sp, modifier = Modifier.padding(bottom = 6.dp))
+        ScanChipRow(listOf("A4", "A5", "A3", "Letter", "Legal", "Original"), defaultPageSize) { defaultPageSize = it; prefs.edit().putString("scan_default_pagesize", it).apply() }
+        Text("Default export format", color = Slate, fontSize = 12.sp, modifier = Modifier.padding(top = 12.dp, bottom = 6.dp))
+        ScanChipRow(listOf("PDF", "PNG", "JPG"), defaultFormat) { defaultFormat = it; prefs.edit().putString("scan_default_format", it).apply() }
+        Text("Default image quality", color = Slate, fontSize = 12.sp, modifier = Modifier.padding(top = 12.dp, bottom = 6.dp))
+        ScanChipRow(listOf("Standard", "High", "Maximum"), defaultQuality) { defaultQuality = it; prefs.edit().putString("scan_default_quality", it).apply() }
+        Text("Storage", color = DeepNavy, fontWeight = FontWeight.Bold, fontSize = 14.sp, modifier = Modifier.padding(top = 16.dp, bottom = 6.dp))
+        Text("My Scans uses ${formatBytes(storageBytes)} on this phone. Original images are always kept, untouched, in the app's private storage.", color = Slate, fontSize = 12.sp, lineHeight = 16.sp)
+        OutlinedButton(onClick = onClearTemp, modifier = Modifier.fillMaxWidth().padding(top = 8.dp).height(48.dp), shape = RoundedCornerShape(14.dp)) {
+            Text("Clear Temporary Files", color = DeepNavy, fontWeight = FontWeight.SemiBold)
+        }
+        Text("App Preferences", color = DeepNavy, fontWeight = FontWeight.Bold, fontSize = 14.sp, modifier = Modifier.padding(top = 16.dp, bottom = 6.dp))
+        Text("Theme", color = DeepNavy, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+        Text("Light, Dark, or System (follows your phone's theme)", color = Slate, fontSize = 12.sp, modifier = Modifier.padding(bottom = 6.dp))
+        ScanChipRow(listOf("Light", "Dark", "System"), themeMode.replaceFirstChar { it.uppercase() }) { onThemeMode(it.lowercase()) }
+        Text("About", color = DeepNavy, fontWeight = FontWeight.Bold, fontSize = 14.sp, modifier = Modifier.padding(top = 16.dp, bottom = 6.dp))
+        Text("About A2Z Image Craft", color = SkyBlue, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.clip(RoundedCornerShape(8.dp)).clickable { onAbout() }.padding(vertical = 8.dp, horizontal = 4.dp))
+        Text("Privacy information", color = SkyBlue, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.clip(RoundedCornerShape(8.dp)).clickable { onPrivacy() }.padding(vertical = 8.dp, horizontal = 4.dp))
+        OutlinedButton(onClick = {
+            prefs.edit()
+                .remove("scan_default_filter").remove("scan_auto_enhance")
+                .remove("scan_default_pagesize").remove("scan_default_format").remove("scan_default_quality")
+                .apply()
+            defaultFilter = "original"; autoEnhance = false; defaultPageSize = "A4"; defaultFormat = "PDF"; defaultQuality = "High"
+        }, modifier = Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 16.dp).height(48.dp), shape = RoundedCornerShape(14.dp)) {
+            Text("Reset Scanner Settings", color = DeepNavy, fontWeight = FontWeight.SemiBold)
+        }
+    }
+}
+
+// ---- Scanner Stage 2: Crop & Perspective Correction (Screen 3) + Document Enhancement (Screen 4) ----
+
+@Composable
+private fun ScannerCropScreen(
+    modifier: Modifier,
+    docId: String,
+    page: ScanPageUi,
+    onCancel: () -> Unit,
+    onApply: (String) -> Unit
+) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val scope = rememberCoroutineScope()
+    // Session values; written back to the page only on Apply (Cancel restores the entry state).
+    var sessionRot by remember(page.id) { mutableStateOf(page.rotation) }
+    var straightenAngle by remember(page.id) { mutableStateOf(page.straighten) }
+    var quad by remember(page.id) { mutableStateOf(page.crop?.copyOf() ?: ScanGeometry.defaultQuad()) }
+    var rotated by remember(page.id) { mutableStateOf<Bitmap?>(null) }
+    var base by remember(page.id) { mutableStateOf<Bitmap?>(null) }
+    var showStraighten by remember(page.id) { mutableStateOf(page.straighten != 0f) }
+    var scale by remember(page.id) { mutableStateOf(1f) }
+    var offset by remember(page.id) { mutableStateOf(Offset.Zero) }
+    var viewW by remember(page.id) { mutableStateOf(0f) }
+    var viewH by remember(page.id) { mutableStateOf(0f) }
+    LaunchedEffect(page.id, sessionRot) {
+        rotated = withContext(Dispatchers.IO) {
+            val f = ScansStore.pageFile(context, docId, page.id)
+            val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            BitmapFactory.decodeFile(f.absolutePath, bounds)
+            var s = 1
+            while (bounds.outWidth / (s * 2) >= 1400 && bounds.outHeight / (s * 2) >= 1400) s *= 2
+            var b = BitmapFactory.decodeFile(f.absolutePath, BitmapFactory.Options().apply { inSampleSize = s }) ?: return@withContext null
+            if (sessionRot != 0) {
+                val m = android.graphics.Matrix().apply { postRotate(sessionRot.toFloat()) }
+                val r = Bitmap.createBitmap(b, 0, 0, b.width, b.height, m, true)
+                if (r != b) b.recycle()
+                b = r
+            }
+            b
+        }
+    }
+    LaunchedEffect(rotated, straightenAngle) {
+        val r = rotated ?: return@LaunchedEffect
+        base = withContext(Dispatchers.Default) {
+            if (straightenAngle != 0f) ScanGeometry.straighten(r, straightenAngle) else r
+        }
+    }
+    fun rotateSession(cw: Boolean) {
+        sessionRot = (sessionRot + (if (cw) 90 else -90) + 360) % 360
+        quad = ScanGeometry.rotateQuad90Rel(quad, cw)
+        straightenAngle = 0f
+    }
+    Column(modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
+        Row(Modifier.fillMaxWidth().padding(top = 12.dp, bottom = 4.dp, start = 16.dp, end = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = onCancel) { Icon(Icons.Default.Close, contentDescription = "Cancel", tint = DeepNavy, modifier = Modifier.size(24.dp)) }
+            Text("Crop & Adjust", color = DeepNavy, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+        }
+        Box(
+            Modifier.weight(1f).fillMaxWidth().clipToBounds()
+                .onGloballyPositioned { viewW = it.size.width.toFloat(); viewH = it.size.height.toFloat() }
+                .pointerInput(Unit) {
+                    detectTransformGestures { _, pan, zoom, _ ->
+                        val newScale = (scale * zoom).coerceIn(1f, 4f)
+                        offset = if (newScale > 1f) offset + pan else Offset.Zero
+                        scale = newScale
+                    }
+                }
+        ) {
+            val bmp = base
+            if (bmp == null) {
+                Text("Loading…", color = Slate, modifier = Modifier.align(Alignment.Center))
+            } else {
+                val bw = bmp.width.toFloat(); val bh = bmp.height.toFloat()
+                val fit = minOf(viewW / bw, viewH / bh)
+                val fw = bw * fit; val fh = bh * fit
+                val fl = (viewW - fw) / 2f; val ft = (viewH - fh) / 2f
+                val dispQuad = if (straightenAngle != 0f) ScanGeometry.rotateQuadFree(quad, straightenAngle, bmp.width, bmp.height) else quad
+                Box(Modifier.fillMaxSize().graphicsLayer(scaleX = scale, scaleY = scale, translationX = offset.x, translationY = offset.y)) {
+                    Image(bitmap = bmp.asImageBitmap(), contentDescription = "Page to crop", modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Fit)
+                    Canvas(Modifier.fillMaxSize()) {
+                        if (viewW > 0f && dispQuad.size == 8) {
+                            val pts = (0 until 4).map { Offset(fl + dispQuad[it * 2] * fw, ft + dispQuad[it * 2 + 1] * fh) }
+                            val path = Path().apply {
+                                moveTo(pts[0].x, pts[0].y)
+                                for (k in 1..3) lineTo(pts[k].x, pts[k].y)
+                                close()
+                            }
+                            drawPath(path, SkyBlue, style = Stroke(width = 4f))
+                            pts.forEach {
+                                drawCircle(Color.White, radius = 17f, center = it)
+                                drawCircle(SkyBlue, radius = 12f, center = it)
+                            }
+                        }
+                    }
+                    // Invisible drag layer for the four corner handles (positions are in the
+                    // untransformed container frame because this layer sits inside the zoom layer).
+                    Box(Modifier.fillMaxSize().pointerInput(bmp, straightenAngle) {
+                        awaitEachGesture {
+                            val down = awaitFirstDown(requireUnconsumed = false)
+                            if (viewW <= 0f) return@awaitEachGesture
+                            val ix = ((down.position.x - fl) / fw).coerceIn(0f, 1f)
+                            val iy = ((down.position.y - ft) / fh).coerceIn(0f, 1f)
+                            var best = -1; var bestD = 0.08f * minOf(bw, bh)
+                            for (hIdx in 0 until 4) {
+                                val hx = dispQuad[hIdx * 2] * bw; val hy = dispQuad[hIdx * 2 + 1] * bh
+                                val d = kotlin.math.hypot(hx - ix * bw, hy - iy * bh)
+                                if (d < bestD) { bestD = d; best = hIdx }
+                            }
+                            if (best >= 0) {
+                                down.consume()
+                                drag(down.id) { change ->
+                                    change.consume()
+                                    val px = ((change.position.x - fl) / fw).coerceIn(0f, 1f)
+                                    val py = ((change.position.y - ft) / fh).coerceIn(0f, 1f)
+                                    // display frame -> stored (unstraightened) frame
+                                    val mapped = if (straightenAngle != 0f)
+                                        ScanGeometry.rotateQuadFree(floatArrayOf(px, py, px, py, px, py, px, py), -straightenAngle, bmp.width, bmp.height)
+                                    else floatArrayOf(px, py)
+                                    val nq = quad.copyOf()
+                                    nq[best * 2] = mapped[0]
+                                    nq[best * 2 + 1] = mapped[1]
+                                    quad = nq
+                                }
+                            }
+                        }
+                    })
+                }
+            }
+        }
+        if (showStraighten) {
+            Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text("Straighten", color = DeepNavy, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.width(92.dp))
+                A2ZSlider(
+                    value = straightenAngle,
+                    onValueChange = { straightenAngle = (it * 2).toInt() / 2f },
+                    valueRange = -20f..20f,
+                    centered = true,
+                    modifier = Modifier.weight(1f)
+                )
+                Text("${straightenAngle}°", color = Slate, fontSize = 12.sp, modifier = Modifier.width(44.dp))
+            }
+        }
+        Row(
+            Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
+            horizontalArrangement = Arrangement.SpaceEvenly
+        ) {
+            listOf(
+                Triple("Auto Crop", Icons.Default.AutoFixHigh) {
+                    val b = base ?: return@Triple
+                    scope.launch {
+                        val q = withContext(Dispatchers.Default) { ScanGeometry.autoBoundary(b) }
+                        quad = if (straightenAngle != 0f) ScanGeometry.rotateQuadFree(q, -straightenAngle, b.width, b.height) else q
+                    }
+                },
+                Triple("Straighten", Icons.Default.Straighten) { showStraighten = !showStraighten },
+                Triple("Rotate Left", Icons.Default.RotateLeft) { rotateSession(false) },
+                Triple("Rotate Right", Icons.Default.RotateRight) { rotateSession(true) },
+                Triple("Fit", Icons.Default.FitScreen) { scale = 1f; offset = Offset.Zero }
+            ).forEach { (label, icon, action) ->
+                Column(
+                    Modifier.clip(RoundedCornerShape(10.dp)).clickable { action() }.padding(horizontal = 8.dp, vertical = 6.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Icon(icon, contentDescription = null, tint = SkyBlue, modifier = Modifier.size(22.dp))
+                    Spacer(Modifier.height(2.dp))
+                    Text(label, color = DeepNavy, fontSize = 10.sp, maxLines = 1, softWrap = false)
+                }
+            }
+        }
+        Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            OutlinedButton(onClick = onCancel, modifier = Modifier.weight(1f).height(50.dp), shape = RoundedCornerShape(14.dp)) { Text("Cancel", color = DeepNavy, fontWeight = FontWeight.SemiBold) }
+            OutlinedButton(onClick = {
+                // Reset = restore the crop the page had when this screen opened (his spec: "restore original crop")
+                sessionRot = page.rotation
+                straightenAngle = page.straighten
+                quad = page.crop?.copyOf() ?: ScanGeometry.defaultQuad()
+                scale = 1f; offset = Offset.Zero
+            }, modifier = Modifier.weight(1f).height(50.dp), shape = RoundedCornerShape(14.dp)) { Text("Reset", color = DeepNavy, fontWeight = FontWeight.SemiBold) }
+            Button(onClick = {
+                page.rotation = sessionRot
+                page.straighten = straightenAngle
+                page.crop = quad
+                onApply(page.id)
+            }, modifier = Modifier.weight(1.4f).height(50.dp), colors = ButtonDefaults.buttonColors(containerColor = Orange, contentColor = Color.White), shape = RoundedCornerShape(14.dp)) {
+                Text("Apply", fontWeight = FontWeight.Bold)
+            }
+        }
+    }
+}
+
+@Composable
+private fun ScannerEnhanceScreen(
+    modifier: Modifier,
+    docId: String,
+    page: ScanPageUi,
+    onCancel: () -> Unit,
+    onApply: (String) -> Unit
+) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    var renderTick by remember(page.id) { mutableStateOf(0) }
+    var preview by remember(page.id) { mutableStateOf<Bitmap?>(null) }
+    var unprocessed by remember(page.id) { mutableStateOf<Bitmap?>(null) }
+    var comparing by remember { mutableStateOf(false) }
+    LaunchedEffect(page.id, renderTick) {
+        val pair = withContext(Dispatchers.IO) {
+            val f = ScansStore.pageFile(context, docId, page.id)
+            val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            BitmapFactory.decodeFile(f.absolutePath, bounds)
+            var s = 1
+            while (bounds.outWidth / (s * 2) >= 1200 && bounds.outHeight / (s * 2) >= 1200) s *= 2
+            var b = BitmapFactory.decodeFile(f.absolutePath, BitmapFactory.Options().apply { inSampleSize = s }) ?: return@withContext null
+            if (page.rotation != 0) {
+                val m = android.graphics.Matrix().apply { postRotate(page.rotation.toFloat()) }
+                val r = Bitmap.createBitmap(b, 0, 0, b.width, b.height, m, true)
+                if (r != b) b.recycle()
+                b = r
+            }
+            if (page.straighten != 0f) {
+                val r = ScanGeometry.straighten(b, page.straighten)
+                b.recycle(); b = r
+            }
+            if (page.crop != null) {
+                val q = if (page.straighten != 0f) ScanGeometry.rotateQuadFree(page.crop!!, page.straighten, b.width, b.height) else page.crop!!
+                val c = ScanGeometry.perspectiveCrop(b, q, maxDim = 2000)
+                b.recycle(); b = c
+            }
+            val processed = ScanEnhance.render(b, page.filter, page.adjust)
+            processed to b   // b = cropped-but-unfiltered, kept for Compare Original
+        }
+        if (pair != null) {
+            // No manual recycle: Compose may still be drawing the previous frame's bitmap.
+            preview = pair.first
+            unprocessed = pair.second
+        }
+    }
+    Column(modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
+        Row(Modifier.fillMaxWidth().padding(top = 12.dp, bottom = 4.dp, start = 16.dp, end = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = onCancel) { Icon(Icons.Default.Close, contentDescription = "Cancel", tint = DeepNavy, modifier = Modifier.size(24.dp)) }
+            Text("Enhance", color = DeepNavy, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+        }
+        Box(Modifier.weight(1f).fillMaxWidth().padding(horizontal = 16.dp).clip(RoundedCornerShape(14.dp)).background(SoftGrey), contentAlignment = Alignment.Center) {
+            val shown = if (comparing) unprocessed else preview
+            if (shown != null) Image(bitmap = shown.asImageBitmap(), contentDescription = if (comparing) "Original page" else "Enhanced page", modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Fit)
+            else Text("Rendering…", color = Slate)
+            if (comparing) Text("Original", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold, modifier = Modifier.align(Alignment.TopStart).padding(10.dp).background(DeepNavy, RoundedCornerShape(8.dp)).padding(horizontal = 8.dp, vertical = 3.dp))
+        }
+        Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp)) {
+            // The six filters from his spec, in his order.
+            LazyRow(Modifier.padding(top = 10.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                items(ScanEnhance.FILTERS.size) { i ->
+                    val fid = ScanEnhance.FILTERS[i]
+                    val selected = page.filter == fid
+                    Box(
+                        Modifier.clip(RoundedCornerShape(12.dp)).background(if (selected) SkyBlue else PaleBlue).clickable { page.filter = fid; renderTick++ }.padding(horizontal = 12.dp, vertical = 8.dp)
+                    ) {
+                        Text(ScanEnhance.filterLabel(fid), color = if (selected) Color.White else DeepNavy, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, softWrap = false)
+                    }
+                }
+            }
+            @Composable
+            fun adjSlider(label: String, value: Float, range: ClosedFloatingPointRange<Float>, onChange: (Float) -> Unit) {
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Text(label, color = DeepNavy, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.width(130.dp))
+                    A2ZSlider(value = value, onValueChange = onChange, onValueChangeFinished = { renderTick++ }, valueRange = range, centered = range.start < 0f, modifier = Modifier.weight(1f))
+                }
+            }
+            adjSlider("Brightness", page.adjust.brightness, -100f..100f) { page.adjust.brightness = it }
+            adjSlider("Contrast", page.adjust.contrast, -100f..100f) { page.adjust.contrast = it }
+            adjSlider("Highlights", page.adjust.highlights, -100f..100f) { page.adjust.highlights = it }
+            adjSlider("Shadows", page.adjust.shadows, -100f..100f) { page.adjust.shadows = it }
+            adjSlider("Sharpness", page.adjust.sharpness, 0f..100f) { page.adjust.sharpness = it }
+            adjSlider("Background Whitening", page.adjust.whitening, 0f..100f) { page.adjust.whitening = it }
+            adjSlider("Shadow Reduction", page.adjust.shadowReduction, 0f..100f) { page.adjust.shadowReduction = it }
+            Row(Modifier.fillMaxWidth().padding(top = 4.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Box(
+                    Modifier.clip(RoundedCornerShape(12.dp)).background(PaleBlue).pointerInput(Unit) { detectTapGestures(onPress = { comparing = true; tryAwaitRelease(); comparing = false }) }.padding(horizontal = 14.dp, vertical = 10.dp)
+                ) { Text("Hold: Compare Original", color = DeepNavy, fontSize = 12.sp, fontWeight = FontWeight.SemiBold) }
+                Box(
+                    Modifier.clip(RoundedCornerShape(12.dp)).background(PaleBlue).clickable {
+                        page.adjust.copyFrom(ScanEnhance.DocParams()); page.filter = "original"; renderTick++
+                    }.padding(horizontal = 14.dp, vertical = 10.dp)
+                ) { Text("Reset Adjustments", color = DeepNavy, fontSize = 12.sp, fontWeight = FontWeight.SemiBold) }
+            }
+        }
+        Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            OutlinedButton(onClick = onCancel, modifier = Modifier.weight(1f).height(50.dp), shape = RoundedCornerShape(14.dp)) { Text("Cancel", color = DeepNavy, fontWeight = FontWeight.SemiBold) }
+            Button(onClick = { onApply(page.id) }, modifier = Modifier.weight(1.6f).height(50.dp), colors = ButtonDefaults.buttonColors(containerColor = Orange, contentColor = Color.White), shape = RoundedCornerShape(14.dp)) {
+                Text("Apply", fontWeight = FontWeight.Bold)
+            }
+        }
+    }
+}
+
+// ---- Scanner Stage 4: Export (Screens 7-9) ----
+
+@Composable
+private fun ScanChipRow(options: List<String>, selected: String, onSelect: (String) -> Unit) {
+    LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        items(options.size) { i ->
+            val opt = options[i]
+            val sel = opt == selected
+            Box(Modifier.clip(RoundedCornerShape(12.dp)).background(if (sel) SkyBlue else PaleBlue).clickable { onSelect(opt) }.padding(horizontal = 14.dp, vertical = 9.dp)) {
+                Text(opt, color = if (sel) Color.White else DeepNavy, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, softWrap = false)
+            }
+        }
+    }
+}
+
+@Composable
+private fun ScannerExportScreen(
+    modifier: Modifier,
+    docName: String,
+    pageCount: Int,
+    format: String,
+    onFormat: (String) -> Unit,
+    pageSize: String,
+    onPageSize: (String) -> Unit,
+    orientation: String,
+    onOrientation: (String) -> Unit,
+    margin: String,
+    onMargin: (String) -> Unit,
+    quality: String,
+    onQuality: (String) -> Unit,
+    jpgQuality: Float,
+    onJpgQuality: (Float) -> Unit,
+    name: String,
+    onName: (String) -> Unit,
+    exporting: Boolean,
+    progress: Int,
+    total: Int,
+    onCancelExport: () -> Unit,
+    onBack: () -> Unit,
+    onExport: () -> Unit,
+    marginMm: Float,
+    onMarginMm: (Float) -> Unit,
+    selectedOnly: Boolean,
+    onSelectedOnly: (Boolean) -> Unit,
+    pages: List<ScanPageUi>,
+    selectedPages: Set<String>,
+    onTogglePage: (String) -> Unit,
+    jpgWidth: String,
+    onJpgWidth: (String) -> Unit,
+    jpgEstimate: String,
+    onEstimateJpg: (Float, String) -> Unit
+) {
+    Column(modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).padding(horizontal = 16.dp)) {
+        Row(Modifier.fillMaxWidth().padding(top = 12.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = onBack, enabled = !exporting) { Icon(Icons.Default.ArrowBack, contentDescription = "Back", tint = DeepNavy, modifier = Modifier.size(24.dp)) }
+            Text("Export Document", color = DeepNavy, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+        }
+        Column(Modifier.weight(1f).verticalScroll(rememberScrollState())) {
+            Text("Format", color = DeepNavy, fontWeight = FontWeight.Bold, fontSize = 14.sp, modifier = Modifier.padding(top = 8.dp, bottom = 8.dp))
+            ScanChipRow(listOf("PDF", "PNG", "JPG"), format, onFormat)
+            if (format == "PDF") {
+                Text(
+                    if (selectedOnly) "One PDF with the ${selectedPages.size} selected page${if (selectedPages.size == 1) "" else "s"} in ${if (selectedPages.size == 1) "its" else "their"} current order."
+                    else "One PDF with all $pageCount page${if (pageCount == 1) "" else "s"} in order.",
+                    color = Slate, fontSize = 12.sp, lineHeight = 16.sp, modifier = Modifier.padding(top = 6.dp, bottom = 2.dp)
+                )
+                Text("Page Size", color = DeepNavy, fontWeight = FontWeight.SemiBold, fontSize = 13.sp, modifier = Modifier.padding(top = 12.dp, bottom = 6.dp))
+                ScanChipRow(listOf("A4", "A5", "A3", "Letter", "Legal", "Original"), pageSize, onPageSize)
+                Text("Orientation", color = DeepNavy, fontWeight = FontWeight.SemiBold, fontSize = 13.sp, modifier = Modifier.padding(top = 12.dp, bottom = 6.dp))
+                ScanChipRow(listOf("Automatic", "Portrait", "Landscape"), orientation, onOrientation)
+                Text("Margins", color = DeepNavy, fontWeight = FontWeight.SemiBold, fontSize = 13.sp, modifier = Modifier.padding(top = 12.dp, bottom = 6.dp))
+                ScanChipRow(listOf("None", "Small", "Medium", "Custom"), margin, onMargin)
+                if (margin == "Custom") {
+                    Row(Modifier.fillMaxWidth().padding(top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Text("Margin (mm)", color = DeepNavy, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.width(92.dp))
+                        A2ZSlider(value = marginMm, onValueChange = onMarginMm, valueRange = 0f..40f, modifier = Modifier.weight(1f))
+                        Text("${marginMm.toInt()} mm", color = Slate, fontSize = 12.sp, modifier = Modifier.width(48.dp))
+                    }
+                    Text("Applied in real millimetres at the export DPI above.", color = Slate, fontSize = 11.sp, lineHeight = 15.sp)
+                }
+                Text("Quality", color = DeepNavy, fontWeight = FontWeight.SemiBold, fontSize = 13.sp, modifier = Modifier.padding(top = 12.dp, bottom = 6.dp))
+                ScanChipRow(listOf("Standard", "High", "Maximum"), quality, onQuality)
+                // Honest numbers (his honesty bar): these are the render DPIs used per quality level.
+                Text(
+                    "Standard renders at 150 DPI, High at 220 DPI, Maximum at 300 DPI" + (if (pageSize != "Original") "" else " - Original keeps each page's own pixels") + ".",
+                    color = Slate, fontSize = 11.sp, lineHeight = 15.sp, modifier = Modifier.padding(top = 4.dp)
+                )
+            } else {
+                Text(
+                    if (selectedOnly) "Each selected page saves as a separate $format file (${selectedPages.size} file${if (selectedPages.size == 1) "" else "s"}) in Pictures/A2Z Image Craft."
+                    else "Each page saves as a separate $format file ($pageCount files) in Pictures/A2Z Image Craft.",
+                    color = Slate, fontSize = 12.sp, lineHeight = 16.sp, modifier = Modifier.padding(top = 6.dp, bottom = 2.dp)
+                )
+                if (format == "JPG") {
+                    Row(Modifier.fillMaxWidth().padding(top = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Text("Quality", color = DeepNavy, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.width(92.dp))
+                        A2ZSlider(value = jpgQuality, onValueChange = onJpgQuality, valueRange = 40f..100f, modifier = Modifier.weight(1f))
+                        Text("${jpgQuality.toInt()}%", color = Slate, fontSize = 12.sp, modifier = Modifier.width(40.dp))
+                    }
+                    Text("Higher quality means larger files. The exact file size shows after export.", color = Slate, fontSize = 11.sp, lineHeight = 15.sp)
+                    Text("Dimensions", color = DeepNavy, fontWeight = FontWeight.SemiBold, fontSize = 13.sp, modifier = Modifier.padding(top = 12.dp, bottom = 6.dp))
+                    ScanChipRow(listOf("Original", "Custom"), if (jpgWidth.isBlank()) "Original" else "Custom", { sel -> onJpgWidth(if (sel == "Original") "" else jpgWidth) })
+
+                        if (jpgWidth.isNotBlank()) {
+                            OutlinedTextField(
+                                value = jpgWidth, onValueChange = { v -> onJpgWidth(v.filter { it.isDigit() }.take(5)) }, singleLine = true,
+                                label = { Text("Width in pixels", fontSize = 13.sp) },
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                            Text("Height scales automatically to keep each page's shape.", color = Slate, fontSize = 11.sp, lineHeight = 15.sp, modifier = Modifier.padding(top = 2.dp))
+                        }
+                    LaunchedEffect(jpgQuality, jpgWidth, selectedOnly, selectedPages) { onEstimateJpg(jpgQuality, jpgWidth) }
+                    if (jpgEstimate.isNotBlank()) Text(jpgEstimate, color = Slate, fontSize = 11.sp, lineHeight = 15.sp, modifier = Modifier.padding(top = 6.dp))
+                }
+            }
+            Text("Pages", color = DeepNavy, fontWeight = FontWeight.SemiBold, fontSize = 13.sp, modifier = Modifier.padding(top = 12.dp, bottom = 6.dp))
+            ScanChipRow(listOf("All pages", "Selected pages"), if (selectedOnly) "Selected pages" else "All pages", { sel -> onSelectedOnly(sel == "Selected pages") })
+            if (selectedOnly) {
+                Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    pages.forEachIndexed { idx, pg ->
+                        val sel = selectedPages.contains(pg.id)
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            modifier = Modifier.clip(RoundedCornerShape(10.dp)).border(2.dp, if (sel) SkyBlue else BorderGrey, RoundedCornerShape(10.dp)).background(if (sel) PaleBlue else MaterialTheme.colorScheme.surface).clickable { onTogglePage(pg.id) }.padding(horizontal = 12.dp, vertical = 8.dp)
+                        ) {
+                            Text("Page ${idx + 1}", color = DeepNavy, fontSize = 12.sp, fontWeight = if (sel) FontWeight.Bold else FontWeight.Normal)
+                        }
+                    }
+                }
+                Text("${selectedPages.size} of ${pages.size} pages selected. Page order is set in Edit Pages.", color = Slate, fontSize = 11.sp, lineHeight = 15.sp, modifier = Modifier.padding(top = 4.dp))
+            }
+
+            Text("File Name", color = DeepNavy, fontWeight = FontWeight.SemiBold, fontSize = 13.sp, modifier = Modifier.padding(top = 14.dp, bottom = 6.dp))
+            OutlinedTextField(value = name, onValueChange = onName, singleLine = true, modifier = Modifier.fillMaxWidth())
+            Text(
+                if (format == "PDF") "Saved to Downloads/A2Z Image Craft." else "Saved to Pictures/A2Z Image Craft.",
+                color = Slate, fontSize = 11.sp, modifier = Modifier.padding(top = 4.dp, bottom = 8.dp)
+            )
+        }
+        if (exporting) {
+            // His spec, Screen 8: progress, current operation, pages processed/total, cancel.
+            Column(Modifier.fillMaxWidth().padding(vertical = 12.dp)) {
+                Text("Creating your document", color = DeepNavy, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
+                Text("Processing page $progress of $total", color = Slate, fontSize = 12.sp, modifier = Modifier.padding(top = 2.dp, bottom = 6.dp))
+                Box(Modifier.fillMaxWidth().height(8.dp).clip(RoundedCornerShape(4.dp)).background(PaleBlue)) {
+                    Box(Modifier.fillMaxWidth(if (total > 0) (progress.toFloat() / total).coerceIn(0f, 1f) else 0f).height(8.dp).clip(RoundedCornerShape(4.dp)).background(Orange))
+                }
+                OutlinedButton(onClick = onCancelExport, modifier = Modifier.fillMaxWidth().padding(top = 10.dp).height(46.dp), shape = RoundedCornerShape(14.dp)) {
+                    Text("Cancel Export", color = DeepNavy, fontWeight = FontWeight.SemiBold)
+                }
+            }
+        } else {
+            Button(onClick = onExport, enabled = pageCount > 0 && (!selectedOnly || selectedPages.isNotEmpty()), modifier = Modifier.fillMaxWidth().padding(vertical = 12.dp).height(52.dp), colors = ButtonDefaults.buttonColors(containerColor = Orange, contentColor = Color.White), shape = RoundedCornerShape(14.dp)) {
+                Text("Export Document", fontWeight = FontWeight.Bold)
+            }
+        }
+    }
+}
+
+@Composable
+private fun ScannerSuccessScreen(
+    modifier: Modifier,
+    name: String,
+    format: String,
+    pages: Int,
+    size: String,
+    onOpen: () -> Unit,
+    onShare: () -> Unit,
+    onMyScans: () -> Unit
+) {
+    Column(modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).padding(horizontal = 16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+        Spacer(Modifier.height(48.dp))
+        Box(Modifier.size(72.dp).clip(CircleShape).background(Color(0xFFE8F5E9)), contentAlignment = Alignment.Center) {
+            Icon(Icons.Default.CheckCircle, contentDescription = null, tint = Color(0xFF2E7D32), modifier = Modifier.size(44.dp))
+        }
+        Text("Document Exported Successfully", color = DeepNavy, fontSize = 20.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 16.dp))
+        Text("Your file is ready.", color = Slate, fontSize = 14.sp, modifier = Modifier.padding(top = 4.dp, bottom = 20.dp))
+        Card(shape = RoundedCornerShape(14.dp), border = BorderStroke(1.dp, BorderGrey), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface), modifier = Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text("Document Details", color = DeepNavy, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                // Actual values, never example values (his spec).
+                Text("Filename: $name", color = Slate, fontSize = 13.sp)
+                Text("Format: $format", color = Slate, fontSize = 13.sp)
+                Text("Pages: $pages", color = Slate, fontSize = 13.sp)
+                Text("File size: $size", color = Slate, fontSize = 13.sp)
+            }
+        }
+        Spacer(Modifier.weight(1f))
+        Button(onClick = onOpen, modifier = Modifier.fillMaxWidth().height(50.dp), colors = ButtonDefaults.buttonColors(containerColor = DeepNavy, contentColor = Color.White), shape = RoundedCornerShape(14.dp)) {
+            Text("Open Document", fontWeight = FontWeight.Bold)
+        }
+        OutlinedButton(onClick = onShare, modifier = Modifier.fillMaxWidth().padding(top = 8.dp).height(50.dp), shape = RoundedCornerShape(14.dp)) {
+            Text("Share Document", color = DeepNavy, fontWeight = FontWeight.SemiBold)
+        }
+        OutlinedButton(onClick = onMyScans, modifier = Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 16.dp).height(50.dp), shape = RoundedCornerShape(14.dp)) {
+            Text("Open My Scans", color = DeepNavy, fontWeight = FontWeight.SemiBold)
+        }
     }
 }

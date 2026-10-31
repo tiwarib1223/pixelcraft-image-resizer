@@ -86,7 +86,7 @@ class DarkModeShotsTest {
             shot(sc, "v107_dark_home")
             composeRule.onAllNodesWithText("Settings")[0].performClick()
             pump()
-            waitForText("Dark mode")
+            waitForText("Theme")
             shot(sc, "v107_dark_settings")
             sc.close()
         }

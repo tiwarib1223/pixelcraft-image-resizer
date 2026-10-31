@@ -754,3 +754,84 @@ Four quality checks were run on the v1.0.7 candidate before calling it final:
 
 - Print Setup's "Effective PPI" and quality card for a PDF source now use the real export render resolution (srcPdfEffectivePpi, else actualOutputPpi) instead of the small preview bitmap - a vector PDF page no longer triggers a false "Low resolution" warning. The "Image pixels" row reads "PDF page - resolution set at export" for PDF sources.
 - Device/emulator verification route checked and UNAVAILABLE on this build machine: 1 CPU core / 2 GB RAM / no KVM - the Android emulator (x86_64 and arm64 images both present) refuses to boot ("requires 2 CPU cores"). The PDF pipeline (renderSrcPdfPage ceiling, both warning cards on the real PDF path) therefore stays device-verified-only; the precise phone check is: Print > Select PDF > any PDF > A2 at 300 PPI shows the "PDF pages rendered at about 262 PPI" card before export, A3 at 300 PPI shows no card, and an A3 JPG export from a PDF source lands at exactly 3508 x 4961 px.
+
+## v1.0.8-WIP - Document Scanner (his original recording, 54s scrolled spec doc, fully re-read 2026-10-31)
+Stage 1 of 5 BUILT, compileDebugKotlin BUILD SUCCESSFUL. NOT yet the full scanner; not delivered.
+- Engine decision (grounded in official docs, parent-accepted): ML Kit Document Scanner
+  (play-services-mlkit-document-scanner:16.0.0, SCANNER_MODE_BASE) supplies the camera capture
+  flow - edge detection, auto-capture, crop, rotate, reorder. Runs inside Google Play services:
+  the app needs NO camera permission (manifest unchanged, zero-permission posture kept).
+  Real limits disclosed in the app UI: needs Google Play services + 1.7 GB RAM, first use
+  downloads models (~works offline after); unsupported phones get an honest message and
+  Import Images / Import PDF still work. No claim of universal device support.
+- Built: homepage card (appended, existing cards untouched); Scanner Home (4 entries, Recent
+  Scans latest 3, View All, empty state text from spec); Import Images review (multi-select,
+  thumbs, count, remove, add more, "Continue with N Images"); Import PDF (validation incl.
+  corrupt/no-page/200-page cap, filename+size+page count card, page thumbs, Select All/None,
+  Import All/N Pages, Cancel); Multi-Page Manager stage-1 (grid, page numbers, delete,
+  duplicate, Add Page menu with all 3 entries); My Scans stage-1 (list, open, delete with the
+  spec's confirmation wording). Originals copied untouched into private storage
+  (filesDir/scans/<docId>/), source files never modified; per-page settings model + JSON
+  persistence (ScansStore); ScanEnhance engine (6 filters + 7 manual sliders reusing
+  PhotoAdjust machinery) written for Stage 2.
+- NOT built yet: Crop & Perspective screen (Screen 3), Enhancement screen (Screen 4),
+  full Manager actions (edit/replace/reorder/rotate-selected), Full Preview, Export
+  PDF/PNG/JPG + progress + success screens, Scanner Settings, OCR (spec defers OCR itself).
+- NOT yet verified: full test suite + visual screenshot pass pending at stage completion.
+- His verbatim Privacy Policy addition (WhatsApp wamid...U4RgA=, 2026-10-31 11:29) added to
+  section 4 as a new bullet, wording unchanged. Licences gained "Google ML Kit Document
+  Scanner - Google ML Kit Terms of Service" with the ML Kit terms URL. Scanner Home shows the
+  first-use-download disclosure line. compileDebugKotlin BUILD SUCCESSFUL after both.
+
+## 2026-10-31 12:00 - Scanner Stage 5 compiled; full suite running
+- Stage 5 (My Scans full + Scanner Settings, SharedPreferences a2z_state scan_default_* keys) compiled: BUILD SUCCESSFUL 11:56 (log /tmp/scan_build10.log).
+- Full suite (testDebugUnitTest + assembleDebug) launched 11:58, log /tmp/scan_build11.log.
+- STILL TO DO before v1.0.8 delivery, in order:
+  1. Verify full suite BUILD SUCCESSFUL.
+  2. Robolectric screenshot visual pass over ALL Scanner screens (Home, Import Images, Import PDF, Manager, Crop, Enhance, Preview, Export, Success, My Scans, Settings), light + dark; fix what screenshots show.
+  3. Update What's New text + PresetsSettingsTest.
+  4. Bump versionCode 81 / versionName 1.0.8 in build.gradle.kts (LAST edit), rebuild, re-verify.
+  5. zip -> filebin bin pixelcraft-v030-bin -> re-download verify (sha256 + versionCode in zip).
+  6. Standard delivery report to parent with per-screen screenshots.
+- Honest gaps to disclose in the report: no size-based sorts in My Scans, no folder management, no OCR (spec defers it), ML Kit capture screens are Google's own UI, auto-crop is contrast-based (needs contrasting background).
+- NEXT TASK after delivery: read watermark recording /downloads/video-82806c9c.mp4 in full, extract spec to /downloads/stage2/specs/, then build Watermark (own homepage card, large workspace, internal Remove-background button for logos later).
+- 12:02: Robolectric suite failed with ClassFormatError "Too many arguments in method signature" (JVM 255-param limit): PixelCraftRoot content lambda captured 258 vars after scanner additions. FIX: added file-level ScannerRootActions holder (30 function fields), wired once in PixelCraftRoot body; RenderScanner now takes (modifier, a: ScannerRootActions) and calls a.* — content lambda captures scannerActions+scanner+screen instead of ~30 scanner-unique vars. Full suite relaunched 12:02:10, log /tmp/scan_build12.log. LEARNING: keep per-feature state/callbacks in a single holder passed to extracted dispatch composables; never let the root content lambda reference feature-local funs/launchers directly.
+
+## 2026-10-31 12:11 - JVM 255 limit: partial fix, more holder work needed
+- Suite still fails: BootstrapMethodError "bad parameter count 256" on the Scaffold content lambda (MainActivity.kt ~5392, `) { padding ->`). JVM/lambda-metafactory limit is 255 params.
+- DONE: ScannerRootActions holder (30 fields) + RenderScanner(modifier, a) + homepage card routes via scannerActions. Shaved 259 -> 256 only, because most scanner state was already inside the `scanner` ScannerUiState holder; net new unique captures from scanner work were only ~3-6 (4 launchers etc.).
+- NEXT RUN FIX (proven pattern, ~30-45 min): apply the same holder treatment to the next 1-2 tool clusters whose states live as individual remembers in PixelCraftRoot (TextPhoto: textPhotoPicker/textImagePicker + text states; Collage: collagePicker/collageReplacePicker/collageMakerPicker + CollageUiState-adjacent vals; Shop/Convert/Compress pickers). Each converted cluster removes ~5-15 captures from the content lambda. Target <=250 for margin. Steps per tool: add fields to a top-level *Actions class, wire once in body, change Render* fun signature to take the holder, sed body references, update call site.
+- VERIFY after fix: javap -p app/build/tmp/kotlin-classes/debug/com/learnifyzone/pixelcraft/MainActivityKt.class | awk counting commas - any method >250 args must be fixed BEFORE rerunning suite (saves 3-min failed runs).
+- All scanner code itself is compile-clean (compileDebugKotlin succeeded in every attempt; only the Robolectric class-load hits the JVM limit).
+- Remaining after green suite: screenshot visual pass (all Scanner screens, light+dark), What's New + PresetsSettingsTest update, bump vc 81 / 1.0.8, zip -> filebin pixelcraft-v030-bin -> re-download verify, delivery report. Then Watermark (read /downloads/video-82806c9c.mp4 fully first).
+
+## 2026-10-31 12:27 - 255-limit FIXED + spec gaps closed (parent 12:10 review)
+- JVM 255 fix DONE: ScannerRootActions holder + TextUiState holder (28 text* states moved out of PixelCraftRoot, 365 refs renamed). javap shows no method >230 params. Root cause of build17's suite failure was OOM (exit 137) from two concurrent builds - never run two gradle builds at once.
+- Parent review: folder management + size sorts are REQUIRED by spec Screen 50, not omissions. Implemented:
+  * My Scans: folder chips (All / No folder / each folder), folder manage dialog (rename, delete = scans return to No folder, never deletes scans), Move to Folder (existing + create-on-move), Export Again (opens doc straight into Export), sorts + Largest/Smallest File (via ScansStore.docBytes), card shows pages/format-or-Not exported/size/date + folder label.
+  * Preview: Share button in header (shares last export, honest snackbar if none).
+  * Export: Margins + Custom (real mm at export DPI, ScanExport.renderPageOnSheet customMarginMm); Pages All/Selected with page chips; JPG Dimensions Original/Custom width px (height auto); JPG estimated total size line (encodes first target page at chosen settings, labeled approximate).
+  * Settings: Dark mode row (same app-wide setting), About A2Z Image Craft row (new "about" DocPage: version, on-device, Made by Bitty, support email), originals-untouched info already present.
+- CONCRETE BLOCKERS to report (not silently dropped): (1) spec's default flash mode + Auto Capture on/off - ML Kit GmsDocumentScannerOptions exposes NO flash/auto-capture defaults; those live in Google's capture UI only. (2) Light/Dark/System theme - app theme engine is Boolean Light/Dark; adding System is an app-wide change (PixelCraftApp + main Settings page), recommend deliberate separate change. Scanner settings expose the same Light/Dark control.
+- Suite running: /tmp/scan_build20.log. Then: screenshot visual pass (all Scanner screens incl. new folder/sort/export UI, light+dark), What's New + PresetsSettingsTest, bump 81/1.0.8, zip/filebin/verify, delivery report. Then Watermark (read /downloads/video-82806c9c.mp4 fully first).
+
+## 2026-10-31 12:44 - Visual pass done; ONE fix pending re-verify
+- Full suite GREEN on all gap work (build20: testDebugUnitTest 27 classes 0 failures + assembleDebug BUILD SUCCESSFUL).
+- ScannerScreensTest.kt created (5 tests, 11 shots, light+dark, w360dp-h2400dp): scan_home, scan_myscans, scan_manager, scan_preview, scan_export_pdf, scan_export_custom_pages, scan_export_jpg, scan_settings + 3 dark. All PASS.
+- Visual inspection findings: all screens correct EXCEPT Scanner Home entry cards clipped their 3-line subtitles (fixed height 112dp). FIX APPLIED: card Column height 112dp -> 150dp (unverified by re-shoot yet).
+- Minor known cosmetics (acceptable): My Scans card info line wraps before the date on narrow phones; JPG size-estimate line didn't appear in the Robolectric shot (paused clock; logic encodes first target page at chosen settings, labeled approximate).
+- NEXT RUN, in order: (1) rerun ScannerScreensTest to re-shoot scan_home (verify 150dp fix) + full suite (testDebugUnitTest + assembleDebug) on final code; (2) What's New text + PresetsSettingsTest update; (3) bump vc 81 / 1.0.8; (4) zip -> filebin pixelcraft-v030-bin -> re-download verify; (5) delivery report with screenshots. (6) Then Watermark: read /downloads/video-82806c9c.mp4 in full first.
+- Concrete blockers already flagged to parent (12:27 entry): ML Kit flash/auto-capture defaults not exposed by Google's API; System theme needs app-wide theme change.
+
+## 2026-10-31 13:02 CET — phone-height test fix round 2
+- build25: only failures were ScannerPhoneHeightTest phone01/02 (waitForText timeout) — homepage card below fold at h640dp.
+- build26: rerouted phone tests to test hook `pixelcraft.test.tool=scanner`, but hook was inside the testPath-gated LaunchedEffect block → no-op without photo extra → same failure at line 47 (killed mid-run).
+- FIX: hoisted scanner hook into its own gate-free LaunchedEffect (jumps Home → ScannerHome when tool extra = scanner and no photo).
+- build27 (testDebugUnitTest + assembleDebug, vc 81/1.0.8) LAUNCHED 13:02, log /tmp/scan_build27.log.
+- REMAINING: collect build27 green; inspect scan_home_phone + scan_export_phone shots + re-shot scan_home; zip → filebin pixelcraft-v030-bin → re-download verify (sha + versionCode 81) → delivery report to parent. Then Watermark (read /downloads/video-82806c9c.mp4 fully first).
+
+## 2026-10-31 13:56 CET — FULL SUITE GREEN on vc 81 / 1.0.8
+- Phone-height test saga resolved: (1) scanner test hook hoisted out of photo-gated block; (2) root cause of phone02 = off-viewport chip taps do not dispatch touch in Robolectric at h640dp (scrollable Column composes all children, so nodes exist, but performClick touch at y>viewport fails silently). Fix: performScrollToNode the content column (matcher: hasScrollAction + hasAnyDescendant hasText Page Size) to prove phone-height scrolling, then clickChip() helper invokes the OnClick semantics action of the nearest clickable ancestor (viewport-independent).
+- scan_phone8.log: ScannerPhoneHeightTest BUILD SUCCESSFUL (both tests pass).
+- build30 (/tmp/scan_build30.log): FULL testDebugUnitTest + assembleDebug BUILD SUCCESSFUL, EXITCODE=0, 3m7s. New shots: scan_home_phone.png, scan_export_phone.png (plus re-shot scan_home at 150dp cards).
+- REMAINING: (1) VISUALLY INSPECT scan_home_phone, scan_export_phone, re-shot scan_home (+ spot-check scan_export_custom_pages for the honest "1 of 2" summary); (2) zip the COMPLETE SOURCE PROJECT (not APK-only — parent correction 13:30) → filebin bin pixelcraft-v030-bin → re-download verify (sha256 + versionCode 81) → delivery report (link + sha + per-item list + caveats: auto-crop contrast-based, ML Kit capture UI is Google's incl. flash/auto-capture per user's 12:42 acceptance, JPG size estimate approximate, PDF phone-verification gap from v1.0.7 open); (3) then Watermark: read /downloads/video-82806c9c.mp4 (13,855,434 bytes, intact) in FULL first. User is waiting (13:36 "I am waiting"); user said "Take your time" (13:12).
