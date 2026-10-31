@@ -162,7 +162,7 @@ class CollageFlowTest {
             waitForText("Rotate 90°")
             waitForText("Replace photo 1")
             waitForText("Reset photo")
-            waitForText("Frame - photo 1 (same as all)")
+            waitForText("Frame - this photo")
             shot(sc, "v0171_phone_collage_edit_selected")
             composeRule.onNodeWithText("Margin around the collage", substring = true).performScrollTo()
             waitForText("Frame around every photo")
@@ -183,7 +183,7 @@ class CollageFlowTest {
             // Chips sit below the fold at h640dp: semantics clicks are touch injections at the
             // node centre, so scroll them on screen first (documented rig quirk).
             composeRule.onNodeWithText("Story").performScrollTo().performClick()
-            waitForText("Story 1080x1920")
+            waitForText("Story · 1080 × 1920 px")
             composeRule.onNodeWithText("Black").performScrollTo().performClick()
             pump()
             shot(sc, "v0171_phone_collage_edit_story_black")

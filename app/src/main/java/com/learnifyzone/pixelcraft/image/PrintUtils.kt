@@ -126,6 +126,38 @@ object PrintUtils {
      */
     const val MAX_EXPORT_PIXELS: Long = 48_000_000L
 
+    /**
+     * Memory-safe ceiling for rendering a source PDF page into a bitmap for printing
+     * (longest side). Covers A3/Tabloid/16x20 at 300 PPI; A2, posters and large
+     * 600-PPI formats render the source page at reduced resolution.
+     */
+    const val SRC_PDF_MAX_LONG_SIDE: Int = 6144
+
+    /**
+     * For a PDF source: the effective PPI of the rendered source page after the
+     * SRC_PDF_MAX_LONG_SIDE ceiling, or null when the source page renders at the
+     * full required resolution. Checked against the (possibly output-capped) area,
+     * exactly as the print builders compute it.
+     */
+    fun srcPdfEffectivePpi(wIn: Double, hIn: Double, ppi: Int): Int? {
+        val req = requiredPixels(wIn, hIn, ppi)
+        val capped = cappedPixels(req[0], req[1])
+        val target = maxOf(capped[0], capped[1])
+        if (target <= SRC_PDF_MAX_LONG_SIDE) return null
+        return (SRC_PDF_MAX_LONG_SIDE / maxOf(wIn, hIn)).toInt()
+    }
+
+    /**
+     * The PPI the saved file actually achieves after the memory ceiling: the selected
+     * ppi when the required pixels fit, otherwise the uniformly scaled-down value.
+     */
+    fun actualOutputPpi(wIn: Double, hIn: Double, ppi: Int): Int {
+        val req = requiredPixels(wIn, hIn, ppi)
+        val total = req[0].toLong() * req[1].toLong()
+        if (total <= MAX_EXPORT_PIXELS) return ppi
+        return (ppi * kotlin.math.sqrt(MAX_EXPORT_PIXELS.toDouble() / total)).toInt()
+    }
+
     /** Scale the required pixels down to fit the cap, preserving ratio. Returns [w,h]. */
     fun cappedPixels(wPx: Int, hPx: Int): IntArray {
         val total = wPx.toLong() * hPx.toLong()
@@ -215,7 +247,7 @@ object PrintUtils {
      * gaps, thin cutting guides around each copy. Copies are Fill-cropped to the
      * exact ID photo size.
      */
-    fun renderSheet(src: Bitmap, sheetWPx: Int, sheetHPx: Int, cellWPx: Int, cellHPx: Int, cols: Int, rows: Int, gapPx: Int, guides: Boolean, count: Int = Int.MAX_VALUE): Bitmap {
+    fun renderSheet(src: Bitmap, sheetWPx: Int, sheetHPx: Int, cellWPx: Int, cellHPx: Int, cols: Int, rows: Int, gapPx: Int, guides: Boolean, count: Int = Int.MAX_VALUE, mode: String = "Fill"): Bitmap {
         val out = Bitmap.createBitmap(sheetWPx, sheetHPx, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(out)
         canvas.drawColor(Color.WHITE)
@@ -224,7 +256,8 @@ object PrintUtils {
         val gridH = rows * cellHPx + (rows - 1) * gapPx
         val startX = (sheetWPx - gridW) / 2f
         val startY = (sheetHPx - gridH) / 2f
-        val cell = renderPrint(src, cellWPx, cellHPx, "Fill", Color.WHITE)
+        // v1.0.7: multi-copy sheets honor the chosen Fit/Fill - Fit must not crop.
+        val cell = renderPrint(src, cellWPx, cellHPx, mode, Color.WHITE)
         val guidePaint = Paint().apply {
             color = Color.LTGRAY
             style = Paint.Style.STROKE

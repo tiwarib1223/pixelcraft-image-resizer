@@ -16,7 +16,8 @@ data class Draft(
     val height: String,
     val lockRatio: Boolean,
     val quality: Int,
-    val updatedAt: Long
+    val updatedAt: Long,
+    val tool: String = "Resize Image"
 )
 
 object DraftsStore {
@@ -47,6 +48,7 @@ object DraftsStore {
                     height = o.optString("height"),
                     lockRatio = o.optBoolean("lockRatio", true),
                     quality = o.optInt("quality", 90),
+                    tool = o.optString("tool", "Resize Image"),
                     updatedAt = o.optLong("updatedAt")
                 )
             }
@@ -65,6 +67,7 @@ object DraftsStore {
                 put("lockRatio", d.lockRatio)
                 put("quality", d.quality)
                 put("updatedAt", d.updatedAt)
+                put("tool", d.tool)
             })
         }
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putString(KEY, arr.toString()).apply()

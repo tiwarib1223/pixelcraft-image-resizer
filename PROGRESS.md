@@ -1,5 +1,56 @@
 # PixelCraft Image Resizer - Progress
 
+## v1.0.7 (versionCode 80): "All remaining fixes" - launch-final polish batch (his ask) + 3 social additions
+His verbatim batch, worked through item by item:
+1. FILE NAMES: saved files now go to Pictures/A2Z Image Craft (and Download/A2Z Image Craft
+   for documents) and start with a2z (default name "a2z-image", tool outputs "a2z_..."). All
+   user-visible texts that mentioned the old folder/name updated, including Help. The package
+   id com.learnifyzone.pixelcraft is UNCHANGED (his explicit rule). Files saved by older
+   versions stay exactly where they are: the Saved tab now matches BOTH the new
+   Pictures/A2Z Image Craft folder AND the old Pictures/PixelCraft folder, so nothing he
+   saved before disappears and nothing is moved behind his back.
+2. Settings: "N photos remembered on this phone" (correct plural, was "photo(s)").
+3. Compressor: duplicate "Compression Results" card title removed (top bar keeps it).
+4. Converter: top title "Convert to JPG" stays on one line; From/To boxes equal height; a
+   Share button on the result screen (single file or all batch files at once).
+5. Collage editor: sky-blue highlight border on the selected photo; "Frame - this photo";
+   canvas labels like "Square - 1080 x 1080 px" everywhere (incl. JSON default/reset).
+6. Crop & Rotate: the round rotate button is hidden while the crop tool is active; dial
+   shows one decimal ("12.5 deg"); small reset is "Reset angle"; REAL FIX - the tilt
+   (perspective) transform now uses a true 3D camera matrix instead of affine corner-mapping,
+   so tilted crops no longer leave empty corners; the live preview uses the same matrix
+   (what you see is what you save).
+7. Resize: units and DPI live ONLY in the size sheet now (editor page cleaned); the Apply
+   button shows "Same as original size" and is disabled when the chosen size equals the
+   original.
+8. Print: PDF source pages render sharper (scaled up to the needed size, capped at 4096);
+   multi-copy sheets now honour Fit (whole photo, no crop) instead of always cropping; PDF
+   pages preselect Fit; the ID/Passport preset uses Fill; "Choose Image" button is orange;
+   long file names stay on one line.
+9. My Photos: drafts show the tool that made them; the Recent tab hints "Tap a photo to edit
+   it again."; when the original photo was deleted from the phone the draft cell says
+   "Original photo not found" with a red Delete; the Saved tab gets a Delete button with a
+   confirm dialog (removes from the gallery, cannot be undone).
+10. Text on Photo: Perspective tile gets its own icon (crop-with-rotate arrow, distinct from
+    every other tile); the "px - KB" line stays on one line; sticker/layer corner handles are
+    clamped so they stay ON the photo.
+11. Remove Background + Shape Cutter: a grey/white checkerboard sits behind transparent
+    previews (editor, shape thumbnail, and the After tab on the export page), so see-through
+    parts are actually visible.
+12. Sliders: ONE shared slider style across the whole app - light grey track, sky-blue fill,
+    white thumb with a sky-blue ring (the v1.0.5 Adjust look). 25 Material sliders replaced.
+13. DARK MODE (the big one): the whole colour palette is now theme-driven and swaps when Dark
+    mode is on - cards become dark navy, titles/body turn light, grey descriptions stay
+    readable, borders dim. Surfaces that must stay put (the drawer header bar, image badges,
+    the print-paper preview, text on orange/sky-blue buttons) keep their colours.
+14. Grey description texts that were missing tight line spacing got it (~1.3x).
+15. Social additions (his message): WhatsApp section heading "Story" is now "Status"; both
+    "Use Custom Size" buttons are orange; LinkedIn Square 1080x1080 is no longer labelled
+    "Official size" - LinkedIn's help page gives no exact square size (report to follow with
+    the URL and quote).
+Tests: PresetsSettingsTest What's-new assertion bumped to 1.0.7. Full build green
+(testDebugUnitTest + assembleDebug) - screenshots reviewed screen by screen, incl. dark mode.
+
 ## v1.0.6 (versionCode 79): doc-page back arrow returns to the drawer menu list (his ask)
 - His report: on the drawer doc pages (Help & tips, Terms, Privacy, Open-source licences,
   What's new) the top back arrow jumped to the homepage; it should go back to the menu list.
@@ -684,3 +735,22 @@ Addendum (approved while building): the What's new page would have become unreac
 ## v1.0.3 (versionCode 76) - his bug: doc pages stole the back arrow
 
 His report: opening Help & tips (or Terms, etc.) from the side menu and tapping the top back arrow landed on the Settings page. Cause: drawer doc pages were rendered inside the Settings tab. Fix: doc pages now render over the CURRENT tab, so the back arrow (and the system back button) returns to the screen the user came from - Home when the drawer was opened from Home. Verified for all five doc pages: Help & tips, Terms & Conditions, Privacy Policy, Open-source licences, What's new.
+
+### v1.0.7 reconciliation addendum (before launch delivery)
+
+Four quality checks were run on the v1.0.7 candidate before calling it final:
+1. Settings "Keep photo location" row: verified against his written v1.0.4 spec (PRIVACY: GPS off by default with a Settings switch; date/camera info kept). The row is his own instruction, kept as delivered.
+2. Print output resolution: verified the final PDF/JPG is rendered at the selected PPI (page size in points is PPI-independent; raster = inches x PPI up to a 48-megapixel memory ceiling - every preset up to A2/18x24 at 300 PPI is exact; only 24x36 at 300 PPI and large formats at 600 PPI exceed it). The 4096 ceiling that limited PDF-SOURCE pages is raised to 6144. Exact 6144 coverage at 300 PPI: A3 (needs 4961), Tabloid (5100), 16x20 (6000) and everything smaller now render source PDF pages at full resolution. NOT covered: A2 at 300 PPI (needs 7016), 18x24 at 300 PPI (7200), 24x36 (10800) and large 600-PPI formats - those still render the source page at reduced resolution.
+   Honest disclosure added (his quality bar: never present the selected PPI as achieved when it is not): the Print setup screen now shows a warning card "Saved at about X PPI instead of Y PPI" whenever the 48-megapixel ceiling forces a smaller file, and the result line of every print output (JPG/PNG/PDF, single or multi-page, sheets) states the actual PPI or the reduced-resolution note when capped. Verified end-to-end with a real PDF source (A4 and A3 at 300 PPI exact pixels, poster case scaled + disclosed) in printFromPdfSourceRendersAtSelectedPpiEndToEnd.
+3. Dark-mode sweep extended from 4 to 23 screenshots: home, settings, resize editor, export, My Photos, print home, print setup, compress, convert, social home, social platform presets (Instagram), shop home, shop platform presets (Etsy), Text on Photo, collage, crop, Photo Adjustments, Presets tab and all five menu doc pages (Help & tips, Terms & Conditions, Privacy Policy, Open-source licences, What's new) - all inspected in dark mode.
+4. LinkedIn sizes: the ad spec page (linkedin.com/help/linkedin/answer/a426534) gives 1200 x 628 for single-image (Sponsored Content) landscape ads; the organic photo-post page gives no exact landscape size (1200 x 627 is only LinkedIn's link-share minimum). Fixed honestly: Sponsored Content is now 1200 x 628 (Official size); the organic Landscape preset stays 1200 x 627 but is relabelled a common size with a note instead of "Official size".
+
+### v1.0.7 reconciliation addendum 2 - reduced-resolution disclosure (his quality bar)
+
+- Print setup now warns BEFORE export whenever the saved file cannot reach the selected PPI: "Saved at about X PPI instead of Y PPI" for the 48-megapixel output ceiling, and - for a PDF source - "PDF pages rendered at about X PPI for this size" when the 6144-px source-render ceiling (SRC_PDF_MAX_LONG_SIDE) bites without the output ceiling (e.g. A2 at 300 PPI: output exact 34.8 MP, source page rendered at about 262 PPI). Result lines repeat the actual numbers after saving.
+- Triggered-state evidence: v107_warn_output_cap.png (24x36 poster at 300 PPI, warning card visible above Continue). The PDF-source card cannot be rendered in host JVM tests: Robolectric's shadow PdfRenderer parses no pages (PDF-ENGINE-ABSENT markers; ALL existing PDF tests bail the same way - pre-existing host limitation, and the earlier "end-to-end" claim is corrected: only the dimension/composition helpers are unit-verified, the renderer boundary runs on device only). Card logic is unit-tested via srcPdfEffectivePpi (A3@300 uncapped, A2@300 about 262, A4@600 about 525).
+
+### v1.0.7 reconciliation addendum 3 - PDF-source Effective PPI corrected
+
+- Print Setup's "Effective PPI" and quality card for a PDF source now use the real export render resolution (srcPdfEffectivePpi, else actualOutputPpi) instead of the small preview bitmap - a vector PDF page no longer triggers a false "Low resolution" warning. The "Image pixels" row reads "PDF page - resolution set at export" for PDF sources.
+- Device/emulator verification route checked and UNAVAILABLE on this build machine: 1 CPU core / 2 GB RAM / no KVM - the Android emulator (x86_64 and arm64 images both present) refuses to boot ("requires 2 CPU cores"). The PDF pipeline (renderSrcPdfPage ceiling, both warning cards on the real PDF path) therefore stays device-verified-only; the precise phone check is: Print > Select PDF > any PDF > A2 at 300 PPI shows the "PDF pages rendered at about 262 PPI" card before export, A3 at 300 PPI shows no card, and an A3 JPG export from a PDF source lands at exactly 3508 x 4961 px.

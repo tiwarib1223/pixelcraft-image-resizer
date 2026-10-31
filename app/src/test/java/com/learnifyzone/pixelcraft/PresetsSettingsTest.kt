@@ -211,7 +211,7 @@ class PresetsSettingsTest {
             waitForText("Terms & Conditions")
             // v1.0.2: What's new moved to the drawer (below Open-source licences).
             clickText("What's new")
-            waitForText("What's new in version 1.0.6")
+            waitForText("What's new in version 1.0.7")
             shot(sc, "v100_phone_whatsnew")
             composeRule.onNodeWithContentDescription("Back").performClick()
             waitForText("Terms & Conditions")
@@ -312,6 +312,8 @@ class PresetsSettingsTest {
             pump(); pump()
             waitForText("Resolution")
             waitForText("Resize to 2000 × 2000 px")
+            // v1.0.7: units + DPI live in this sheet (removed from the editor page).
+            waitForText("DPI")
             shot(sc, "v0200_phone_sheet_prefill")
             sc.close()
         }

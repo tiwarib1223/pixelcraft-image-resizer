@@ -199,4 +199,56 @@ class PrintUtilsTest {
         assertEquals(2000.0 / 11.69, stretch, 0.5)
         assertTrue(fit > fill)
     }
+
+    @Test
+    fun finalRasterMatchesSelectedPpiForStandardSizes() {
+        // v1.0.7 (his print requirement): the saved file must be rendered at the selected
+        // PPI, not just previewed sharply. For every preset up to A2/18x24 at <= 300 PPI the
+        // required pixel count is under the 48 MP memory ceiling, so cappedPixels must leave
+        // the dimensions EXACTLY inches x ppi.
+        listOf(
+            Triple("A4", 210.0 / 25.4, 297.0 / 25.4),
+            Triple("A3", 297.0 / 25.4, 420.0 / 25.4),
+            Triple("A2", 420.0 / 25.4, 594.0 / 25.4),
+            Triple("US Letter", 8.5, 11.0),
+            Triple("US Legal", 8.5, 14.0),
+            Triple("Tabloid", 11.0, 17.0),
+            Triple("16 x 20", 16.0, 20.0),
+            Triple("18 x 24", 18.0, 24.0)
+        ).forEach { (name, wIn, hIn) ->
+            val req = PrintUtils.requiredPixels(wIn, hIn, 300)
+            val capped = PrintUtils.cappedPixels(req[0], req[1])
+            assertEquals("$name width at 300 PPI", req[0], capped[0])
+            assertEquals("$name height at 300 PPI", req[1], capped[1])
+        }
+        // Above the ceiling (24x36 poster at 300 PPI = 77.8 MP) it scales down uniformly.
+        val big = PrintUtils.requiredPixels(24.0, 36.0, 300)
+        val capped = PrintUtils.cappedPixels(big[0], big[1])
+        assertTrue(capped[0].toLong() * capped[1] <= PrintUtils.MAX_EXPORT_PIXELS)
+        assertTrue(capped[0] < big[0])
+    }
+
+    @Test
+    fun actualOutputPpiMatchesSelectedUnlessMemoryCapped() {
+        // Exact at standard sizes/300 PPI; honestly lower for a 24x36 poster at 300 PPI.
+        assertEquals(300, PrintUtils.actualOutputPpi(210.0 / 25.4, 297.0 / 25.4, 300))
+        assertEquals(300, PrintUtils.actualOutputPpi(297.0 / 25.4, 420.0 / 25.4, 300))
+        assertEquals(300, PrintUtils.actualOutputPpi(18.0, 24.0, 300))
+        val poster = PrintUtils.actualOutputPpi(24.0, 36.0, 300)
+        assertTrue("poster at 300 PPI must disclose a lower actual PPI, got $poster", poster in 200..260)
+        assertEquals(150, PrintUtils.actualOutputPpi(24.0, 36.0, 150))
+    }
+
+    @Test
+    fun srcPdfEffectivePpiOnlyCapsAboveThe6144Ceiling() {
+        // A3 at 300 PPI (4961 long) renders full-resolution: no source cap.
+        assertEquals(null, PrintUtils.srcPdfEffectivePpi(297.0 / 25.4, 420.0 / 25.4, 300))
+        // A2 at 300 PPI needs 7016 long: source page renders at ~262 PPI while the
+        // 34.8 MP output stays exact - the case the before-export warning covers.
+        val a2 = PrintUtils.srcPdfEffectivePpi(420.0 / 25.4, 594.0 / 25.4, 300)
+        assertTrue("A2@300 source render expected ~262 PPI, got $a2", a2 != null && a2 in 255..270)
+        // A4 at 600 PPI needs 7016 long: source ~525 PPI.
+        val a4 = PrintUtils.srcPdfEffectivePpi(210.0 / 25.4, 297.0 / 25.4, 600)
+        assertTrue("A4@600 source render expected ~525 PPI, got $a4", a4 != null && a4 in 510..540)
+    }
 }

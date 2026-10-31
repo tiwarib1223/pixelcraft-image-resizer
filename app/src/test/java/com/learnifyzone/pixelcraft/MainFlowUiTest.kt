@@ -59,13 +59,16 @@ class MainFlowUiTest {
 
     @Test
     fun photoLoads_editorShowsToolsUnitsAndDpi() {
+        // v1.0.7 (his spec): units + DPI live ONLY in the size sheet; the editor page no longer
+        // shows them. Sheet coverage (unit chips + DPI field) lives in PresetsSettingsTest
+        // h_dimensionsSheetShowsPresetPrefilled, which composes the sheet directly.
         launchWithPhoto().use {
             waitForText("Process")
-            waitForText("Pixels")
-            waitForText("Inches")
-            waitForText("mm")
-            waitForText("DPI (for printing, saved in JPG)")
             waitForText("Export")
+            org.junit.Assert.assertTrue(
+                "editor page must not show the DPI field (moved to the size sheet in v1.0.7)",
+                composeRule.onAllNodesWithText("DPI").fetchSemanticsNodes().isEmpty()
+            )
         }
     }
 

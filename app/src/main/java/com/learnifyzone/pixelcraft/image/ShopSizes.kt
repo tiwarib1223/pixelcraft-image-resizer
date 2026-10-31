@@ -30,7 +30,7 @@ object ShopSizes {
             SocialCategory("Listing Gallery", "Additional product photos", listOf(
                 SocialSize("Gallery Image", "2048 × 2048 px", 2048, 2048, "Keep one aspect ratio across the gallery", official = false))),
             SocialCategory("Shop Banner", "Store banner and slideshow", listOf(
-                SocialSize("Banner / Slideshow", "1200 × 400 px", 1200, 400, "Theme-dependent - 3:1 works on most themes", official = false))),
+                SocialSize("Banner / Slideshow", "1200 × 400 px", 1200, 400, "Theme-dependent; 3:1 works on most themes", official = false))),
             SocialCategory("Shop Logo & Icon", "Brand logo and store profile image", listOf(
                 SocialSize("Square Logo", "512 × 512 px", 512, 512, "Minimum size for brand assets; may be cropped to a circle", official = false))),
             SocialCategory("Product Collage", "Combine multiple photos in one layout", listOf(
@@ -38,11 +38,11 @@ object ShopSizes {
         )),
         SocialPlatform("Amazon", listOf(
             SocialCategory("Product Image", "Main product photo and listing images", listOf(
-                SocialSize("Product Image", "2000 × 2000 px", 2000, 2000, "500-10000 px allowed; over 1000 px enables zoom; MAIN image needs a pure white background", official = false))),
+                SocialSize("Product Image", "2000 × 2000 px", 2000, 2000, "500-10000 px allowed; over 1000 px enables zoom; Main image needs a pure white background", official = false))),
             SocialCategory("Listing Gallery", "Additional product photos", listOf(
                 SocialSize("Gallery Image", "2000 × 2000 px", 2000, 2000, "Amazon recommends at least 6 images", official = false))),
             SocialCategory("Shop Banner", "Amazon Store hero image", listOf(
-                SocialSize("Store Hero Image", "3000 × 600 px", 3000, 600, "Keep key content in the center 50% - sides crop on small screens"))),
+                SocialSize("Store Hero Image", "3000 × 600 px", 3000, 600, "Keep key content in the center 50%; sides crop on small screens"))),
             SocialCategory("Shop Logo & Icon", "Amazon Store brand logo", listOf(
                 SocialSize("Brand Logo", "400 × 400 px", 400, 400))),
             SocialCategory("Product Collage", "Combine multiple photos in one layout", listOf(
@@ -72,7 +72,7 @@ object ShopSizes {
         )),
         SocialPlatform("Payhip", listOf(
             SocialCategory("Product Image", "Product cover image", listOf(
-                SocialSize("Product Image", "1000 × 1000 px (1:1)", 1000, 1000, "Payhip adapts to your chosen ratio - square is the safe shape; minimum width 1000 px", official = false))),
+                SocialSize("Product Image", "1000 × 1000 px (1:1)", 1000, 1000, "Payhip adapts to your chosen ratio; square is the safe shape; minimum width 1000 px", official = false))),
             SocialCategory("Listing Gallery", "Additional product photos", listOf(
                 SocialSize("Gallery Image", "1000 × 1000 px (1:1)", 1000, 1000, official = false))),
             SocialCategory("Product Collage", "Combine multiple photos in one layout", listOf(
@@ -89,7 +89,7 @@ object ShopSizes {
         )),
         SocialPlatform("Wix Stores", listOf(
             SocialCategory("Product Image", "Main product photo and listing images", listOf(
-                SocialSize("Product Image", "3000 × 3000 px (1:1)", 3000, 3000, "Wix minimum resolution; 1:1 recommended for mobile"))),
+                SocialSize("Product Image", "3000 × 3000 px (1:1)", 3000, 3000, "Wix's minimum resolution; 1:1 recommended for mobile"))),
             SocialCategory("Listing Gallery", "Additional product photos", listOf(
                 SocialSize("Gallery Image", "3000 × 3000 px (1:1)", 3000, 3000))),
             SocialCategory("Product Collage", "Combine multiple photos in one layout", listOf(
@@ -112,7 +112,7 @@ object ShopSizes {
                 SocialSize("Square Preview", "600 × 600 px (1:1)", 600, 600),
                 SocialSize("Wide Preview", "600 × 300 px (2:1)", 600, 300))),
             SocialCategory("Shop Banner", "Page cover image", listOf(
-                SocialSize("Cover Image", "1200 × 400 px (3:1)", 1200, 400, "Under 8 MB; sides crop slightly on mobile - keep text centered"))),
+                SocialSize("Cover Image", "1200 × 400 px (3:1)", 1200, 400, "Under 8 MB; sides crop slightly on mobile; keep text centered"))),
             SocialCategory("Shop Logo & Icon", "Profile picture", listOf(
                 SocialSize("Profile Picture", "500 × 500 px (1:1)", 500, 500, "Shown as a square", official = false))),
             SocialCategory("Promotional Image", "Sharing preview image", listOf(
@@ -122,12 +122,12 @@ object ShopSizes {
         )),
         SocialPlatform("Creative Market", listOf(
             SocialCategory("Product Image", "Product screenshots", listOf(
-                SocialSize("Screenshot", "1820 × 1214 px", 1820, 1214, "Recommended; minimum 910 × 607, maximum 3640 × 10920, under 5 MB"),
+                SocialSize("Screenshot", "1820 × 1214 px", 1820, 1214, "Minimum 910 × 607; maximum 3640 × 10920; under 5 MB"),
                 SocialSize("Minimum", "910 × 607 px", 910, 607))),
             SocialCategory("Listing Gallery", "Additional screenshots (up to 100)", listOf(
                 SocialSize("Gallery Screenshot", "1820 × 1214 px", 1820, 1214, "Fill at least 3-5 screenshot slots"))),
             SocialCategory("Promotional Image", "Graphics product previews", listOf(
-                SocialSize("Graphics Preview", "1920 × 1080 px", 1920, 1080, "HD minimum for graphics products, 300 DPI", official = false))),
+                SocialSize("Graphics Preview", "1920 × 1080 px", 1920, 1080, "HD minimum for graphics products", official = false))),
             SocialCategory("Product Collage", "Combine multiple photos in one layout", listOf(
                 SocialSize("Collage", "1820 × 1214 px", 1820, 1214, "Matches the screenshot size", official = false)))
         ))

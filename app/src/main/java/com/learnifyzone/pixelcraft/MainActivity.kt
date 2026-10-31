@@ -84,6 +84,7 @@ import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Collections
 import androidx.compose.material.icons.filled.Compress
 import androidx.compose.material.icons.filled.Crop
+import androidx.compose.material.icons.filled.CropRotate
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Delete
@@ -149,7 +150,6 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.SnackbarHost
@@ -173,12 +173,15 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.setProgress
@@ -205,6 +208,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
@@ -233,6 +237,7 @@ import com.learnifyzone.pixelcraft.image.CompressUtils
 import com.learnifyzone.pixelcraft.image.PrintUtils
 import com.learnifyzone.pixelcraft.image.ConvertFormats
 import com.learnifyzone.pixelcraft.image.ShopSizes
+import com.learnifyzone.pixelcraft.image.subWithRatio
 import com.learnifyzone.pixelcraft.image.SocialSizes
 import com.learnifyzone.pixelcraft.image.Transforms.CropAnchor
 import com.learnifyzone.pixelcraft.image.Transforms.FitPad
@@ -251,11 +256,36 @@ import java.util.Locale
 
 private val SkyBlue = Color(0xFF42BFEF)
 private val Orange = Color(0xFFFF8A32)
-private val DeepNavy = Color(0xFF172B4D)
-private val PaleBlue = Color(0xFFF0FAFF)
-private val SoftGrey = Color(0xFFF3F6F9)
-private val Slate = Color(0xFF66758A)
-private val BorderGrey = Color(0xFFE0E8EE)
+private val HeaderNavy = Color(0xFF172B4D) // stays navy in dark mode (header bar + image badges)
+// v1.0.7 (his dark-mode sweep): the palette is observable state swapped by applyPalette(darkMode),
+// so every screen, card, draw lambda and canvas picks up dark mode without rewriting each usage.
+private var DeepNavy by mutableStateOf(Color(0xFF172B4D))
+private var PaleBlue by mutableStateOf(Color(0xFFF0FAFF))
+private var SoftGrey by mutableStateOf(Color(0xFFF3F6F9))
+private var Slate by mutableStateOf(Color(0xFF66758A))
+private var BorderGrey by mutableStateOf(Color(0xFFE0E8EE))
+private var DocBody by mutableStateOf(Color(0xFF3B4A63))
+private var CardWhite by mutableStateOf(Color(0xFFFFFFFF))
+
+private fun applyPalette(dark: Boolean) {
+    if (dark) {
+        DeepNavy = Color(0xFFE8EEF7)   // titles/body on dark surfaces
+        PaleBlue = Color(0xFF1C2B45)   // info cards
+        SoftGrey = Color(0xFF15233A)   // plain cards / fields
+        Slate = Color(0xFF9DACC2)      // grey descriptions (kept readable on navy)
+        BorderGrey = Color(0xFF2C3E5C)
+        DocBody = Color(0xFFC9D5E6)    // drawer document text
+        CardWhite = Color(0xFF1A2942)  // cards/sheets that were plain white
+    } else {
+        DeepNavy = Color(0xFF172B4D)
+        PaleBlue = Color(0xFFF0FAFF)
+        SoftGrey = Color(0xFFF3F6F9)
+        Slate = Color(0xFF66758A)
+        BorderGrey = Color(0xFFE0E8EE)
+        DocBody = Color(0xFF3B4A63)
+        CardWhite = Color(0xFFFFFFFF)
+    }
+}
 private val SuccessGreen = Color(0xFF1E9E50)
 
 class MainActivity : ComponentActivity() {
@@ -278,7 +308,11 @@ private data class AdaptRequest(val width: Int, val height: Int)
 
 @Composable
 private fun PixelCraftApp() {
-    var darkMode by rememberSaveable { mutableStateOf(false) }
+    val context = androidx.compose.ui.platform.LocalContext.current
+    // Test hook: launch in dark mode for the dark-mode screenshot sweep.
+    val testDark = (context as? Activity)?.intent?.getStringExtra("pixelcraft.test.darkmode") == "1"
+    var darkMode by rememberSaveable { mutableStateOf(testDark) }
+    SideEffect { applyPalette(darkMode) }
     val colors = if (darkMode) darkColorScheme(primary = SkyBlue, secondary = Orange, background = Color(0xFF101A2B), surface = Color(0xFF17243A), onPrimary = DeepNavy) else lightColorScheme(primary = SkyBlue, secondary = Orange, background = Color.White, surface = Color.White, onPrimary = DeepNavy, onBackground = DeepNavy, onSurface = DeepNavy)
     // v0.20.1 (his call, overrides the earlier static intro): his real 5-second opening video plays on cold start.
     // Any tap or system back skips straight to the app - promised him skippable. rememberSaveable so a rotation
@@ -378,7 +412,7 @@ private fun PixelCraftRoot(darkMode: Boolean, onDarkMode: (Boolean) -> Unit) {
     var beforeAfter by rememberSaveable { mutableStateOf(false) }
     var adaptRequest by remember { mutableStateOf<AdaptRequest?>(null) }
 
-    var exportName by rememberSaveable { mutableStateOf("pixelcraft-image") }
+    var exportName by rememberSaveable { mutableStateOf("a2z-image") }
     var quality by rememberSaveable { mutableIntStateOf(90) }
     var savedName by rememberSaveable { mutableStateOf("") }
     var savedSize by rememberSaveable { mutableStateOf("") }
@@ -1070,7 +1104,7 @@ snackbar.showSnackbar("This phone ran out of memory. Try a smaller size or fewer
                             baos.toByteArray()
                         }
                         withContext(Dispatchers.IO) {
-                            saveToGallery(context, "pixelcraft_${t.w}x${t.h}_${i + 1}.${fmt.extension}", fmt.mimeType, bytes)
+                            saveToGallery(context, "a2z_${t.w}x${t.h}_${i + 1}.${fmt.extension}", fmt.mimeType, bytes)
                         }
                         done++
                     } catch (e: OutOfMemoryError) {
@@ -1078,7 +1112,7 @@ snackbar.showSnackbar("This phone ran out of memory. Try a smaller size or fewer
                         snackbar.showSnackbar("This phone ran out of memory. Try a smaller size or fewer pages.")
                     } catch (e: Exception) { failed++ }
                 }
-                snackbar.showSnackbar(if (failed == 0) "Saved $done photos to Pictures/PixelCraft." else "Saved $done photos, $failed failed.")
+                snackbar.showSnackbar(if (failed == 0) "Saved $done photos to Pictures/A2Z Image Craft." else "Saved $done photos, $failed failed.")
             } finally {
                 busy = false
                 busyLabel = ""
@@ -1313,7 +1347,7 @@ snackbar.showSnackbar("This phone ran out of memory. Try a smaller size or fewer
                     collage.uris.clear(); collage.uris.addAll(uris)
                     collage.family = runCatching { CollageMaker.LayoutFamily.valueOf(o.optString("family", "GRID")) }.getOrDefault(CollageMaker.LayoutFamily.GRID)
                     collage.canvasW = o.optInt("canvasW", 1080); collage.canvasH = o.optInt("canvasH", 1080)
-                    collage.canvasLabel = o.optString("canvasLabel", "Square 1080")
+                    collage.canvasLabel = o.optString("canvasLabel", "Square · 1080 × 1080 px")
                     collage.gapPx = o.optDouble("gapPx", 8.0).toFloat()
                     collage.marginPx = o.optDouble("marginPx", 0.0).toFloat()
                     collage.radiusPx = o.optDouble("radiusPx", 0.0).toFloat()
@@ -1533,7 +1567,7 @@ snackbar.showSnackbar("This phone ran out of memory. Try a smaller size or fewer
                         ?: throw IllegalStateException("decode failed")
                     val bytes = withContext(Dispatchers.Default) { ConvertFormats.encode(src, fmt, convertQuality, bgColor) }
                     convertResultBytes = bytes
-                    convertResultName = "pixelcraft_${src.width}x${src.height}.${fmt.extension}"
+                    convertResultName = "a2z_${src.width}x${src.height}.${fmt.extension}"
                     convertResultPreview = src
                     convertResultOrigSize = convertOrigSizes.firstOrNull() ?: -1L
                     convertResultFrom = convertLabels.firstOrNull() ?: ""
@@ -1567,7 +1601,7 @@ snackbar.showSnackbar("This phone ran out of memory. Try a smaller size or fewer
                         }
                         busyLabel = "Building PDF…"
                         val bytes = withContext(Dispatchers.Default) { ConvertFormats.encodePdf(bitmaps, bgColor) }
-                        results.add("pixelcraft_document.pdf" to bytes)
+                        results.add("a2z_document.pdf" to bytes)
                         outTotal = bytes.size.toLong()
                         origTotal = convertOrigSizes.filter { it > 0 }.sum()
                     } else {
@@ -1577,7 +1611,7 @@ snackbar.showSnackbar("This phone ran out of memory. Try a smaller size or fewer
                             val src = ready
                                 ?: withContext(Dispatchers.IO) { decodeOrientedBitmap(context, u) } ?: return@forEachIndexed
                             val bytes = withContext(Dispatchers.Default) { ConvertFormats.encode(src, fmt, convertQuality, bgColor) }
-                            results.add("pixelcraft_${src.width}x${src.height}_${i + 1}.${fmt.extension}" to bytes)
+                            results.add("a2z_${src.width}x${src.height}_${i + 1}.${fmt.extension}" to bytes)
                             if (ready == null) src.recycle()
                             outTotal += bytes.size
                             val os = convertOrigSizes.getOrNull(i) ?: -1L
@@ -1723,7 +1757,7 @@ snackbar.showSnackbar("This phone ran out of memory. Try a smaller size or fewer
                         }
                     }
                     compressResultBytes = bytes
-                    compressResultName = "pixelcraft_compressed.pdf"
+                    compressResultName = "a2z_compressed.pdf"
                     compressResultMime = "application/pdf"
                     compressResultOrig = compressOrigSizes.firstOrNull() ?: -1L
                     compressBefore = null
@@ -1738,7 +1772,7 @@ snackbar.showSnackbar("This phone ran out of memory. Try a smaller size or fewer
                         ?: throw IllegalStateException("decode failed")
                     val (bytes, fmt) = withContext(Dispatchers.Default) { compressOne(src, compressLabels.firstOrNull() ?: "JPG") }
                     compressResultBytes = bytes
-                    compressResultName = "pixelcraft_compressed.${fmt.second}"
+                    compressResultName = "a2z_compressed.${fmt.second}"
                     compressResultMime = fmt.third
                     compressResultOrig = compressOrigSizes.firstOrNull() ?: -1L
                     compressBefore = src
@@ -1755,7 +1789,7 @@ snackbar.showSnackbar("This phone ran out of memory. Try a smaller size or fewer
                         busyLabel = "Compressing ${i + 1} of ${compressUris.size}…"
                         val src = withContext(Dispatchers.IO) { decodeOrientedBitmap(context, u) } ?: return@forEachIndexed
                         val (bytes, fmt) = withContext(Dispatchers.Default) { compressOne(src, compressLabels.getOrNull(i) ?: "JPG") }
-                        files.add("pixelcraft_compressed_${i + 1}.${fmt.second}" to bytes)
+                        files.add("a2z_compressed_${i + 1}.${fmt.second}" to bytes)
                         origs.add(compressOrigSizes.getOrNull(i) ?: -1L)
                         src.recycle()
                     }
@@ -1798,7 +1832,7 @@ snackbar.showSnackbar("This phone ran out of memory. Try a smaller size or fewer
                     compressSaved = true
                     busy = false
                     busyLabel = ""
-                    snackbar.showSnackbar("Saved to Pictures/PixelCraft.")
+                    snackbar.showSnackbar("Saved to Pictures/A2Z Image Craft.")
                                 } catch (e: OutOfMemoryError) {
 snackbar.showSnackbar("This phone ran out of memory. Try a smaller size or fewer pages.")
                     } catch (e: Exception) {
@@ -1815,7 +1849,7 @@ snackbar.showSnackbar("This phone ran out of memory. Try a smaller size or fewer
                 if (compressResultMime == "application/pdf") saveToDownloads(context, compressResultName, compressResultMime, bytes)
                 else saveToGallery(context, compressResultName, compressResultMime, bytes)
                 compressSaved = true
-                snackbar.showSnackbar(if (compressResultMime == "application/pdf") "Saved to Downloads/PixelCraft." else "Saved to Pictures/PixelCraft (originals untouched).")
+                snackbar.showSnackbar(if (compressResultMime == "application/pdf") "Saved to Downloads/A2Z Image Craft." else "Saved to Pictures/A2Z Image Craft (originals untouched).")
                         } catch (e: OutOfMemoryError) {
 snackbar.showSnackbar("This phone ran out of memory. Try a smaller size or fewer pages.")
                 } catch (e: Exception) {
@@ -1906,7 +1940,7 @@ snackbar.showSnackbar("This phone ran out of memory. Try a smaller size or fewer
                 // descriptor twice - the double open is what v0.15.2 did and his phone
                 // rejected it.
                 val (tmp, count) = withContext(Dispatchers.IO) {
-                    val tmp = File.createTempFile("pixelcraft_pdf_", ".pdf", context.cacheDir)
+                    val tmp = File.createTempFile("a2z_pdf_", ".pdf", context.cacheDir)
                     try {
                         (context.contentResolver.openInputStream(uri)
                             ?: throw IllegalStateException("Could not open the PDF")).use { input ->
@@ -1952,12 +1986,13 @@ snackbar.showSnackbar("This phone ran out of memory. Try a smaller size or fewer
             try {
                 val page = withContext(Dispatchers.IO) {
                     val tmp = printPdfTempFile ?: throw IllegalStateException("Pick the PDF again")
-                    ConvertFormats.renderPdfPageFromFile(tmp, index, maxDim = 2600)
+                    ConvertFormats.renderPdfPageFromFile(tmp, index, maxDim = 3000, minLongSide = 2048)
                 }
                 printPageBitmap = page
                 printUri = uri
                 printImgW = page.width
                 printImgH = page.height
+                printFitMode = "Fit"   // v1.0.7: PDF pages preselect Fit - never crop a document page
                 printThumb = thumbOf(page)
                 printPreview = if (maxOf(page.width, page.height) > 1200) {
                     val sc = 1200f / maxOf(page.width, page.height)
@@ -1993,11 +2028,12 @@ snackbar.showSnackbar("This phone ran out of memory. Try a smaller size or fewer
             try {
                 // Page 1 stands in for preview and aspect checks; every page is
                 // composed with the same settings later, one at a time, at export.
-                val page = withContext(Dispatchers.IO) { ConvertFormats.renderPdfPageFromFile(tmp, 0, maxDim = 2600) }
+                val page = withContext(Dispatchers.IO) { ConvertFormats.renderPdfPageFromFile(tmp, 0, maxDim = 3000, minLongSide = 2048) }
                 printPageBitmap = page
                 printUri = uri
                 printImgW = page.width
                 printImgH = page.height
+                printFitMode = "Fit"   // v1.0.7: PDF pages preselect Fit - never crop a document page
                 printThumb = thumbOf(page)
                 printPreview = if (maxOf(page.width, page.height) > 1200) {
                     val sc = 1200f / maxOf(page.width, page.height)
@@ -2047,11 +2083,12 @@ snackbar.showSnackbar("This phone ran out of memory. Try a smaller size or fewer
             try {
                 // The first selected page stands in for preview and aspect checks;
                 // every selected page is composed with the same settings at export.
-                val page = withContext(Dispatchers.IO) { ConvertFormats.renderPdfPageFromFile(tmp, ordered.first(), maxDim = 2600) }
+                val page = withContext(Dispatchers.IO) { ConvertFormats.renderPdfPageFromFile(tmp, ordered.first(), maxDim = 3000, minLongSide = 2048) }
                 printPageBitmap = page
                 printUri = uri
                 printImgW = page.width
                 printImgH = page.height
+                printFitMode = "Fit"   // v1.0.7: PDF pages preselect Fit - never crop a document page
                 printThumb = thumbOf(page)
                 printPreview = if (maxOf(page.width, page.height) > 1200) {
                     val sc = 1200f / maxOf(page.width, page.height)
@@ -2197,8 +2234,8 @@ snackbar.showSnackbar("This phone ran out of memory. Try a smaller size or fewer
                             val (sW, sH) = printSheetDimsIn()
                             val g = printSheetGrid()
                             val gapIn = if (g[3] == 1) PrintUtils.SHEET_GAP_IN else 0.0
-                            if (printFormat == "PDF") buildPrintSheetPdfAllPages(tmpPdf, batchIndices!!, sW, sH, wIn, hIn, g[0], g[1], g[2], gapIn, printPpi, printFilename, File(outDir, "$printFilename.pdf"), onProg)
-                            else buildPrintSheetRasterAllPages(tmpPdf, batchIndices!!, sW, sH, wIn, hIn, g[0], g[1], g[2], gapIn, printPpi, printJpgQuality, printFormat, printFilename, outDir, onProg)
+                            if (printFormat == "PDF") buildPrintSheetPdfAllPages(tmpPdf, batchIndices!!, sW, sH, wIn, hIn, g[0], g[1], g[2], gapIn, printPpi, printFilename, printFitMode, File(outDir, "$printFilename.pdf"), onProg)
+                            else buildPrintSheetRasterAllPages(tmpPdf, batchIndices!!, sW, sH, wIn, hIn, g[0], g[1], g[2], gapIn, printPpi, printJpgQuality, printFormat, printFilename, printFitMode, outDir, onProg)
                         } else if (printFormat == "PDF") {
                             buildPrintPdfAllPages(tmpPdf, batchIndices!!, wIn, hIn, bleedIn, marginIn, printFitMode, printPpi, printCropMarks, printFilename, File(outDir, "$printFilename.pdf"), onProg)
                         } else {
@@ -2218,9 +2255,9 @@ snackbar.showSnackbar("This phone ran out of memory. Try a smaller size or fewer
                             val g = printSheetGrid()
                             val gapIn = if (g[3] == 1) PrintUtils.SHEET_GAP_IN else 0.0
                             if (printFormat == "PDF") {
-                                buildPrintSheetPdf(src, sW, sH, wIn, hIn, g[0], g[1], g[2], gapIn, printPpi, printFilename)
+                                buildPrintSheetPdf(src, sW, sH, wIn, hIn, g[0], g[1], g[2], gapIn, printPpi, printFilename, printFitMode)
                             } else {
-                                buildPrintSheetRaster(src, sW, sH, wIn, hIn, g[0], g[1], g[2], gapIn, printPpi, printJpgQuality, printFormat, printFilename)
+                                buildPrintSheetRaster(src, sW, sH, wIn, hIn, g[0], g[1], g[2], gapIn, printPpi, printJpgQuality, printFormat, printFilename, printFitMode)
                             }
                         } else if (printFormat == "PDF") {
                             buildPrintPdf(src, wIn, hIn, bleedIn, marginIn, printFitMode, printPpi, printCropMarks, printFilename)
@@ -2378,7 +2415,7 @@ snackbar.showSnackbar("This phone ran out of memory. Try a smaller size or fewer
                     convertSaved = true
                     busy = false
                     busyLabel = ""
-                    val where = if (fmt.id == "pdf") "Downloads/PixelCraft" else "Pictures/PixelCraft"
+                    val where = if (fmt.id == "pdf") "Downloads/A2Z Image Craft" else "Pictures/A2Z Image Craft"
                     snackbar.showSnackbar("Saved to $where.")
                                 } catch (e: OutOfMemoryError) {
 snackbar.showSnackbar("This phone ran out of memory. Try a smaller size or fewer pages.")
@@ -2396,7 +2433,7 @@ snackbar.showSnackbar("This phone ran out of memory. Try a smaller size or fewer
                 if (fmt.id == "pdf") saveToDownloads(context, convertResultName, fmt.mimeType, bytes)
                 else saveToGallery(context, convertResultName, fmt.mimeType, bytes)
                 convertSaved = true
-                snackbar.showSnackbar(if (fmt.id == "pdf") "Saved to Downloads/PixelCraft." else "Saved to your gallery (Pictures/PixelCraft).")
+                snackbar.showSnackbar(if (fmt.id == "pdf") "Saved to Downloads/A2Z Image Craft." else "Saved to your gallery (Pictures/A2Z Image Craft).")
                         } catch (e: OutOfMemoryError) {
 snackbar.showSnackbar("This phone ran out of memory. Try a smaller size or fewer pages.")
                 } catch (e: Exception) {
@@ -2412,6 +2449,46 @@ snackbar.showSnackbar("This phone ran out of memory. Try a smaller size or fewer
         convertBatchResults = null; convertBatchOutTotal = -1L; convertBatchIsPdf = false
         convertGoEdit = false
     }
+
+    fun shareConvertResult() {
+        scope.launch {
+            try {
+                val dir = File(context.cacheDir, "images").apply { mkdirs() }
+                val batch = convertBatchResults
+                val intent = if (batch != null && batch.size > 1) {
+                    val uris = ArrayList<Uri>()
+                    withContext(Dispatchers.IO) {
+                        batch.forEach { (name, bytes) ->
+                            val file = File(dir, name)
+                            FileOutputStream(file).use { it.write(bytes) }
+                            uris.add(FileProvider.getUriForFile(context, context.packageName + ".fileprovider", file))
+                        }
+                    }
+                    Intent(Intent.ACTION_SEND_MULTIPLE).apply {
+                        type = if (convertBatchIsPdf) "application/pdf" else "image/*"
+                        putParcelableArrayListExtra(Intent.EXTRA_STREAM, uris)
+                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    }
+                } else {
+                    val bytes = convertResultBytes ?: return@launch
+                    val shareUri = withContext(Dispatchers.IO) {
+                        val file = File(dir, convertResultName)
+                        FileOutputStream(file).use { it.write(bytes) }
+                        FileProvider.getUriForFile(context, context.packageName + ".fileprovider", file)
+                    }
+                    Intent(Intent.ACTION_SEND).apply {
+                        type = convertTarget.mimeType
+                        putExtra(Intent.EXTRA_STREAM, shareUri)
+                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    }
+                }
+                context.startActivity(Intent.createChooser(intent, "Share converted file"))
+            } catch (e: Exception) {
+                snackbar.showSnackbar("Share failed: ${e.message ?: "unknown error"}")
+            }
+        }
+    }
+
 
     fun applyShopCollage() {
         val t = collageTarget ?: return
@@ -2945,7 +3022,7 @@ snackbar.showSnackbar("This phone ran out of memory. Try a smaller size or fewer
                 uri.toString(),
                 parseToPx(inputWidth, sizeUnit, dpi)?.toString() ?: "",
                 parseToPx(inputHeight, sizeUnit, dpi)?.toString() ?: "",
-                lockRatio, quality, System.currentTimeMillis()
+                lockRatio, quality, System.currentTimeMillis(), tool.label
             )
             scope.launch(Dispatchers.IO) { DraftsStore.upsert(context, draft) }
         }
@@ -3578,6 +3655,20 @@ snackbar.showSnackbar("This phone ran out of memory. Try a smaller size or fewer
             act.intent.getStringExtra("pixelcraft.test.memetext")?.let { spec ->
                 val parts = spec.split("|")
                 applyMeme(parts.getOrElse(0) { "" }, parts.getOrElse(1) { "" })
+            }
+        }
+        if (act?.intent?.getStringExtra("pixelcraft.test.tool") == "printpdfsetup") {
+            // JVM UI tests: a PDF as the print source, page 1 selected, landed on Print Setup.
+            act.intent.getStringExtra("pixelcraft.test.pdf")?.let { p ->
+                scope.launch {
+                    loadPrintPdf(Uri.fromFile(File(p)))
+                    var n = 0
+                    while (printPdfUri == null && n < 100) { kotlinx.coroutines.delay(100); n++ }
+                    if (printPdfUri != null) {
+                        selectPrintPdfPage(0)
+                        screen = Screen.PrintSetup
+                    }
+                }
             }
         }
         if (act?.intent?.getStringExtra("pixelcraft.test.collage") == "1") {
@@ -4239,7 +4330,7 @@ snackbar.showSnackbar("This phone ran out of memory. Try a smaller size or fewer
             SnackbarHost(snackbar) { data ->
                 Surface(
                     shape = RoundedCornerShape(14.dp),
-                    color = Color.White,
+                    color = CardWhite,
                     shadowElevation = 8.dp,
                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp)
                 ) {
@@ -4267,7 +4358,7 @@ snackbar.showSnackbar("This phone ran out of memory. Try a smaller size or fewer
                                 Screen.ShopEdit -> "$shopPlatform · ${shopTarget?.label ?: "Custom"}"
                                 Screen.ShopCollage -> "$shopPlatform · Collage"
                                 Screen.ConvertHome -> "Format Converter"
-                                Screen.ConvertEdit -> "Format Converter · ${convertTarget.label}"
+                                Screen.ConvertEdit -> "Convert to ${convertTarget.label}"
                                 Screen.ConvertResult -> "Conversion Result"
                                 Screen.CompressHome -> "Image & PDF Compressor"
                                 Screen.CompressSettings -> "Compression Settings"
@@ -4281,7 +4372,9 @@ snackbar.showSnackbar("This phone ran out of memory. Try a smaller size or fewer
                                 Screen.PhotoAdjust -> "Photo Adjustments"
                                 else -> "Print Size & DPI"
                             },
-                            fontWeight = FontWeight.SemiBold
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
                         )
                     },
                     navigationIcon = {
@@ -4480,6 +4573,7 @@ snackbar.showSnackbar("This phone ran out of memory. Try a smaller size or fewer
                     recents = recents,
                     recentThumbs = recentThumbs,
                     onOpenPhoto = { uri -> loadPhoto(uri, isCamera = false) },
+                    onRemoveRecent = { uri -> scope.launch { withContext(Dispatchers.IO) { RecentsStore.remove(context, uri) }; recents = recents.filterNot { it == uri } } },
                     onOpenDraft = { draft ->
                         pendingDraft = draft
                         loadPhoto(Uri.parse(draft.sourceUri), isCamera = false)
@@ -4765,7 +4859,8 @@ snackbar.showSnackbar("This phone ran out of memory. Try a smaller size or fewer
                 onSaveNew = { saveAsNew() },
                 onReplace = { requestReplaceOriginal() },
                 onSaveToFolder = { launchSaveToFolder() },
-                onShare = { shareProcessed() }
+                onShare = { shareProcessed() },
+                mayBeTransparent = tool == Tool.Background || tool == Tool.Circle
             )
             Screen.SocialHome -> SocialHomeScreen(
                 modifier = Modifier.padding(padding),
@@ -4933,6 +5028,7 @@ snackbar.showSnackbar("This phone ran out of memory. Try a smaller size or fewer
                 batchCount = convertBatchResults?.size ?: 0,
                 batchIsPdf = convertBatchIsPdf,
                 onSave = { saveConvertResult() },
+                onShare = { shareConvertResult() },
                 onConvertAnother = { resetConvert(); screen = Screen.ConvertHome }
             )
             Screen.CompressHome -> CompressHomeScreen(
@@ -5033,7 +5129,7 @@ snackbar.showSnackbar("This phone ran out of memory. Try a smaller size or fewer
                     preset = printPreset,
                     onPreset = {
                         printPreset = it
-                        if (PrintUtils.presets.firstOrNull { p -> p.name == it }?.group == "ID / Passport") printSheetOn = true
+                        if (PrintUtils.presets.firstOrNull { p -> p.name == it }?.group == "ID / Passport") { printSheetOn = true; printFitMode = "Fill" }   // v1.0.7: passport photos fill the cell
                     },
                     unit = printUnit,
                     onUnit = { printUnit = it },
@@ -5065,6 +5161,7 @@ snackbar.showSnackbar("This phone ran out of memory. Try a smaller size or fewer
                     onBleedOn = { printBleedOn = it },
                     ppi = printPpi,
                     onPpi = { printPpi = it },
+                    isPdfSource = printPdfUri != null,
                     fitMode = printFitMode,
                     onFitMode = { printFitMode = it },
                     imgW = printImgW,
@@ -5299,7 +5396,7 @@ private fun StickersLevel(testSheetLevel: String?, layerCount: Int, imageCount: 
                     // v0.16.8 (his "Yes all 8"): stickers & emoji - tap to add, then drag/resize/rotate on the photo.
                     Text("Stickers & Emoji", color = DeepNavy, fontWeight = FontWeight.Bold, fontSize = 16.sp)
                     Spacer(Modifier.height(4.dp))
-                    Text("Tap to add one - then drag, resize or rotate it on the photo. Shapes sit under your text; emoji act like text.", color = Slate, fontSize = 11.sp)
+                    Text("Tap to add one - then drag, resize or rotate it on the photo. Shapes sit under your text; emoji act like text.", color = Slate, fontSize = 11.sp, lineHeight = 15.sp)
                     Spacer(Modifier.height(8.dp))
                     Text("Shapes", color = DeepNavy, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
                     Spacer(Modifier.height(6.dp))
@@ -5374,7 +5471,7 @@ private fun MemeLevel(testSheetLevel: String?, layerCount: Int, imageCount: Int,
                     var memeBottom by remember { mutableStateOf("") }
                     Text("Meme Maker", color = DeepNavy, fontWeight = FontWeight.Bold, fontSize = 16.sp)
                     Spacer(Modifier.height(4.dp))
-                    Text("Type your lines - they land on the photo in the classic meme style. Drag them anywhere after.", color = Slate, fontSize = 11.sp)
+                    Text("Type your lines - they land on the photo in the classic meme style. Drag them anywhere after.", color = Slate, fontSize = 11.sp, lineHeight = 15.sp)
                     Spacer(Modifier.height(8.dp))
                     OutlinedTextField(value = memeTop, onValueChange = { memeTop = it }, singleLine = true, label = { Text("Top text") }, modifier = Modifier.fillMaxWidth())
                     Spacer(Modifier.height(8.dp))
@@ -5412,7 +5509,7 @@ private class CollageUiState {
     var level by mutableStateOf("home")          // home | edit | export
     var canvasW by mutableStateOf(1080)
     var canvasH by mutableStateOf(1080)
-    var canvasLabel by mutableStateOf("Square 1080")
+    var canvasLabel by mutableStateOf("Square · 1080 × 1080 px")
     var gapPx by mutableStateOf(8f)
     var marginPx by mutableStateOf(0f)
     var radiusPx by mutableStateOf(0f)
@@ -5506,7 +5603,7 @@ private class CollageUiState {
         uris.clear(); photos.clear()
         family = CollageMaker.LayoutFamily.GRID
         level = "home"
-        canvasW = 1080; canvasH = 1080; canvasLabel = "Square 1080"
+        canvasW = 1080; canvasH = 1080; canvasLabel = "Square · 1080 × 1080 px"
         gapPx = 8f; marginPx = 0f; radiusPx = 0f; borderPx = 0f; borderColor = 0xFFFFFFFF.toInt()
         bgLabel = "White"; bgCustom = 0xFF3D5AFE.toInt(); gradientLabel = "Sunset"
         selected = -1
@@ -5557,7 +5654,7 @@ private fun CollageChip(label: String, active: Boolean, onClick: () -> Unit) {
     Card(
         modifier = Modifier.clickable(onClick = onClick),
         shape = RoundedCornerShape(10.dp),
-        colors = CardDefaults.cardColors(containerColor = if (active) Orange else Color.White),
+        colors = CardDefaults.cardColors(containerColor = if (active) Orange else CardWhite),
         border = androidx.compose.foundation.BorderStroke(1.dp, if (active) Orange else BorderGrey)
     ) {
         Text(label, modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp), color = if (active) Color.White else DeepNavy, fontSize = 12.sp, fontWeight = if (active) FontWeight.Bold else FontWeight.Normal)
@@ -5586,7 +5683,7 @@ private fun CollageHomeScreen(modifier: Modifier, state: CollageUiState, hasProj
                 Card(
                     modifier = Modifier.weight(1f).clickable { if (!active) { state.push(); state.family = fam; state.selected = -1; state.tick++; state.saved = false } },
                     shape = RoundedCornerShape(12.dp),
-                    colors = CardDefaults.cardColors(containerColor = Color.White),
+                    colors = CardDefaults.cardColors(containerColor = CardWhite),
                     border = androidx.compose.foundation.BorderStroke(if (active) 2.dp else 1.dp, if (active) Orange else BorderGrey)
                 ) {
                     Column(Modifier.padding(vertical = 8.dp), horizontalAlignment = Alignment.CenterHorizontally) {
@@ -5602,7 +5699,7 @@ private fun CollageHomeScreen(modifier: Modifier, state: CollageUiState, hasProj
         Text("2. Add your photos (${state.photos.size}/20)", color = DeepNavy, fontSize = 15.sp, fontWeight = FontWeight.Bold)
         Spacer(Modifier.height(8.dp))
         if (state.photos.isEmpty()) {
-            Card(shape = RoundedCornerShape(14.dp), colors = CardDefaults.cardColors(containerColor = Color.White), border = androidx.compose.foundation.BorderStroke(1.dp, BorderGrey)) {
+            Card(shape = RoundedCornerShape(14.dp), colors = CardDefaults.cardColors(containerColor = CardWhite), border = androidx.compose.foundation.BorderStroke(1.dp, BorderGrey)) {
                 Column(Modifier.fillMaxWidth().padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                     Text("JPG, PNG or WebP. Pick 2 to 20 photos.", color = Slate, fontSize = 12.sp, lineHeight = 16.sp)
                     Spacer(Modifier.height(10.dp))
@@ -5759,15 +5856,24 @@ private fun CollageEditScreen(modifier: Modifier, state: CollageUiState, onRepla
                     },
                 contentScale = ContentScale.Fit
             )
+            // v1.0.7 (his ask): sky-blue highlight border on the selected photo's frame.
+            val sec = sections.getOrNull(state.selected)
+            if (sec != null) {
+                androidx.compose.foundation.Canvas(Modifier.matchParentSize()) {
+                    val l = sec.left * size.width; val t = sec.top * size.height
+                    val w = (sec.right - sec.left) * size.width; val h = (sec.bottom - sec.top) * size.height
+                    drawRect(color = SkyBlue, topLeft = Offset(l, t), size = Size(w, h), style = androidx.compose.ui.graphics.drawscope.Stroke(width = 3.dp.toPx()))
+                }
+            }
         }
         Spacer(Modifier.height(4.dp))
-        Text("Tap a photo to select it. Drag to move it in its frame. Hold and drop on another frame to swap.", color = Slate, fontSize = 12.sp)
+        Text("Tap a photo to select it. Drag to move it in its frame. Hold and drop on another frame to swap.", color = Slate, fontSize = 12.sp, lineHeight = 16.sp)
 
         val sel = state.photos.getOrNull(state.selected)
         if (sel != null) {
             Spacer(Modifier.height(8.dp))
             Text("Zoom - photo ${state.selected + 1} (${"%.1f".format(sel.zoom)}x)", color = DeepNavy, fontSize = 13.sp, fontWeight = FontWeight.Bold)
-            Slider(
+            A2ZSlider(
                 value = sel.zoom.coerceIn(1f, 4f),
                 onValueChange = { beginDrag(); sel.zoom = it; state.tick++; state.saved = false },
                 onValueChangeFinished = { endDrag() },
@@ -5784,8 +5890,8 @@ private fun CollageEditScreen(modifier: Modifier, state: CollageUiState, onRepla
                 OutlinedButton(onClick = { state.push(); sel.zoom = 1f; sel.panX = 0f; sel.panY = 0f; sel.rotation = 0f; sel.flipH = false; sel.flipV = false; sel.borderPx = -1; state.tick++; state.saved = false }, shape = RoundedCornerShape(10.dp)) { Text("Reset photo", color = DeepNavy, fontSize = 12.sp) }
             }
             Spacer(Modifier.height(6.dp))
-            Text("Frame - photo ${state.selected + 1} (${if (sel.borderPx < 0) "same as all" else sel.borderPx.toString()})", color = DeepNavy, fontSize = 13.sp, fontWeight = FontWeight.Bold)
-            Slider(
+            Text("Frame - this photo (${if (sel.borderPx < 0) "same as all" else sel.borderPx.toString()})", color = DeepNavy, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+            A2ZSlider(
                 value = if (sel.borderPx < 0) 0f else sel.borderPx.toFloat(),
                 onValueChange = { beginDrag(); sel.borderPx = it.roundToInt(); state.tick++; state.saved = false },
                 onValueChangeFinished = { endDrag() },
@@ -5811,28 +5917,28 @@ private fun CollageEditScreen(modifier: Modifier, state: CollageUiState, onRepla
 
         Spacer(Modifier.height(8.dp))
         Text("Spacing between photos (${state.gapPx.roundToInt()})", color = DeepNavy, fontSize = 13.sp, fontWeight = FontWeight.Bold)
-        Slider(
+        A2ZSlider(
             value = state.gapPx,
             onValueChange = { beginDrag(); state.gapPx = it; state.tick++; state.saved = false },
             onValueChangeFinished = { endDrag() },
             valueRange = 0f..40f
         )
         Text("Rounded corners (${state.radiusPx.roundToInt()})", color = DeepNavy, fontSize = 13.sp, fontWeight = FontWeight.Bold)
-        Slider(
+        A2ZSlider(
             value = state.radiusPx,
             onValueChange = { beginDrag(); state.radiusPx = it; state.tick++; state.saved = false },
             onValueChangeFinished = { endDrag() },
             valueRange = 0f..60f
         )
         Text("Margin around the collage (${state.marginPx.roundToInt()})", color = DeepNavy, fontSize = 13.sp, fontWeight = FontWeight.Bold)
-        Slider(
+        A2ZSlider(
             value = state.marginPx,
             onValueChange = { beginDrag(); state.marginPx = it; state.tick++; state.saved = false },
             onValueChangeFinished = { endDrag() },
             valueRange = 0f..60f
         )
         Text("Frame around every photo (${state.borderPx.roundToInt()})", color = DeepNavy, fontSize = 13.sp, fontWeight = FontWeight.Bold)
-        Slider(
+        A2ZSlider(
             value = state.borderPx,
             onValueChange = { beginDrag(); state.borderPx = it; state.tick++; state.saved = false },
             onValueChangeFinished = { endDrag() },
@@ -5859,10 +5965,10 @@ private fun CollageEditScreen(modifier: Modifier, state: CollageUiState, onRepla
         Text("Canvas size", color = DeepNavy, fontSize = 13.sp, fontWeight = FontWeight.Bold)
         Spacer(Modifier.height(6.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            CollageChip("Square", state.canvasLabel == "Square 1080") { state.push(); state.canvasLabel = "Square 1080"; state.canvasW = 1080; state.canvasH = 1080 }
-            CollageChip("Portrait", state.canvasLabel == "Portrait 1080x1350") { state.push(); state.canvasLabel = "Portrait 1080x1350"; state.canvasW = 1080; state.canvasH = 1350 }
-            CollageChip("Story", state.canvasLabel == "Story 1080x1920") { state.push(); state.canvasLabel = "Story 1080x1920"; state.canvasW = 1080; state.canvasH = 1920 }
-            CollageChip("Wide", state.canvasLabel == "Landscape 1920x1080") { state.push(); state.canvasLabel = "Landscape 1920x1080"; state.canvasW = 1920; state.canvasH = 1080 }
+            CollageChip("Square", state.canvasLabel == "Square · 1080 × 1080 px") { state.push(); state.canvasLabel = "Square · 1080 × 1080 px"; state.canvasW = 1080; state.canvasH = 1080 }
+            CollageChip("Portrait", state.canvasLabel == "Portrait · 1080 × 1350 px") { state.push(); state.canvasLabel = "Portrait · 1080 × 1350 px"; state.canvasW = 1080; state.canvasH = 1350 }
+            CollageChip("Story", state.canvasLabel == "Story · 1080 × 1920 px") { state.push(); state.canvasLabel = "Story · 1080 × 1920 px"; state.canvasW = 1080; state.canvasH = 1920 }
+            CollageChip("Wide", state.canvasLabel == "Wide · 1920 × 1080 px") { state.push(); state.canvasLabel = "Wide · 1920 × 1080 px"; state.canvasW = 1920; state.canvasH = 1080 }
         }
         Text(state.canvasLabel, color = Slate, fontSize = 11.sp)
 
@@ -5979,7 +6085,7 @@ private fun CollageExportScreen(modifier: Modifier, state: CollageUiState, busy:
         if (state.format != "PNG") {
             Spacer(Modifier.height(8.dp))
             Text("Quality (${state.quality.roundToInt()}%)", color = DeepNavy, fontSize = 13.sp, fontWeight = FontWeight.Bold)
-            Slider(value = state.quality, onValueChange = { state.quality = it; state.saved = false }, valueRange = 50f..100f)
+            A2ZSlider(value = state.quality, onValueChange = { state.quality = it; state.saved = false }, valueRange = 50f..100f)
         }
 
         Spacer(Modifier.height(8.dp))
@@ -6067,6 +6173,65 @@ private class AdjustUiState {
     }
 }
 
+/** v1.0.7 (his spec): ONE shared slider style across the whole app - light grey track,
+ *  sky-blue fill from the left edge (from the centre at 0 when [centered]), white thumb
+ *  with a sky-blue ring. Same look as the Adjust sliders introduced in v1.0.5.
+ *  Carries ProgressBarRangeInfo + SetProgress semantics so tests drive it like a Slider. */
+@Composable
+private fun A2ZSlider(
+    value: Float,
+    onValueChange: (Float) -> Unit,
+    modifier: Modifier = Modifier,
+    valueRange: ClosedFloatingPointRange<Float> = 0f..1f,
+    centered: Boolean = false,
+    onValueChangeFinished: (() -> Unit)? = null
+) {
+    val lo = valueRange.start
+    val hi = valueRange.endInclusive
+    val span = if (hi > lo) hi - lo else 1f
+    val frac = ((value - lo) / span).coerceIn(0f, 1f)
+    BoxWithConstraints(modifier.fillMaxWidth().height(30.dp)) {
+        val wPx = constraints.maxWidth.toFloat()
+        fun xToValue(x: Float): Float = (lo + (x / wPx) * span).coerceIn(lo, hi)
+        Canvas(
+            Modifier.fillMaxSize()
+                .semantics {
+                    this[SemanticsProperties.ProgressBarRangeInfo] = androidx.compose.ui.semantics.ProgressBarRangeInfo(value.coerceIn(lo, hi), lo..hi, 0)
+                    setProgress { v ->
+                        onValueChange(v.coerceIn(lo, hi)); onValueChangeFinished?.invoke(); true
+                    }
+                }
+                .pointerInput(wPx, valueRange) {
+                    detectTapGestures(onPress = { off ->
+                        onValueChange(xToValue(off.x))
+                        if (tryAwaitRelease()) onValueChangeFinished?.invoke()
+                    })
+                }
+                .pointerInput(wPx, valueRange) {
+                    detectHorizontalDragGestures(
+                        onDragStart = { off -> onValueChange(xToValue(off.x)) },
+                        onDragEnd = { onValueChangeFinished?.invoke() },
+                        onHorizontalDrag = { change, _ -> change.consume(); onValueChange(xToValue(change.position.x)) }
+                    )
+                }
+        ) {
+            val cy = size.height / 2f
+            val thumbX = frac * size.width
+            val trackH = 4.dp.toPx()
+            drawRoundRect(color = Color(0xFFE3E6EA), topLeft = androidx.compose.ui.geometry.Offset(0f, cy - trackH / 2f), size = androidx.compose.ui.geometry.Size(size.width, trackH), cornerRadius = androidx.compose.ui.geometry.CornerRadius(trackH / 2f))
+            val zeroFrac = if (centered) ((0f - lo) / span).coerceIn(0f, 1f) else 0f
+            val fillFrom = zeroFrac * size.width
+            if (!centered || kotlin.math.abs(thumbX - fillFrom) > 0.5f) {
+                val left = minOf(fillFrom, thumbX)
+                drawRoundRect(color = SkyBlue, topLeft = androidx.compose.ui.geometry.Offset(left, cy - trackH / 2f), size = androidx.compose.ui.geometry.Size(kotlin.math.abs(thumbX - fillFrom), trackH), cornerRadius = androidx.compose.ui.geometry.CornerRadius(trackH / 2f))
+            }
+            val atZero = centered && value == 0f
+            drawCircle(color = Color.White, radius = 8.dp.toPx(), center = androidx.compose.ui.geometry.Offset(thumbX, cy))
+            drawCircle(color = if (atZero) Color(0xFFB9BEC6) else SkyBlue, radius = 8.dp.toPx(), center = androidx.compose.ui.geometry.Offset(thumbX, cy), style = androidx.compose.ui.graphics.drawscope.Stroke(width = 2.dp.toPx()))
+        }
+    }
+}
+
 @Composable
 private fun AdjustSlider(
     label: String,
@@ -6142,7 +6307,7 @@ private fun PhotoAdjustScreen(
         Spacer(Modifier.height(12.dp))
         if (base == null) {
             Text("Adjust your photo", color = DeepNavy, fontSize = 20.sp, fontWeight = FontWeight.Bold)
-            Text("Light, colour and detail sliders with a live preview. Your original photo is never changed.", color = Slate, fontSize = 13.sp)
+            Text("Light, colour and detail sliders with a live preview. Your original photo is never changed.", color = Slate, fontSize = 13.sp, lineHeight = 18.sp)
             Spacer(Modifier.height(14.dp))
             Button(onClick = onPick, modifier = Modifier.fillMaxWidth().height(50.dp), colors = ButtonDefaults.buttonColors(containerColor = Orange, contentColor = Color.White), shape = RoundedCornerShape(14.dp)) {
                 Icon(Icons.Default.Image, contentDescription = null)
@@ -6197,7 +6362,7 @@ private fun PhotoAdjustScreen(
                 Card(
                     modifier = Modifier.weight(1f).clickable { state.panel = id },
                     shape = RoundedCornerShape(12.dp),
-                    colors = CardDefaults.cardColors(containerColor = Color.White),
+                    colors = CardDefaults.cardColors(containerColor = CardWhite),
                     border = androidx.compose.foundation.BorderStroke(if (active) 2.dp else 1.dp, if (active) Orange else BorderGrey)
                 ) {
                     Text(label, modifier = Modifier.fillMaxWidth().padding(vertical = 10.dp), color = if (active) Orange else DeepNavy, fontSize = 13.sp, fontWeight = if (active) FontWeight.Bold else FontWeight.Normal, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
@@ -6207,7 +6372,7 @@ private fun PhotoAdjustScreen(
         Spacer(Modifier.height(8.dp))
 
         if (state.panel == "filters") {
-            Text("One-tap filters - sliders still apply on top.", color = Slate, fontSize = 12.sp)
+            Text("One-tap filters - sliders still apply on top.", color = Slate, fontSize = 12.sp, lineHeight = 16.sp)
             Spacer(Modifier.height(6.dp))
             LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.heightIn(max = 40.dp)) {
                 items(FilterUtils.FilterChoice.values().toList()) { choice ->
@@ -6215,7 +6380,7 @@ private fun PhotoAdjustScreen(
                 }
             }
         } else {
-            Text("Tap a value to reset that slider.", color = Slate, fontSize = 12.sp)
+            Text("Tap a value to reset that slider.", color = Slate, fontSize = 12.sp, lineHeight = 16.sp)
             Spacer(Modifier.height(4.dp))
             Text("Light", color = DeepNavy, fontSize = 14.sp, fontWeight = FontWeight.Bold)
             AdjustSlider("Brightness", state.params.brightness, ::beginDrag, { state.params.brightness = it; state.tick++; state.saved = false }, ::endDrag)
@@ -6248,7 +6413,7 @@ private fun PhotoAdjustScreen(
         }
         if (state.format != "PNG") {
             Text("Quality (${state.quality.roundToInt()}%)", color = DeepNavy, fontSize = 13.sp, fontWeight = FontWeight.Bold)
-            Slider(value = state.quality, onValueChange = { state.quality = it; state.saved = false }, valueRange = 50f..100f)
+            A2ZSlider(value = state.quality, onValueChange = { state.quality = it; state.saved = false }, valueRange = 50f..100f)
         }
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             CollageChip("Original size", state.resLabel == "Original") { state.resLabel = "Original"; state.saved = false }
@@ -6497,6 +6662,12 @@ internal fun DimensionsSheet(
         choice.startsWith("fs:") -> choice.removePrefix("fs:").toIntOrNull()?.let { kb -> fileSizes.firstOrNull { it.first == kb }?.let { SheetChoice.FileTarget(kb * 1024L, it.second) } }
         else -> null
     }
+    val sameAsOriginal = when (val c = sheetChoice) {
+        is SheetChoice.Absolute -> c.w == baseWidth && c.h == baseHeight
+        is SheetChoice.Longest -> scaled(c.side)?.let { it.first == baseWidth && it.second == baseHeight } == true
+        is SheetChoice.Percent -> c.p == 100
+        else -> false
+    }
     val buttonLabel = when (val c = sheetChoice) {
         is SheetChoice.Absolute -> "Resize to ${dimLabel(c.w, c.h)}"
         is SheetChoice.Longest -> "Resize to ${c.label}"
@@ -6504,7 +6675,7 @@ internal fun DimensionsSheet(
         is SheetChoice.FileTarget -> "Shrink to ${c.label}"
         null -> "Resize"
     }
-    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState, containerColor = Color.White) {
+    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState, containerColor = CardWhite) {
         Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp)) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Text(title, color = DeepNavy, fontWeight = FontWeight.Bold, fontSize = 16.sp, modifier = Modifier.weight(1f))
@@ -6591,11 +6762,11 @@ internal fun DimensionsSheet(
             Spacer(Modifier.height(14.dp))
             Button(
                 onClick = { sheetChoice?.let(onApply) },
-                enabled = sheetChoice != null,
+                enabled = sheetChoice != null && !sameAsOriginal,
                 modifier = Modifier.fillMaxWidth(),
                 colors = ButtonDefaults.buttonColors(containerColor = Orange, contentColor = Color.White),
                 shape = RoundedCornerShape(12.dp)
-            ) { Text(buttonLabel, fontWeight = FontWeight.Bold, maxLines = 1, softWrap = false) }
+            ) { Text(if (sameAsOriginal) "Same as original size" else buttonLabel, fontWeight = FontWeight.Bold, maxLines = 1, softWrap = false) }
             Spacer(Modifier.height(24.dp))
         }
     }
@@ -6712,7 +6883,7 @@ private fun QueueResultScreen(
         AlertDialog(
             onDismissRequest = { showSaveOptions = false },
             title = { Text("Save resized photos", color = DeepNavy, fontWeight = FontWeight.Bold) },
-            text = { Text("Save new copies in Pictures/PixelCraft. Your original photos stay untouched.", color = Slate, fontSize = 13.sp, lineHeight = 18.sp) },
+            text = { Text("Save new copies in Pictures/A2Z Image Craft. Your original photos stay untouched.", color = Slate, fontSize = 13.sp, lineHeight = 18.sp) },
             confirmButton = {
                 Column {
                     Button(onClick = { showSaveOptions = false; onSaveAsNew() }, modifier = Modifier.fillMaxWidth(), colors = ButtonDefaults.buttonColors(containerColor = Orange, contentColor = Color.White), shape = RoundedCornerShape(10.dp)) {
@@ -7042,7 +7213,8 @@ private fun EditorScreen(
                     modifier = Modifier.fillMaxSize().padding(8.dp)
                 )
             } else if (displayImage != null) {
-                Image(bitmap = displayImage, contentDescription = "Image preview", modifier = Modifier.fillMaxSize().padding(8.dp), contentScale = ContentScale.Fit)
+                val transparentPreview = tool == Tool.Background && bgPreview != null
+                Image(bitmap = displayImage, contentDescription = "Image preview", modifier = Modifier.fillMaxSize().padding(8.dp).then(if (transparentPreview) Modifier.checkerboard() else Modifier), contentScale = ContentScale.Fit)
             } else {
                 Column(
                     horizontalAlignment = Alignment.CenterHorizontally,
@@ -7050,11 +7222,11 @@ private fun EditorScreen(
                 ) {
                     Icon(Icons.Default.Image, contentDescription = null, tint = SkyBlue, modifier = Modifier.size(40.dp))
                     Text("Select Image", color = DeepNavy, fontWeight = FontWeight.Bold, fontSize = 17.sp, modifier = Modifier.padding(top = 10.dp))
-                    Text("Choose a photo from your phone", color = Slate, fontSize = 13.sp, modifier = Modifier.padding(top = 4.dp))
+                    Text("Choose a photo from your phone", color = Slate, fontSize = 13.sp, lineHeight = 18.sp, modifier = Modifier.padding(top = 4.dp))
                 }
             }
             if (busy) CircularProgressIndicator(color = Orange)
-            if (displayImage != null && tool != Tool.Circle) {
+            if (displayImage != null && tool != Tool.Circle && tool != Tool.Crop) {
                 IconButton(
                     onClick = onRotate,
                     modifier = Modifier.align(Alignment.TopEnd).padding(8.dp).size(38.dp).clip(CircleShape).background(Color.White.copy(alpha = 0.9f)).border(1.dp, BorderGrey, CircleShape)
@@ -7102,29 +7274,10 @@ private fun EditorScreen(
         }
         Spacer(Modifier.height(12.dp))
         if (tool == Tool.Resize) {
-            // Unit chips stay on this page (user request); the chosen unit carries into
-            // the options sheet. Size VALUES are chosen in the sheet only.
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())) {
-                listOf("px" to "Pixels", "in" to "Inches", "cm" to "cm", "mm" to "mm").forEach { (value, label) ->
-                    val selected = sizeUnit == value
-                    Surface(modifier = Modifier.clickable { onSizeUnit(value) }, shape = RoundedCornerShape(9.dp), color = if (selected) SkyBlue else PaleBlue) {
-                        Text(label, modifier = Modifier.padding(horizontal = 12.dp, vertical = 9.dp), fontSize = 11.sp, color = if (selected) Color.White else DeepNavy, textAlign = TextAlign.Center, maxLines = 1, softWrap = false)
-                    }
-                }
-            }
-            OutlinedTextField(
-                value = resizeDpi,
-                onValueChange = onResizeDpi,
-                modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
-                label = { Text("DPI (for printing, saved in JPG)") },
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                singleLine = true
-            )
-            Spacer(Modifier.height(10.dp))
-            // Size is chosen in ONE place only: the options sheet that Process opens
-            // (user decision on v0.4.5: no duplicated size fields on this page).
+            // v1.0.7 (his ask): units and DPI live in ONE place only - the size sheet
+            // that Process opens. No duplicated controls on this page.
             Card(colors = CardDefaults.cardColors(containerColor = PaleBlue), shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth()) {
-                Text("Tap Process to choose the new size - quick sizes, percentage, exact pixels or a target file size, all in one place.", color = Slate, fontSize = 13.sp, lineHeight = 18.sp, modifier = Modifier.padding(16.dp))
+                Text("Tap Process to choose the new size - quick sizes, percentage, exact pixels, inches, cm or mm, DPI and target file size, all in one place.", color = Slate, fontSize = 13.sp, lineHeight = 18.sp, modifier = Modifier.padding(16.dp))
             }
         } else if (tool == Tool.Background) {
             if (!bgCutoutReady) {
@@ -7222,7 +7375,7 @@ private fun EditorScreen(
                 }
                 if (straightenAngle != 0f || tiltHAngle != 0f || tiltVAngle != 0f) {
                     Text(
-                        "Reset",
+                        "Reset angle",
                         color = SkyBlue,
                         fontSize = 12.sp,
                         fontWeight = FontWeight.Bold,
@@ -7275,7 +7428,7 @@ private fun EditorScreen(
                 }
             }
             Text("Background", color = DeepNavy, fontWeight = FontWeight.SemiBold, fontSize = 14.sp, modifier = Modifier.padding(top = 14.dp, bottom = 4.dp))
-            Text("Choose what to show outside the shape", color = Slate, fontSize = 11.sp, modifier = Modifier.padding(bottom = 8.dp))
+            Text("Choose what to show outside the shape", color = Slate, fontSize = 11.sp, lineHeight = 15.sp, modifier = Modifier.padding(bottom = 8.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())) {
                 BgChoice.values().forEach { item ->
                     val selected = circleChoice == item
@@ -7311,7 +7464,7 @@ private fun EditorScreen(
             if (circlePreview != null) {
                 Text("Preview", color = DeepNavy, fontWeight = FontWeight.SemiBold, fontSize = 14.sp, modifier = Modifier.padding(top = 14.dp, bottom = 8.dp))
                 Card(colors = CardDefaults.cardColors(containerColor = SoftGrey), shape = RoundedCornerShape(14.dp)) {
-                    Image(bitmap = circlePreview.asImageBitmap(), contentDescription = "Live preview of the shape cutout", modifier = Modifier.padding(14.dp).size(96.dp), contentScale = ContentScale.Fit)
+                    Image(bitmap = circlePreview.asImageBitmap(), contentDescription = "Live preview of the shape cutout", modifier = Modifier.padding(14.dp).size(96.dp).checkerboard(), contentScale = ContentScale.Fit)
                 }
             }
             Card(colors = CardDefaults.cardColors(containerColor = PaleBlue), shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth().padding(top = 12.dp, bottom = 10.dp)) {
@@ -7408,7 +7561,7 @@ private fun AspectRatioDialog(
         title = { Text("Change in aspect ratio", fontWeight = FontWeight.Bold, color = DeepNavy) },
         text = {
             Column(Modifier.verticalScroll(rememberScrollState())) {
-                Text("Choose how to adapt your image to the new dimensions", color = Slate, fontSize = 13.sp)
+                Text("Choose how to adapt your image to the new dimensions", color = Slate, fontSize = 13.sp, lineHeight = 18.sp)
                 Text(
                     "${source.width}x${source.height} -> ${request.width}x${request.height} px",
                     color = DeepNavy,
@@ -7542,7 +7695,8 @@ private fun ExportScreen(
     onSaveNew: () -> Unit,
     onReplace: () -> Unit,
     onSaveToFolder: () -> Unit,
-    onShare: () -> Unit
+    onShare: () -> Unit,
+    mayBeTransparent: Boolean = false
 ) {
     // Before/After visual comparison on the result page (his request: same tabs as the editor).
     var showAfter by rememberSaveable { mutableStateOf(true) }
@@ -7566,7 +7720,7 @@ private fun ExportScreen(
             val shown = if (showAfter) processed else source
             val preview = remember(shown) { shown?.asImageBitmap() }
             if (preview != null) {
-                Image(bitmap = preview, contentDescription = if (showAfter) "Resized photo preview" else "Original photo preview", modifier = Modifier.fillMaxSize().padding(8.dp), contentScale = ContentScale.Fit)
+                Image(bitmap = preview, contentDescription = if (showAfter) "Resized photo preview" else "Original photo preview", modifier = Modifier.fillMaxSize().padding(8.dp).then(if (showAfter && mayBeTransparent) Modifier.checkerboard() else Modifier), contentScale = ContentScale.Fit)
             } else {
                 Text("Process the photo first, then come back to export.", color = DeepNavy)
             }
@@ -7624,7 +7778,7 @@ private fun ExportScreen(
                 Text("Quality", fontWeight = FontWeight.Bold, color = DeepNavy, fontSize = 15.sp, modifier = Modifier.weight(1f))
                 Text("$quality%", fontWeight = FontWeight.Bold, color = SkyBlue, fontSize = 16.sp)
             }
-            Slider(
+            A2ZSlider(
                 value = quality.toFloat(),
                 onValueChange = { onQuality(it.toInt()) },
                 onValueChangeFinished = onQualitySettled,
@@ -7662,7 +7816,7 @@ private fun ExportScreen(
         }
         Text(
             if (format == ExportFormat.PDF) "The original photo is never changed unless you choose Replace original. PDF files go to Download/PixelCraft."
-            else "The original photo is never changed unless you choose Replace original. New files go to Pictures/PixelCraft.",
+            else "The original photo is never changed unless you choose Replace original. New files go to Pictures/A2Z Image Craft.",
             color = Slate,
             fontSize = 11.sp,
             lineHeight = 15.sp,
@@ -7698,6 +7852,7 @@ private fun MyPhotosScreen(
     recents: List<Uri>,
     recentThumbs: Map<String, ImageBitmap?>,
     onOpenPhoto: (Uri) -> Unit,
+    onRemoveRecent: (Uri) -> Unit,
     onOpenDraft: (Draft) -> Unit
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
@@ -7708,6 +7863,28 @@ private fun MyPhotosScreen(
     var drafts by remember { mutableStateOf<List<Draft>>(emptyList()) }
     val savedThumbs = remember { mutableStateMapOf<String, ImageBitmap?>() }
     val draftThumbs = remember { mutableStateMapOf<String, ImageBitmap?>() }
+    var pendingDeleteSaved by remember { mutableStateOf<SavedPhoto?>(null) }
+    var deleteMsg by remember { mutableStateOf("") }
+    pendingDeleteSaved?.let { sp ->
+        AlertDialog(
+            onDismissRequest = { pendingDeleteSaved = null },
+            title = { Text("Delete this photo?", color = DeepNavy, fontWeight = FontWeight.Bold) },
+            text = { Text("\"" + sp.name + "\" is removed from the phone's gallery. This cannot be undone.", color = DocBody, fontSize = 14.sp, lineHeight = 19.sp) },
+            confirmButton = {
+                TextButton(onClick = {
+                    pendingDeleteSaved = null
+                    scope.launch {
+                        val ok = withContext(Dispatchers.IO) {
+                            try { context.contentResolver.delete(sp.uri, null, null) > 0 } catch (e: Exception) { false }
+                        }
+                        deleteMsg = if (ok) "" else "Couldn't delete this photo."
+                        saved = withContext(Dispatchers.IO) { querySavedExports(context) }
+                    }
+                }) { Text("Delete", color = Color(0xFFB3261E), fontWeight = FontWeight.Bold) }
+            },
+            dismissButton = { TextButton(onClick = { pendingDeleteSaved = null }) { Text("Cancel", color = DeepNavy) } }
+        )
+    }
 
     LaunchedEffect(photosTab) {
         if (photosTab == PhotosTab.Saved) {
@@ -7758,6 +7935,18 @@ private fun MyPhotosScreen(
                 }
             }
         }
+        // v1.0.7: photos whose original was deleted from the phone get an honest
+        // "Original photo not found" cell with a way to remove the dead entry.
+        val missingRecents = remember { mutableStateMapOf<String, Boolean>() }
+        LaunchedEffect(recents) {
+            recents.forEach { uri ->
+                if (!missingRecents.containsKey(uri.toString())) {
+                    missingRecents[uri.toString()] = withContext(Dispatchers.IO) {
+                        try { context.contentResolver.openFileDescriptor(uri, "r")?.use { } == null; false } catch (e: Exception) { true }
+                    }
+                }
+            }
+        }
         when (photosTab) {
             PhotosTab.Recent -> {
                 if (recents.isEmpty()) {
@@ -7767,15 +7956,28 @@ private fun MyPhotosScreen(
                         recents.chunked(3).forEach { rowItems ->
                             Row(Modifier.fillMaxWidth().padding(bottom = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                 rowItems.forEach { uri ->
-                                    PhotoCell(
-                                        thumb = recentThumbs[uri.toString()],
-                                        modifier = Modifier.weight(1f).height(100.dp),
-                                        onClick = { onOpenPhoto(uri) }
-                                    )
+                                    if (missingRecents[uri.toString()] == true) {
+                                        Box(
+                                            Modifier.weight(1f).height(100.dp).clip(RoundedCornerShape(12.dp)).background(SoftGrey).border(1.dp, BorderGrey, RoundedCornerShape(12.dp)),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(6.dp)) {
+                                                Text("Original photo not found", color = Slate, fontSize = 11.sp, lineHeight = 14.sp, textAlign = TextAlign.Center)
+                                                Text("Delete", color = Color(0xFFB3261E), fontSize = 11.sp, fontWeight = FontWeight.Bold, modifier = Modifier.clip(RoundedCornerShape(6.dp)).clickable { onRemoveRecent(uri) }.padding(6.dp))
+                                            }
+                                        }
+                                    } else {
+                                        PhotoCell(
+                                            thumb = recentThumbs[uri.toString()],
+                                            modifier = Modifier.weight(1f).height(100.dp),
+                                            onClick = { onOpenPhoto(uri) }
+                                        )
+                                    }
                                 }
                                 repeat(3 - rowItems.size) { Spacer(Modifier.weight(1f)) }
                             }
                         }
+                        Text("Tap a photo to edit it again.", color = Slate, fontSize = 11.sp, lineHeight = 15.sp, modifier = Modifier.padding(vertical = 8.dp))
                     }
                 }
             }
@@ -7783,8 +7985,8 @@ private fun MyPhotosScreen(
                 val list = saved
                 when {
                     list == null -> Text("Loading…", color = Slate, fontSize = 13.sp)
-                    Build.VERSION.SDK_INT < 29 -> EmptyNote("The saved-exports list needs Android 10 or newer. Your exports are still in the Pictures/PixelCraft folder.")
-                    list.isEmpty() -> EmptyNote("Nothing saved yet. Exported photos land here and in the Pictures/PixelCraft folder in your gallery.")
+                    Build.VERSION.SDK_INT < 29 -> EmptyNote("The saved-exports list needs Android 10 or newer. Your exports are still in the Pictures/A2Z Image Craft folder.")
+                    list.isEmpty() -> EmptyNote("Nothing saved yet. Exported photos land here and in the Pictures/A2Z Image Craft folder in your gallery.")
                     else -> Column(Modifier.verticalScroll(rememberScrollState())) {
                         list.forEach { sp ->
                             Row(
@@ -7809,10 +8011,17 @@ shareMsg = "This phone ran out of memory. Try a smaller size or fewer pages."
                                 }) {
                                     Icon(Icons.Default.Share, contentDescription = "Share", tint = DeepNavy, modifier = Modifier.size(20.dp))
                                 }
+                                // v1.0.7 (his ask): Saved photos can be deleted, with a confirm first.
+                                IconButton(onClick = { pendingDeleteSaved = sp }) {
+                                    Icon(Icons.Default.Delete, contentDescription = "Delete saved photo", tint = Slate, modifier = Modifier.size(20.dp))
+                                }
                             }
                         }
                         if (shareMsg.isNotBlank()) {
                             Text(shareMsg, color = Color(0xFFB3261E), fontSize = 12.sp, modifier = Modifier.padding(top = 6.dp))
+                        }
+                        if (deleteMsg.isNotBlank()) {
+                            Text(deleteMsg, color = Color(0xFFB3261E), fontSize = 12.sp, modifier = Modifier.padding(top = 6.dp))
                         }
                         Text("Tapping a saved photo opens it as a new editing source.", color = Slate, fontSize = 11.sp, modifier = Modifier.padding(vertical = 8.dp))
                     }
@@ -7830,6 +8039,7 @@ shareMsg = "This phone ran out of memory. Try a smaller size or fewer pages."
                             ) {
                                 PhotoCell(thumb = draftThumbs[draft.sourceUri], modifier = Modifier.size(52.dp), onClick = { onOpenDraft(draft) })
                                 Column(Modifier.weight(1f).padding(start = 12.dp)) {
+                                    Text(draft.tool, color = SkyBlue, fontWeight = FontWeight.Bold, fontSize = 11.sp)
                                     Text("Target: ${draft.width} × ${draft.height} px", color = DeepNavy, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
                                     Text(
                                         "Quality ${draft.quality}% · " + formatDraftTime(draft.updatedAt),
@@ -7926,6 +8136,26 @@ private fun androidShapePath(shape: String, size: Float): android.graphics.Path 
 
 /** Crop the framed square region, scale to outSize and mask into the chosen shape
  *  with real alpha (Square keeps the full square). */
+/** v1.0.7 (his ask): classic grey/white checkerboard behind transparent previews,
+ *  so the see-through parts of a cutout are actually visible. */
+private fun Modifier.checkerboard(cell: Dp = 8.dp): Modifier = this.drawBehind {
+    val c = cell.toPx()
+    if (c <= 0f) return@drawBehind
+    val light = Color(0xFFE9E9E9)
+    val dark = Color(0xFFC8C8C8)
+    var y = 0f
+    var row = 0
+    while (y < size.height) {
+        var x = 0f
+        var col = row
+        while (x < size.width) {
+            drawRect(color = if (col % 2 == 0) light else dark, topLeft = Offset(x, y), size = Size(c, c))
+            x += c; col++
+        }
+        y += c; row++
+    }
+}
+
 private fun shapeCutout(src: Bitmap, rect: FloatArray, shape: String, outSize: Int): Bitmap {
     val cropped = Transforms.cropRegion(src, CropMath.toPixels(rect, src.width, src.height))
     val scaled = Bitmap.createScaledBitmap(cropped, outSize, outSize, true)
@@ -8091,8 +8321,8 @@ private fun querySavedExports(context: Context): List<SavedPhoto> {
         MediaStore.Images.Media.DISPLAY_NAME,
         MediaStore.Images.Media.SIZE
     )
-    val selection = "${MediaStore.Images.Media.RELATIVE_PATH} LIKE ?"
-    val args = arrayOf("Pictures/PixelCraft%")
+    val selection = "${MediaStore.Images.Media.RELATIVE_PATH} LIKE ? OR ${MediaStore.Images.Media.RELATIVE_PATH} LIKE ?"
+    val args = arrayOf("Pictures/A2Z Image Craft%", "Pictures/A2Z Image Craft%")
     val sort = "${MediaStore.Images.Media.DATE_ADDED} DESC"
     try {
         context.contentResolver.query(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, projection, selection, args, sort)?.use { cursor ->
@@ -8299,7 +8529,7 @@ private fun SettingsScreen(
         }
 
         SettingsSection("Privacy") {
-            val prefs = remember { context.getSharedPreferences("pixelcraft_state", android.content.Context.MODE_PRIVATE) }
+            val prefs = remember { context.getSharedPreferences("a2z_state", android.content.Context.MODE_PRIVATE) }
             var keepLocation by remember { mutableStateOf(prefs.getBoolean("keep_photo_location", false)) }
             SettingsRow(
                 icon = { Icon(Icons.Default.LocationOn, null, tint = SkyBlue, modifier = Modifier.size(20.dp)) },
@@ -8314,7 +8544,7 @@ private fun SettingsScreen(
             SettingsRow(
                 icon = { Icon(Icons.Default.Delete, null, tint = SkyBlue, modifier = Modifier.size(20.dp)) },
                 title = "Clear recently edited",
-                subtitle = if (recentsCount > 0) recentsCount.toString() + " photo(s) remembered on this phone" else "Nothing remembered right now",
+                subtitle = if (recentsCount == 1) "1 photo remembered on this phone" else if (recentsCount > 1) "$recentsCount photos remembered on this phone" else "Nothing remembered right now",
                 onClick = if (recentsCount > 0) ({ showClearConfirm = true }) else null
             )
         }
@@ -8347,8 +8577,8 @@ private fun SettingsScreen(
 private fun HomeDrawer(onClose: () -> Unit, onHelp: () -> Unit, onEmail: () -> Unit, onRate: () -> Unit, onShare: () -> Unit, onTerms: () -> Unit, onPrivacy: () -> Unit, onLicences: () -> Unit, onWhatsNew: () -> Unit) {
     Box(Modifier.fillMaxSize()) {
         Box(Modifier.fillMaxSize().background(Color(0x99061722)).clickable { onClose() })
-        Column(Modifier.fillMaxHeight().fillMaxWidth(0.82f).background(Color.White).verticalScroll(rememberScrollState())) {
-            Column(Modifier.fillMaxWidth().background(DeepNavy).statusBarsPadding().padding(horizontal = 20.dp, vertical = 24.dp)) {
+        Column(Modifier.fillMaxHeight().fillMaxWidth(0.82f).background(CardWhite).verticalScroll(rememberScrollState())) {
+            Column(Modifier.fillMaxWidth().background(HeaderNavy).statusBarsPadding().padding(horizontal = 20.dp, vertical = 24.dp)) {
                 Text("A2Z Image Craft", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Bold)
                 Text("PHOTO TOOLKIT", color = SkyBlue, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 2.sp, modifier = Modifier.padding(top = 4.dp))
             }
@@ -8453,7 +8683,6 @@ private const val PRIVACY_TEXT = "A2Z Image Craft - Privacy Policy\n\n" +
     "Email: bittyjee1223@gmail.com\n"
 
 // v1.0.1 (his polish): doc pages render with bold dark headings and bigger, darker body text.
-private val DocBody = Color(0xFF3B4A63)
 
 private data class DocEntry(val heading: String, val body: String)
 
@@ -8481,11 +8710,14 @@ private val HELP_ENTRIES = listOf(
     DocEntry("Collage Maker", "Pick several photos and choose a layout. Hold a photo and drop it on another frame to swap them, and adjust spacing and background."),
     DocEntry("Photo Adjustments", "Brightness, contrast, warmth and filters. Tap Compare to see the original photo."),
     DocEntry("Presets", "Tap a preset to open the resize tool with that exact size ready - one tap to finish."),
-    DocEntry("Saving and sharing", "Edited photos are saved to Pictures/PixelCraft (or the folder you choose). Your original photo is never changed unless you choose \"Replace original\"."),
+    DocEntry("Saving and sharing", "Edited photos are saved to Pictures/A2Z Image Craft (or the folder you choose). Your original photo is never changed unless you choose \"Replace original\"."),
     DocEntry("Privacy", "Everything happens on your phone. Your photos are never uploaded.")
 )
 
 private val WHATS_NEW_ITEMS = listOf(
+    "Dark mode now covers every screen",
+    "Saved files now live in the A2Z Image Craft folder and their names start with a2z",
+    "Sharper true-perspective tilt, checkerboard for transparent previews, one slider style everywhere",
     "Resize photos by pixels, percent, inches or mm",
     "Remove backgrounds with one tap",
     "Crop, rotate, mirror and cut photos into shapes",
@@ -8559,19 +8791,9 @@ private fun CropPreview(
         val hasAdjust = straighten != 0f || tiltH != 0f || tiltV != 0f
         val adjustMatrix = remember(bitmap, straighten, tiltH, tiltV, dispW, dispH, offX, offY) {
             if (!hasAdjust) null else {
-                val focal = 1.5f * maxOf(bitmap.width, bitmap.height)
-                val quad = CropMath.transformedCorners(bitmap.width, bitmap.height, straighten, tiltH, tiltV, focal)
-                val cover = CropMath.coverScale(quad, bitmap.width, bitmap.height)
-                val cx = bitmap.width / 2f
-                val cy = bitmap.height / 2f
-                val dst = FloatArray(8)
-                for (i in 0..3) {
-                    dst[i * 2] = cx + (quad[i * 2] - cx) * cover
-                    dst[i * 2 + 1] = cy + (quad[i * 2 + 1] - cy) * cover
-                }
-                val srcPts = floatArrayOf(0f, 0f, bitmap.width.toFloat(), 0f, bitmap.width.toFloat(), bitmap.height.toFloat(), 0f, bitmap.height.toFloat())
-                android.graphics.Matrix().apply {
-                    setPolyToPoly(srcPts, 0, dst, 0, 4)
+                // Same true-perspective matrix as the saved output (v1.0.7) - what you see
+                // is exactly what you get, and the photo always fills the frame.
+                Transforms.adjustMatrix(bitmap.width, bitmap.height, straighten, tiltH, tiltV).apply {
                     postScale(dispW / bitmap.width, dispH / bitmap.height)
                     postTranslate(offX, offY)
                 }
@@ -8690,7 +8912,7 @@ private fun AdjustDialAndSlider(
                     )
                 }
             }
-            Text("%.1f".format(value), color = DeepNavy, fontWeight = FontWeight.Bold, fontSize = 18.sp)
+            Text("%.1f°".format(value), color = DeepNavy, fontWeight = FontWeight.Bold, fontSize = 18.sp)
         }
         val currentValue by rememberUpdatedState(value)
         val currentOnValue by rememberUpdatedState(onValue)
@@ -8901,7 +9123,7 @@ private val EXIF_GPS_TAGS = listOf(
 )
 
 private fun keepPhotoLocation(context: Context): Boolean =
-    context.getSharedPreferences("pixelcraft_state", Context.MODE_PRIVATE).getBoolean("keep_photo_location", false)
+    context.getSharedPreferences("a2z_state", Context.MODE_PRIVATE).getBoolean("keep_photo_location", false)
 
 private fun writeDpiTags(dst: ExifInterface, dpi: Int) {
     try {
@@ -8969,7 +9191,7 @@ private fun saveToGallery(context: Context, filename: String, mimeType: String, 
         put(MediaStore.Images.Media.DISPLAY_NAME, filename)
         put(MediaStore.Images.Media.MIME_TYPE, mimeType)
         if (Build.VERSION.SDK_INT >= 29) {
-            put(MediaStore.Images.Media.RELATIVE_PATH, "Pictures/PixelCraft")
+            put(MediaStore.Images.Media.RELATIVE_PATH, "Pictures/A2Z Image Craft")
             put(MediaStore.Images.Media.IS_PENDING, 1)
         }
     }
@@ -8994,7 +9216,7 @@ private fun saveToDownloads(context: Context, filename: String, mimeType: String
         val values = ContentValues().apply {
             put(MediaStore.Downloads.DISPLAY_NAME, filename)
             put(MediaStore.Downloads.MIME_TYPE, mimeType)
-            put(MediaStore.Downloads.RELATIVE_PATH, "Download/PixelCraft")
+            put(MediaStore.Downloads.RELATIVE_PATH, "Download/A2Z Image Craft")
             put(MediaStore.Downloads.IS_PENDING, 1)
         }
         val uri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
@@ -9009,7 +9231,7 @@ private fun saveToDownloads(context: Context, filename: String, mimeType: String
         }
     } else {
         val dir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
-        val outDir = File(dir, "PixelCraft").apply { mkdirs() }
+        val outDir = File(dir, "A2Z Image Craft").apply { mkdirs() }
         FileOutputStream(File(outDir, filename)).use { it.write(bytes) }
     }
 }
@@ -9058,14 +9280,14 @@ private fun buildPrintRaster(src: Bitmap, wIn: Double, hIn: Double, bleedIn: Dou
     return encodePrintRaster(out, format, quality, bg, filename, capped[0], capped[1], if (wasCapped) " (scaled to fit device memory)" else "")
 }
 
-private fun buildPrintSheetRaster(src: Bitmap, sheetWIn: Double, sheetHIn: Double, cellWIn: Double, cellHIn: Double, cols: Int, rows: Int, count: Int, gapIn: Double, ppi: Int, quality: Int, format: String, filename: String): PrintOutput {
+private fun buildPrintSheetRaster(src: Bitmap, sheetWIn: Double, sheetHIn: Double, cellWIn: Double, cellHIn: Double, cols: Int, rows: Int, count: Int, gapIn: Double, ppi: Int, quality: Int, format: String, filename: String, mode: String): PrintOutput {
     val req = PrintUtils.requiredPixels(sheetWIn, sheetHIn, ppi)
     val capped = PrintUtils.cappedPixels(req[0], req[1])
     val wasCapped = capped[0] != req[0] || capped[1] != req[1]
     val cellWPx = (cellWIn * capped[0] / sheetWIn).toInt().coerceAtLeast(1)
     val cellHPx = (cellHIn * capped[1] / sheetHIn).toInt().coerceAtLeast(1)
     val gapPx = (gapIn * capped[0] / sheetWIn).toInt()
-    val sheet = PrintUtils.renderSheet(src, capped[0], capped[1], cellWPx, cellHPx, cols, rows, gapPx, true, count)
+    val sheet = PrintUtils.renderSheet(src, capped[0], capped[1], cellWPx, cellHPx, cols, rows, gapPx, true, count, mode)
     return encodePrintRaster(sheet, format, quality, android.graphics.Color.WHITE, filename, capped[0], capped[1],
         " · $count ${if (count == 1) "copy" else "copies"} ($cols × $rows)" + (if (wasCapped) " (scaled to fit device memory)" else ""))
 }
@@ -9079,6 +9301,7 @@ private fun buildPrintPdf(src: Bitmap, wIn: Double, hIn: Double, bleedIn: Double
     val areaHIn = (pageHIn - marginIn * 2).coerceAtLeast(0.1)
     val req0 = PrintUtils.requiredPixels(areaWIn, areaHIn, ppi)
     val req = PrintUtils.cappedPixels(req0[0], req0[1])
+    val wasCapped = req[0] != req0[0] || req[1] != req0[1]
     val placed = PrintUtils.renderPrint(src, req[0], req[1], mode, android.graphics.Color.WHITE)
     val doc = PdfDocument()
     val page = doc.startPage(PdfDocument.PageInfo.Builder(pageWPt, pageHPt, 1).create())
@@ -9105,14 +9328,15 @@ private fun buildPrintPdf(src: Bitmap, wIn: Double, hIn: Double, bleedIn: Double
     val baos = java.io.ByteArrayOutputStream()
     doc.writeTo(baos)
     doc.close()
-    val dims = "${PrintUtils.fmtDim(pageWIn, "in")} × ${PrintUtils.fmtDim(pageHIn, "in")} in PDF page"
+    val dims = "${PrintUtils.fmtDim(pageWIn, "in")} × ${PrintUtils.fmtDim(pageHIn, "in")} in PDF page" +
+        (if (wasCapped) " · about ${PrintUtils.actualOutputPpi(areaWIn, areaHIn, ppi)} PPI inside (scaled to fit device memory)" else "")
     return PrintOutput(baos.toByteArray(), "$filename.pdf", "application/pdf", dims)
 }
 
-private fun buildPrintSheetPdf(src: Bitmap, sheetWIn: Double, sheetHIn: Double, cellWIn: Double, cellHIn: Double, cols: Int, rows: Int, count: Int, gapIn: Double, ppi: Int, filename: String): PrintOutput {
+private fun buildPrintSheetPdf(src: Bitmap, sheetWIn: Double, sheetHIn: Double, cellWIn: Double, cellHIn: Double, cols: Int, rows: Int, count: Int, gapIn: Double, ppi: Int, filename: String, mode: String): PrintOutput {
     val cellPx0 = PrintUtils.requiredPixels(cellWIn, cellHIn, ppi)
     val cellPx = PrintUtils.cappedPixels(cellPx0[0], cellPx0[1])
-    val cell = PrintUtils.renderPrint(src, cellPx[0], cellPx[1], "Fill", android.graphics.Color.WHITE)
+    val cell = PrintUtils.renderPrint(src, cellPx[0], cellPx[1], mode, android.graphics.Color.WHITE)
     val pageWPt = (sheetWIn * 72).toInt().coerceAtLeast(1)
     val pageHPt = (sheetHIn * 72).toInt().coerceAtLeast(1)
     val doc = PdfDocument()
@@ -9140,16 +9364,24 @@ private fun buildPrintSheetPdf(src: Bitmap, sheetWIn: Double, sheetHIn: Double, 
     val baos = java.io.ByteArrayOutputStream()
     doc.writeTo(baos)
     doc.close()
-    val dims = "$count ${if (count == 1) "copy" else "copies"} ($cols × $rows) · ${PrintUtils.fmtDim(sheetWIn, "in")} × ${PrintUtils.fmtDim(sheetHIn, "in")} in PDF page"
+    val dims = "$count ${if (count == 1) "copy" else "copies"} ($cols × $rows) · ${PrintUtils.fmtDim(sheetWIn, "in")} × ${PrintUtils.fmtDim(sheetHIn, "in")} in PDF page" +
+        (if (PrintUtils.actualOutputPpi(sheetWIn, sheetHIn, ppi) < ppi) " · about ${PrintUtils.actualOutputPpi(sheetWIn, sheetHIn, ppi)} PPI inside (scaled to fit device memory)" else "")
     return PrintOutput(baos.toByteArray(), "$filename.pdf", "application/pdf", dims)
 }
 
 data class PrintMultiOutput(val files: List<File>, val name: String, val mime: String, val dims: String)
 
-private fun renderSrcPdfPage(renderer: PdfRenderer, index: Int, maxDim: Int): Bitmap {
+private fun renderSrcPdfPage(renderer: PdfRenderer, index: Int, targetLongSide: Int): Bitmap {
     val page = renderer.openPage(index)
     try {
-        val scale = minOf(1f, maxDim.toFloat() / maxOf(page.width, page.height).coerceAtLeast(1))
+        // v1.0.7 (his report): PDF pages were rendered at the 72-DPI default
+        // (612 x 816 for Letter) and looked soft in print. Render at the resolution
+        // the print settings actually need - scale UP as well as down - with a
+        // memory-safe ceiling. 6144 covers A3/Tabloid/16x20 at 300 PPI (A3 needs
+        // 4961, Tabloid 5100, 16x20 6000); A2 (7016), posters and large 600-PPI
+        // formats still downscale for memory - the result line says so when it happens.
+        val target = targetLongSide.coerceIn(1, PrintUtils.SRC_PDF_MAX_LONG_SIDE)
+        val scale = target.toFloat() / maxOf(page.width, page.height).coerceAtLeast(1)
         val w = (page.width * scale).toInt().coerceAtLeast(1)
         val h = (page.height * scale).toInt().coerceAtLeast(1)
         val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
@@ -9179,7 +9411,7 @@ fun buildPrintRasterAllPages(pdfFile: File, indices: IntArray, wIn: Double, hIn:
         require(indices.isNotEmpty() && indices.all { it >= 0 && it < renderer.pageCount }) { "Page out of range" }
         for ((k, i) in indices.withIndex()) {
             onProgress(k + 1, indices.size)
-            val src = renderSrcPdfPage(renderer, i, 2600)
+            val src = renderSrcPdfPage(renderer, i, maxOf(areaW, areaH))
             try {
                 val placed = PrintUtils.renderPrint(src, areaW, areaH, mode, if (format == "PNG") android.graphics.Color.TRANSPARENT else bg)
                 val out = Bitmap.createBitmap(capped[0], capped[1], Bitmap.Config.ARGB_8888)
@@ -9205,7 +9437,9 @@ fun buildPrintRasterAllPages(pdfFile: File, indices: IntArray, wIn: Double, hIn:
         }
     }
     if (files.isEmpty()) throw IllegalStateException("No pages")
-    val dims = "${files.size} files · ${capped[0]} × ${capped[1]} px" + (if (wasCapped) " (scaled to fit device memory)" else "")
+    val srcCapped = maxOf(areaW, areaH) > PrintUtils.SRC_PDF_MAX_LONG_SIDE
+    val dims = "${files.size} files · ${capped[0]} × ${capped[1]} px" + (if (wasCapped) " (scaled to fit device memory)" else "") +
+        (if (srcCapped) " · PDF pages rendered at reduced resolution (device memory)" else "")
     return PrintMultiOutput(files, files.first().name, if (format == "PNG") "image/png" else "image/jpeg", dims)
 }
 
@@ -9219,6 +9453,8 @@ fun buildPrintPdfAllPages(pdfFile: File, indices: IntArray, wIn: Double, hIn: Do
     val areaHIn = (pageHIn - marginIn * 2).coerceAtLeast(0.1)
     val req0 = PrintUtils.requiredPixels(areaWIn, areaHIn, ppi)
     val req = PrintUtils.cappedPixels(req0[0], req0[1])
+    val wasCapped = req[0] != req0[0] || req[1] != req0[1]
+    val srcCapped = maxOf(req[0], req[1]) > PrintUtils.SRC_PDF_MAX_LONG_SIDE
     var count = 0
     val doc = PdfDocument()
     ConvertFormats.withPdfRendererOnFile(pdfFile) { renderer ->
@@ -9226,7 +9462,7 @@ fun buildPrintPdfAllPages(pdfFile: File, indices: IntArray, wIn: Double, hIn: Do
         require(indices.isNotEmpty() && indices.all { it >= 0 && it < renderer.pageCount }) { "Page out of range" }
         for ((k, i) in indices.withIndex()) {
             onProgress(k + 1, indices.size)
-            val src = renderSrcPdfPage(renderer, i, 2600)
+            val src = renderSrcPdfPage(renderer, i, maxOf(req[0], req[1]))
             try {
                 val placed = PrintUtils.renderPrint(src, req[0], req[1], mode, android.graphics.Color.WHITE)
                 val page = doc.startPage(PdfDocument.PageInfo.Builder(pageWPt, pageHPt, i + 1).create())
@@ -9260,12 +9496,14 @@ fun buildPrintPdfAllPages(pdfFile: File, indices: IntArray, wIn: Double, hIn: Do
     if (count == 0) { doc.close(); throw IllegalStateException("No pages") }
     FileOutputStream(outFile).use { doc.writeTo(it) }
     doc.close()
-    val dims = "$count pages · ${PrintUtils.fmtDim(pageWIn, "in")} × ${PrintUtils.fmtDim(pageHIn, "in")} in PDF page"
+    val dims = "$count pages · ${PrintUtils.fmtDim(pageWIn, "in")} × ${PrintUtils.fmtDim(pageHIn, "in")} in PDF page" +
+        (if (wasCapped) " · about ${PrintUtils.actualOutputPpi(areaWIn, areaHIn, ppi)} PPI inside (scaled to fit device memory)" else "") +
+        (if (srcCapped) " · PDF pages rendered at reduced resolution (device memory)" else "")
     return PrintMultiOutput(listOf(outFile), outFile.name, "application/pdf", dims)
 }
 
 /** All-pages multi-copy sheets as raster files: one sheet image per PDF page. */
-fun buildPrintSheetRasterAllPages(pdfFile: File, indices: IntArray, sheetWIn: Double, sheetHIn: Double, cellWIn: Double, cellHIn: Double, cols: Int, rows: Int, count: Int, gapIn: Double, ppi: Int, quality: Int, format: String, filename: String, outDir: File, onProgress: (Int, Int) -> Unit): PrintMultiOutput {
+fun buildPrintSheetRasterAllPages(pdfFile: File, indices: IntArray, sheetWIn: Double, sheetHIn: Double, cellWIn: Double, cellHIn: Double, cols: Int, rows: Int, count: Int, gapIn: Double, ppi: Int, quality: Int, format: String, filename: String, mode: String, outDir: File, onProgress: (Int, Int) -> Unit): PrintMultiOutput {
     val req = PrintUtils.requiredPixels(sheetWIn, sheetHIn, ppi)
     val capped = PrintUtils.cappedPixels(req[0], req[1])
     val wasCapped = capped[0] != req[0] || capped[1] != req[1]
@@ -9279,9 +9517,9 @@ fun buildPrintSheetRasterAllPages(pdfFile: File, indices: IntArray, sheetWIn: Do
         require(indices.isNotEmpty() && indices.all { it >= 0 && it < renderer.pageCount }) { "Page out of range" }
         for ((k, i) in indices.withIndex()) {
             onProgress(k + 1, indices.size)
-            val src = renderSrcPdfPage(renderer, i, 2600)
+            val src = renderSrcPdfPage(renderer, i, maxOf(cellWPx, cellHPx))
             try {
-                val sheet = PrintUtils.renderSheet(src, capped[0], capped[1], cellWPx, cellHPx, cols, rows, gapPx, true, count)
+                val sheet = PrintUtils.renderSheet(src, capped[0], capped[1], cellWPx, cellHPx, cols, rows, gapPx, true, count, mode)
                 val f = File(outDir, "$filename-page-${(i + 1).toString().padStart(3, '0')}.$ext")
                 FileOutputStream(f).use { fos ->
                     if (format == "PNG") {
@@ -9305,7 +9543,7 @@ fun buildPrintSheetRasterAllPages(pdfFile: File, indices: IntArray, sheetWIn: Do
 }
 
 /** All-pages multi-copy sheets in one PDF: one sheet page per PDF page. */
-fun buildPrintSheetPdfAllPages(pdfFile: File, indices: IntArray, sheetWIn: Double, sheetHIn: Double, cellWIn: Double, cellHIn: Double, cols: Int, rows: Int, count: Int, gapIn: Double, ppi: Int, filename: String, outFile: File, onProgress: (Int, Int) -> Unit): PrintMultiOutput {
+fun buildPrintSheetPdfAllPages(pdfFile: File, indices: IntArray, sheetWIn: Double, sheetHIn: Double, cellWIn: Double, cellHIn: Double, cols: Int, rows: Int, count: Int, gapIn: Double, ppi: Int, filename: String, mode: String, outFile: File, onProgress: (Int, Int) -> Unit): PrintMultiOutput {
     val cellPx0 = PrintUtils.requiredPixels(cellWIn, cellHIn, ppi)
     val cellPx = PrintUtils.cappedPixels(cellPx0[0], cellPx0[1])
     val pageWPt = (sheetWIn * 72).toInt().coerceAtLeast(1)
@@ -9317,9 +9555,9 @@ fun buildPrintSheetPdfAllPages(pdfFile: File, indices: IntArray, sheetWIn: Doubl
         require(indices.isNotEmpty() && indices.all { it >= 0 && it < renderer.pageCount }) { "Page out of range" }
         for ((k, i) in indices.withIndex()) {
             onProgress(k + 1, indices.size)
-            val src = renderSrcPdfPage(renderer, i, 2600)
+            val src = renderSrcPdfPage(renderer, i, maxOf(cellPx[0], cellPx[1]))
             try {
-                val cell = PrintUtils.renderPrint(src, cellPx[0], cellPx[1], "Fill", android.graphics.Color.WHITE)
+                val cell = PrintUtils.renderPrint(src, cellPx[0], cellPx[1], mode, android.graphics.Color.WHITE)
                 val page = doc.startPage(PdfDocument.PageInfo.Builder(pageWPt, pageHPt, i + 1).create())
                 val canvas = page.canvas
                 canvas.drawColor(android.graphics.Color.WHITE)
@@ -9351,7 +9589,8 @@ fun buildPrintSheetPdfAllPages(pdfFile: File, indices: IntArray, sheetWIn: Doubl
     if (srcCount == 0) { doc.close(); throw IllegalStateException("No pages") }
     FileOutputStream(outFile).use { doc.writeTo(it) }
     doc.close()
-    val dims = "$srcCount pages · $count ${if (count == 1) "copy" else "copies"} ($cols × $rows) each · ${PrintUtils.fmtDim(sheetWIn, "in")} × ${PrintUtils.fmtDim(sheetHIn, "in")} in PDF page"
+    val dims = "$srcCount pages · $count ${if (count == 1) "copy" else "copies"} ($cols × $rows) each · ${PrintUtils.fmtDim(sheetWIn, "in")} × ${PrintUtils.fmtDim(sheetHIn, "in")} in PDF page" +
+        (if (PrintUtils.actualOutputPpi(sheetWIn, sheetHIn, ppi) < ppi) " · about ${PrintUtils.actualOutputPpi(sheetWIn, sheetHIn, ppi)} PPI inside (scaled to fit device memory)" else "")
     return PrintMultiOutput(listOf(outFile), outFile.name, "application/pdf", dims)
 }
 
@@ -9403,22 +9642,22 @@ private fun formatPageRanges(zeroBasedSorted: List<Int>): String {
     return parts.joinToString(", ")
 }
 
-private fun suggestBaseName(width: Int, height: Int): String = "pixelcraft-${width}x${height}"
+private fun suggestBaseName(width: Int, height: Int): String = "a2z-${width}x${height}"
 
 private fun buildFileName(requestedName: String, format: ExportFormat): String {
-    val cleaned = requestedName.trim().ifBlank { "pixelcraft-image" }
+    val cleaned = requestedName.trim().ifBlank { "a2z-image" }
         .replace(Regex("[^A-Za-z0-9._ -]"), "_").take(80)
-    val base = cleaned.replace(Regex("\\.(png|jpe?g|webp|pdf)$", RegexOption.IGNORE_CASE), "").ifBlank { "pixelcraft-image" }
+    val base = cleaned.replace(Regex("\\.(png|jpe?g|webp|pdf)$", RegexOption.IGNORE_CASE), "").ifBlank { "a2z-image" }
     return "$base.${format.extension}"
 }
 
 private fun saveLastUsedTarget(context: Context, w: Int, h: Int) {
-    context.getSharedPreferences("pixelcraft_state", Context.MODE_PRIVATE).edit()
+    context.getSharedPreferences("a2z_state", Context.MODE_PRIVATE).edit()
         .putInt("last_resize_w", w).putInt("last_resize_h", h).apply()
 }
 
 private fun loadLastUsedTarget(context: Context): Pair<Int, Int>? {
-    val prefs = context.getSharedPreferences("pixelcraft_state", Context.MODE_PRIVATE)
+    val prefs = context.getSharedPreferences("a2z_state", Context.MODE_PRIVATE)
     val w = prefs.getInt("last_resize_w", -1)
     val h = prefs.getInt("last_resize_h", -1)
     return if (w > 0 && h > 0) w to h else null
@@ -9632,7 +9871,7 @@ private fun SocialPlatformScreen(
                     OutlinedTextField(value = customH, onValueChange = onCustomH, label = { Text("Height (px)") }, singleLine = true, modifier = Modifier.weight(1f))
                 }
                 Spacer(Modifier.height(10.dp))
-                Button(onClick = onCustom, modifier = Modifier.fillMaxWidth().height(48.dp), colors = ButtonDefaults.buttonColors(containerColor = SkyBlue, contentColor = DeepNavy), shape = RoundedCornerShape(12.dp)) {
+                Button(onClick = onCustom, modifier = Modifier.fillMaxWidth().height(48.dp), colors = ButtonDefaults.buttonColors(containerColor = Orange, contentColor = Color.White), shape = RoundedCornerShape(12.dp)) {
                     Text("Use Custom Size", fontWeight = FontWeight.SemiBold)
                 }
             }
@@ -9765,7 +10004,7 @@ private fun SocialEditScreen(
         if (mode == "Position") {
             Spacer(Modifier.height(8.dp))
             Text("Zoom", fontSize = 13.sp, color = Slate)
-            Slider(value = zoom, onValueChange = onZoom, valueRange = 1f..5f)
+            A2ZSlider(value = zoom, onValueChange = onZoom, valueRange = 1f..5f)
         }
         if (mode == "Background") {
             Spacer(Modifier.height(8.dp))
@@ -9946,7 +10185,7 @@ private fun ShopPlatformScreen(
                     ) {
                         Column(Modifier.fillMaxWidth().padding(14.dp)) {
                             Text(size.label, fontWeight = FontWeight.SemiBold, color = DeepNavy, fontSize = 15.sp)
-                            Text(size.sub, fontSize = 13.sp, color = Slate, lineHeight = 17.sp)
+                            Text(size.subWithRatio(), fontSize = 13.sp, color = Slate, lineHeight = 17.sp)
                             // v1.0.5 (his rule): "Official size" only when the shop's own help page gives
                             // that exact number; otherwise honestly "Recommended size".
                             Text(if (size.official) "Official size" else "Recommended size", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = if (size.official) SuccessGreen else Slate)
@@ -9968,7 +10207,7 @@ private fun ShopPlatformScreen(
                     OutlinedTextField(value = customH, onValueChange = onCustomH, label = { Text("Height (px)") }, singleLine = true, modifier = Modifier.weight(1f))
                 }
                 Spacer(Modifier.height(10.dp))
-                Button(onClick = onCustom, modifier = Modifier.fillMaxWidth().height(48.dp), colors = ButtonDefaults.buttonColors(containerColor = SkyBlue, contentColor = DeepNavy), shape = RoundedCornerShape(12.dp)) {
+                Button(onClick = onCustom, modifier = Modifier.fillMaxWidth().height(48.dp), colors = ButtonDefaults.buttonColors(containerColor = Orange, contentColor = Color.White), shape = RoundedCornerShape(12.dp)) {
                     Text("Use Custom Size", fontWeight = FontWeight.SemiBold)
                 }
             }
@@ -10100,7 +10339,7 @@ private fun ShopEditScreen(
         if (mode == "Position") {
             Spacer(Modifier.height(8.dp))
             Text("Zoom", fontSize = 13.sp, color = Slate)
-            Slider(value = zoom, onValueChange = onZoom, valueRange = 1f..5f)
+            A2ZSlider(value = zoom, onValueChange = onZoom, valueRange = 1f..5f)
         }
         if (mode == "Background") {
             Spacer(Modifier.height(8.dp))
@@ -10252,7 +10491,7 @@ private fun ConvertHomeScreen(
                                 Text(
                                     labels.getOrNull(i) ?: "",
                                     fontSize = 9.sp, fontWeight = FontWeight.Bold, color = Color.White,
-                                    modifier = Modifier.align(Alignment.BottomStart).background(DeepNavy).padding(horizontal = 4.dp, vertical = 2.dp)
+                                    modifier = Modifier.align(Alignment.BottomStart).background(HeaderNavy).padding(horizontal = 4.dp, vertical = 2.dp)
                                 )
                             }
                         }
@@ -10372,7 +10611,7 @@ private fun ConvertEditScreen(
                             Text(
                                 labels.getOrNull(i) ?: "",
                                 fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Color.White,
-                                modifier = Modifier.align(Alignment.BottomStart).background(DeepNavy).padding(horizontal = 5.dp, vertical = 2.dp)
+                                modifier = Modifier.align(Alignment.BottomStart).background(HeaderNavy).padding(horizontal = 5.dp, vertical = 2.dp)
                             )
                         }
                     }
@@ -10386,17 +10625,17 @@ private fun ConvertEditScreen(
         }
         Spacer(Modifier.height(14.dp))
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Card(Modifier.weight(1f), colors = CardDefaults.cardColors(containerColor = SoftGrey), shape = RoundedCornerShape(12.dp)) {
-                Column(Modifier.fillMaxWidth().padding(12.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+            Card(Modifier.weight(1f).height(86.dp), colors = CardDefaults.cardColors(containerColor = SoftGrey), shape = RoundedCornerShape(12.dp)) {
+                Column(Modifier.fillMaxSize().padding(12.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
                     Text("From", fontSize = 12.sp, color = Slate)
-                    Text(fromLabel, fontWeight = FontWeight.Bold, color = DeepNavy, fontSize = 16.sp)
+                    Text(fromLabel, fontWeight = FontWeight.Bold, color = DeepNavy, fontSize = 16.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
             }
             Text("→", fontSize = 22.sp, color = DeepNavy, modifier = Modifier.padding(horizontal = 10.dp))
-            Card(Modifier.weight(1f).clickable { showTargetPicker = true }, colors = CardDefaults.cardColors(containerColor = SoftGrey), shape = RoundedCornerShape(12.dp)) {
-                Column(Modifier.fillMaxWidth().padding(12.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+            Card(Modifier.weight(1f).height(86.dp).clickable { showTargetPicker = true }, colors = CardDefaults.cardColors(containerColor = SoftGrey), shape = RoundedCornerShape(12.dp)) {
+                Column(Modifier.fillMaxSize().padding(12.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
                     Text("To", fontSize = 12.sp, color = Slate)
-                    Text(target.label, fontWeight = FontWeight.Bold, color = DeepNavy, fontSize = 16.sp)
+                    Text(target.label, fontWeight = FontWeight.Bold, color = DeepNavy, fontSize = 16.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     Text("Tap to change", fontSize = 10.sp, color = SkyBlue)
                 }
             }
@@ -10409,7 +10648,7 @@ private fun ConvertEditScreen(
                     if (ConvertFormats.qualityApplies(target)) {
                         Spacer(Modifier.height(8.dp))
                         Text("Image quality: $quality%", fontSize = 13.sp, color = DeepNavy)
-                        Slider(
+                        A2ZSlider(
                             value = quality.toFloat(),
                             onValueChange = { onQuality(it.toInt().coerceIn(10, 100)) },
                             valueRange = 10f..100f
@@ -10460,8 +10699,8 @@ private fun ConvertEditScreen(
         Spacer(Modifier.height(10.dp))
         Card(colors = CardDefaults.cardColors(containerColor = PaleBlue), shape = RoundedCornerShape(14.dp)) {
             Text(
-                if (target.id == "pdf" && thumbs.size > 1) "All selected images become pages of one PDF document, saved to Downloads/PixelCraft."
-                else if (thumbs.size > 1) "Every selected image is converted and saved to Pictures/PixelCraft."
+                if (target.id == "pdf" && thumbs.size > 1) "All selected images become pages of one PDF document, saved to Downloads/A2Z Image Craft."
+                else if (thumbs.size > 1) "Every selected image is converted and saved to Pictures/A2Z Image Craft."
                 else "Your converted image keeps its original dimensions.",
                 modifier = Modifier.padding(14.dp), fontSize = 13.sp, color = Slate
             )
@@ -10482,6 +10721,7 @@ private fun ConvertResultScreen(
     batchCount: Int = 0,
     batchIsPdf: Boolean = false,
     onSave: () -> Unit,
+    onShare: () -> Unit,
     onConvertAnother: () -> Unit
 ) {
     Column(modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).padding(horizontal = 16.dp).verticalScroll(rememberScrollState()), horizontalAlignment = Alignment.CenterHorizontally) {
@@ -10525,6 +10765,12 @@ private fun ConvertResultScreen(
             Text(if (saved) "Saved ✓" else if (target.id == "pdf") "Save PDF to Downloads" else if (batchCount > 1) "Save $batchCount Images to Phone" else "Save to Phone", fontWeight = FontWeight.Bold)
         }
         Spacer(Modifier.height(10.dp))
+        OutlinedButton(onClick = onShare, modifier = Modifier.fillMaxWidth().height(48.dp), shape = RoundedCornerShape(14.dp)) {
+            Icon(Icons.Default.Share, contentDescription = null, tint = DeepNavy, modifier = Modifier.size(18.dp))
+            Spacer(Modifier.width(8.dp))
+            Text("Share", color = DeepNavy)
+        }
+        Spacer(Modifier.height(10.dp))
         OutlinedButton(onClick = onConvertAnother, modifier = Modifier.fillMaxWidth().height(48.dp), shape = RoundedCornerShape(14.dp)) {
             Text("Convert Another Image", color = DeepNavy)
         }
@@ -10555,7 +10801,7 @@ private fun CompressHomeScreen(
                                 Text(
                                     labels.getOrNull(i) ?: "",
                                     fontSize = 9.sp, fontWeight = FontWeight.Bold, color = Color.White,
-                                    modifier = Modifier.align(Alignment.BottomStart).background(DeepNavy).padding(horizontal = 4.dp, vertical = 2.dp)
+                                    modifier = Modifier.align(Alignment.BottomStart).background(HeaderNavy).padding(horizontal = 4.dp, vertical = 2.dp)
                                 )
                             }
                         }
@@ -10658,7 +10904,7 @@ private fun CompressSettingsScreen(
                         Text(
                             labels.getOrNull(0) ?: "",
                             fontSize = 9.sp, fontWeight = FontWeight.Bold, color = Color.White,
-                            modifier = Modifier.align(Alignment.BottomStart).background(DeepNavy).padding(horizontal = 4.dp, vertical = 2.dp)
+                            modifier = Modifier.align(Alignment.BottomStart).background(HeaderNavy).padding(horizontal = 4.dp, vertical = 2.dp)
                         )
                     }
                 }
@@ -10672,7 +10918,7 @@ private fun CompressSettingsScreen(
                                 Text(
                                     labels.getOrNull(i) ?: "",
                                     fontSize = 8.sp, fontWeight = FontWeight.Bold, color = Color.White,
-                                    modifier = Modifier.align(Alignment.BottomStart).background(DeepNavy).padding(horizontal = 3.dp, vertical = 1.dp)
+                                    modifier = Modifier.align(Alignment.BottomStart).background(HeaderNavy).padding(horizontal = 3.dp, vertical = 1.dp)
                                 )
                             }
                             Spacer(Modifier.width(10.dp))
@@ -10707,7 +10953,7 @@ private fun CompressSettingsScreen(
                 Text("Image quality", fontWeight = FontWeight.Bold, color = DeepNavy, fontSize = 15.sp, modifier = Modifier.weight(1f))
                 Text("$quality%", fontWeight = FontWeight.Bold, color = SkyBlue, fontSize = 16.sp)
             }
-            Slider(value = quality.toFloat(), onValueChange = { onQuality(it.toInt().coerceIn(1, 100)) }, valueRange = 1f..100f)
+            A2ZSlider(value = quality.toFloat(), onValueChange = { onQuality(it.toInt().coerceIn(1, 100)) }, valueRange = 1f..100f)
             Row(Modifier.fillMaxWidth()) {
                 Text("Smaller file", fontSize = 12.sp, color = Slate, modifier = Modifier.weight(1f))
                 Text("Higher quality", fontSize = 12.sp, color = Slate)
@@ -10824,8 +11070,6 @@ private fun CompressResultScreen(
             val newSize = newBytes?.size?.toLong() ?: -1L
             Card(colors = CardDefaults.cardColors(containerColor = PaleBlue), shape = RoundedCornerShape(16.dp)) {
                 Column(Modifier.fillMaxWidth().padding(16.dp)) {
-                    Text("Compression Results", fontWeight = FontWeight.Bold, color = DeepNavy, fontSize = 17.sp)
-                    Spacer(Modifier.height(4.dp))
                     Text(
                         resultName + if (isPdf && pdfPages > 0) " · $pdfPages page${if (pdfPages == 1) "" else "s"}" else "",
                         fontSize = 13.sp, color = Slate, maxLines = 1
@@ -10947,13 +11191,13 @@ private fun PrintHomeScreen(
                     Spacer(Modifier.height(4.dp))
                     Text("Choose a photo, artwork, document image or design from your phone.", fontSize = 13.sp, color = Slate, textAlign = TextAlign.Center)
                     Spacer(Modifier.height(14.dp))
-                    Button(onClick = onPick, colors = ButtonDefaults.buttonColors(containerColor = SkyBlue)) { Text("Choose Image", color = Color.White) }
+                    Button(onClick = onPick, colors = ButtonDefaults.buttonColors(containerColor = Orange)) { Text("Choose Image", color = Color.White) }
                     Spacer(Modifier.height(8.dp))
                     OutlinedButton(onClick = onPickPdf) { Text("Select PDF", color = DeepNavy) }
                 } else {
                     Image(bitmap = thumb.asImageBitmap(), contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.size(120.dp))
                     Spacer(Modifier.height(10.dp))
-                    Text(name, fontWeight = FontWeight.SemiBold, color = DeepNavy, fontSize = 15.sp, maxLines = 1)
+                    Text(name, fontWeight = FontWeight.SemiBold, color = DeepNavy, fontSize = 15.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     Text(
                         "$imgW × $imgH px" + (if (label.isNotBlank()) " · $label" else "") + (if (sizeBytes > 0) " · ${formatBytes(sizeBytes)}" else ""),
                         fontSize = 13.sp, color = Slate
@@ -11092,6 +11336,7 @@ private fun PrintSetupScreen(
     onBleedOn: (Boolean) -> Unit,
     ppi: Int,
     onPpi: (Int) -> Unit,
+    isPdfSource: Boolean,
     fitMode: String,
     onFitMode: (String) -> Unit,
     imgW: Int,
@@ -11111,7 +11356,12 @@ private fun PrintSetupScreen(
     gridCount: Int,
     onContinue: () -> Unit
 ) {
-    val effPpi = PrintUtils.effectivePpi(imgW, imgH, wIn, hIn, fitMode)
+    // v1.0.7 (his quality bar): a PDF source has no fixed pixel size - the export renders
+    // the page at the needed resolution (up to the device ceilings), so report THAT as the
+    // effective PPI instead of the small preview bitmap, which falsely warned Low resolution.
+    val effPpi = if (isPdfSource && wIn > 0 && hIn > 0) {
+        (PrintUtils.srcPdfEffectivePpi(wIn, hIn, ppi) ?: PrintUtils.actualOutputPpi(wIn, hIn, ppi)).toDouble()
+    } else PrintUtils.effectivePpi(imgW, imgH, wIn, hIn, fitMode)
     val req = if (wIn > 0 && hIn > 0) PrintUtils.requiredPixels(wIn, hIn, ppi) else intArrayOf(0, 0)
     val quality = PrintUtils.qualityLevel(effPpi, ppi)
     val ratioMismatch = wIn > 0 && hIn > 0 && aspect > 0 && kotlin.math.abs((wIn / hIn) - aspect) / aspect > 0.02
@@ -11278,7 +11528,7 @@ private fun PrintSetupScreen(
                         fontSize = 13.sp, color = DeepNavy, fontWeight = FontWeight.SemiBold
                     )
                 }
-                Row { Text("Image pixels", Modifier.weight(1f), fontSize = 13.sp, color = Slate); Text("$imgW × $imgH px", fontSize = 13.sp, color = DeepNavy, fontWeight = FontWeight.SemiBold) }
+                Row { Text("Image pixels", Modifier.weight(1f), fontSize = 13.sp, color = Slate); Text(if (isPdfSource) "PDF page - resolution set at export" else "$imgW × $imgH px", fontSize = 13.sp, color = DeepNavy, fontWeight = FontWeight.SemiBold) }
                 Row { Text("Effective PPI", Modifier.weight(1f), fontSize = 13.sp, color = Slate); Text("${effPpi.toInt()} PPI", fontSize = 13.sp, color = DeepNavy, fontWeight = FontWeight.SemiBold) }
                 Row { Text("Required pixels", Modifier.weight(1f), fontSize = 13.sp, color = Slate); Text("${req[0]} × ${req[1]} px (${PrintUtils.megapixels(req[0], req[1])} MP)", fontSize = 13.sp, color = DeepNavy, fontWeight = FontWeight.SemiBold) }
                 Spacer(Modifier.height(6.dp))
@@ -11295,6 +11545,36 @@ private fun PrintSetupScreen(
             Column(Modifier.fillMaxWidth().padding(14.dp)) {
                 Text(qTitle, fontWeight = FontWeight.Bold, color = qColor, fontSize = 15.sp)
                 Text(qText, fontSize = 13.sp, color = Slate, lineHeight = 17.sp)
+            }
+        }
+        // v1.0.7 (his quality bar): never present the selected PPI as achieved when the
+        // file is actually saved smaller for phone memory - say the real number up front.
+        val actualPpi = if (wIn > 0 && hIn > 0) PrintUtils.actualOutputPpi(wIn, hIn, ppi) else ppi
+        if (actualPpi < ppi) {
+            Spacer(Modifier.height(10.dp))
+            Card(colors = CardDefaults.cardColors(containerColor = SoftGrey), shape = RoundedCornerShape(12.dp)) {
+                Column(Modifier.fillMaxWidth().padding(14.dp)) {
+                    Text("⚠ Saved at about $actualPpi PPI instead of $ppi PPI", fontWeight = FontWeight.Bold, color = Orange, fontSize = 15.sp)
+                    Text(
+                        "This size at $ppi PPI needs ${PrintUtils.megapixels(req[0], req[1])} MP - more than a phone can safely handle in one file. Your print file will be saved at about $actualPpi PPI. A lower PPI or a smaller size keeps the full resolution you choose.",
+                        fontSize = 13.sp, color = Slate, lineHeight = 17.sp
+                    )
+                }
+            }
+        }
+        // Same honesty rule for a PDF source: when the page render itself is capped by
+        // device memory (48 MP output ceiling NOT involved), say so before export too.
+        val srcPdfPpi = if (isPdfSource && wIn > 0 && hIn > 0) PrintUtils.srcPdfEffectivePpi(wIn, hIn, ppi) else null
+        if (srcPdfPpi != null) {
+            Spacer(Modifier.height(10.dp))
+            Card(colors = CardDefaults.cardColors(containerColor = SoftGrey), shape = RoundedCornerShape(12.dp)) {
+                Column(Modifier.fillMaxWidth().padding(14.dp)) {
+                    Text("⚠ PDF pages rendered at about $srcPdfPpi PPI for this size", fontWeight = FontWeight.Bold, color = Orange, fontSize = 15.sp)
+                    Text(
+                        "Rendering a whole PDF page this large needs more memory than a phone can safely use. The saved page size stays exact, but the page image inside will be about $srcPdfPpi PPI instead of $ppi PPI. A lower PPI or a smaller size keeps more detail.",
+                        fontSize = 13.sp, color = Slate, lineHeight = 17.sp
+                    )
+                }
             }
         }
         Spacer(Modifier.height(14.dp))
@@ -11376,7 +11656,7 @@ private fun PrintPreviewScreen(
                                     (900 * (hIn / pageWIn)).toInt().coerceAtLeast(1),
                                     grid[0], grid[1],
                                     (900 * (if (grid[3] == 1) PrintUtils.SHEET_GAP_IN else 0.0) / pageWIn).toInt(),
-                                    true, grid[2]
+                                    true, grid[2], fitMode
                                 )
                             }
                             Image(bitmap = sheetPreview.asImageBitmap(), contentDescription = null, contentScale = ContentScale.Fit, modifier = Modifier.fillMaxSize())
@@ -11510,7 +11790,7 @@ private fun PrintExportScreen(
                 Text("JPEG quality", Modifier.weight(1f), fontWeight = FontWeight.SemiBold, color = DeepNavy, fontSize = 14.sp)
                 Text("$jpgQuality%", color = SkyBlue, fontWeight = FontWeight.Bold)
             }
-            Slider(value = jpgQuality.toFloat(), onValueChange = { onJpgQuality(it.toInt()) }, valueRange = 50f..100f)
+            A2ZSlider(value = jpgQuality.toFloat(), onValueChange = { onJpgQuality(it.toInt()) }, valueRange = 50f..100f)
         }
         Spacer(Modifier.height(8.dp))
         Card(colors = CardDefaults.cardColors(containerColor = SoftGrey), shape = RoundedCornerShape(12.dp)) {
@@ -11700,7 +11980,7 @@ private fun TextOnPhotoScreen(
             Row(Modifier.padding(horizontal = 12.dp, vertical = 3.dp), verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
                     // v1.0.5 (his optional ask): no file name - only the size.
-                    Text("${bitmap.width} × ${bitmap.height} px" + (if (sizeBytes >= 0) " · ${formatBytes(sizeBytes)}" else ""), color = DeepNavy, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                    Text("${bitmap.width} × ${bitmap.height} px" + (if (sizeBytes >= 0) " · ${formatBytes(sizeBytes)}" else ""), color = DeepNavy, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis)
                 }
                 OutlinedButton(onClick = onSelectPhoto, contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp), modifier = Modifier.height(34.dp)) { Text("Change", color = DeepNavy, fontSize = 13.sp) }
                 Spacer(Modifier.width(8.dp))
@@ -11829,9 +12109,15 @@ private fun TextOnPhotoScreen(
                     val onTransformNow = rememberUpdatedState(onTransform)
                     val delCorner = hCentre + Offset((-hHalfW * hCos + hHalfH * hSin) * sPx, (-hHalfW * hSin - hHalfH * hCos) * sPx)
                     val rsCorner = hCentre + cornerVecNow()
+                    // v1.0.7 (his ask): the corner handles must stay ON the photo - clamp them into
+                    // the preview bounds when the layer sits at (or past) the photo edge.
+                    val pwPx = with(density) { pw.toPx() }; val phPx = with(density) { ph.toPx() }
+                    val hPad = with(density) { 15.dp.toPx() }
+                    val delPt = Offset(delCorner.x.coerceIn(hPad, (pwPx - hPad).coerceAtLeast(hPad)), delCorner.y.coerceIn(hPad, (phPx - hPad).coerceAtLeast(hPad)))
+                    val rsPt = Offset(rsCorner.x.coerceIn(hPad, (pwPx - hPad).coerceAtLeast(hPad)), rsCorner.y.coerceIn(hPad, (phPx - hPad).coerceAtLeast(hPad)))
                     Box(
                         Modifier
-                            .offset { IntOffset((delCorner.x - 13.dp.toPx()).roundToInt(), (delCorner.y - 13.dp.toPx()).roundToInt()) }
+                            .offset { IntOffset((delPt.x - 13.dp.toPx()).roundToInt(), (delPt.y - 13.dp.toPx()).roundToInt()) }
                             .size(26.dp)
                             .background(Color.White, CircleShape)
                             .border(2.dp, Color(0xFFE53935), CircleShape)
@@ -11840,7 +12126,7 @@ private fun TextOnPhotoScreen(
                     ) { Icon(Icons.Default.Close, contentDescription = "Delete layer", tint = Color(0xFFE53935), modifier = Modifier.size(15.dp)) }
                     Box(
                         Modifier
-                            .offset { IntOffset((rsCorner.x - 14.dp.toPx()).roundToInt(), (rsCorner.y - 14.dp.toPx()).roundToInt()) }
+                            .offset { IntOffset((rsPt.x - 14.dp.toPx()).roundToInt(), (rsPt.y - 14.dp.toPx()).roundToInt()) }
                             .size(28.dp)
                             .background(Orange, CircleShape)
                             .border(2.dp, Color.White, CircleShape)
@@ -11894,7 +12180,7 @@ private fun TextOnPhotoScreen(
             }
         }
         Card(
-            colors = CardDefaults.cardColors(containerColor = Color.White),
+            colors = CardDefaults.cardColors(containerColor = CardWhite),
             shape = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp),
             modifier = Modifier.fillMaxWidth().height(sheetH).border(1.dp, BorderGrey, RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp))
         ) {
@@ -11938,7 +12224,7 @@ private fun TextOnPhotoScreen(
                     // Position mode gets the Social Media cropper's exact controls: Zoom slider + drag + hint.
                     Spacer(Modifier.height(4.dp))
                     Text("Zoom", fontSize = 13.sp, color = Slate)
-                    Slider(value = cropZoomAbs, onValueChange = onCropZoomAbs, valueRange = 1f..5f)
+                    A2ZSlider(value = cropZoomAbs, onValueChange = onCropZoomAbs, valueRange = 1f..5f)
                     Spacer(Modifier.height(10.dp))
                     Card(colors = CardDefaults.cardColors(containerColor = PaleBlue), shape = RoundedCornerShape(14.dp)) {
                         Text("Drag your photo to position it. Use the slider to zoom in or out.", modifier = Modifier.padding(14.dp), fontSize = 13.sp, color = Slate)
@@ -11955,7 +12241,7 @@ private fun TextOnPhotoScreen(
                                 Spacer(Modifier.height(6.dp))
                                 Row(verticalAlignment = Alignment.CenterVertically) {
                                     Text("Size", color = Slate, fontSize = 12.sp)
-                                    Slider(
+                                    A2ZSlider(
                                         value = selectedImage.widthFrac,
                                         onValueChange = { v -> onMutateImageLayer { im -> im.widthFrac = v } },
                                         valueRange = 0.05f..1f,
@@ -11965,7 +12251,7 @@ private fun TextOnPhotoScreen(
                                 }
                                 Row(verticalAlignment = Alignment.CenterVertically) {
                                     Text("Rotation", color = Slate, fontSize = 12.sp)
-                                    Slider(
+                                    A2ZSlider(
                                         value = ((selectedImage.rotation % 360f) + 540f) % 360f - 180f,
                                         onValueChange = { v -> onMutateImageLayer { im -> im.rotation = v } },
                                         valueRange = -180f..180f,
@@ -11975,7 +12261,7 @@ private fun TextOnPhotoScreen(
                                 }
                                 Row(verticalAlignment = Alignment.CenterVertically) {
                                     Text("Opacity", color = Slate, fontSize = 12.sp)
-                                    Slider(
+                                    A2ZSlider(
                                         value = selectedImage.opacity,
                                         onValueChange = { v -> onMutateImageLayer { im -> im.opacity = v } },
                                         valueRange = 0.2f..1f,
@@ -12009,7 +12295,7 @@ private fun TextOnPhotoScreen(
                                 Text("Font size", color = Slate, fontSize = 12.sp)
                                 Row(verticalAlignment = Alignment.CenterVertically) {
                                     Text("A-", color = Slate, fontSize = 12.sp)
-                                    Slider(
+                                    A2ZSlider(
                                         value = selected.sizeFrac,
                                         onValueChange = { v -> onMutate(1200L) { l -> l.sizeFrac = v } },
                                         valueRange = 0.02f..0.20f,
@@ -12025,7 +12311,7 @@ private fun TextOnPhotoScreen(
                                 if (selected.curved) {
                                     Row(verticalAlignment = Alignment.CenterVertically) {
                                         Text("Arc", color = Slate, fontSize = 12.sp)
-                                        Slider(
+                                        A2ZSlider(
                                             value = selected.arcSweep,
                                             onValueChange = { v -> onMutate(1200L) { l -> l.arcSweep = v } },
                                             valueRange = 60f..320f,
@@ -12080,7 +12366,7 @@ private fun TextOnPhotoScreen(
 
                                 Row(verticalAlignment = Alignment.CenterVertically) {
                                     Text("Opacity", color = Slate, fontSize = 12.sp)
-                                    Slider(
+                                    A2ZSlider(
                                         value = selected.opacity,
                                         onValueChange = { v -> onMutate(1200L) { l -> l.opacity = v } },
                                         valueRange = 0.2f..1f,
@@ -12091,7 +12377,7 @@ private fun TextOnPhotoScreen(
 
                                 Row(verticalAlignment = Alignment.CenterVertically) {
                                     Text("Letter spacing", color = Slate, fontSize = 12.sp)
-                                    Slider(
+                                    A2ZSlider(
                                         value = selected.letterSpacing,
                                         onValueChange = { v -> onMutate(1200L) { l -> l.letterSpacing = v } },
                                         valueRange = 0f..0.3f,
@@ -12102,7 +12388,7 @@ private fun TextOnPhotoScreen(
 
                                 Row(verticalAlignment = Alignment.CenterVertically) {
                                     Text("Line spacing", color = Slate, fontSize = 12.sp)
-                                    Slider(
+                                    A2ZSlider(
                                         value = selected.lineSpacing,
                                         onValueChange = { v -> onMutate(1200L) { l -> l.lineSpacing = v } },
                                         valueRange = 0f..1f,
@@ -12277,7 +12563,7 @@ private fun TextOnPhotoScreen(
 
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Text("Outline", color = Slate, fontSize = 12.sp)
-                            Slider(
+                            A2ZSlider(
                                 value = selected.outlineFrac,
                                 onValueChange = { v -> onMutate(1200L) { l -> l.outlineFrac = v } },
                                 valueRange = 0f..0.25f,
@@ -12573,7 +12859,7 @@ private fun TextOnPhotoScreen(
                             Spacer(Modifier.height(6.dp))
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Text("Thickness", color = Slate, fontSize = 12.sp)
-                                Slider(
+                                A2ZSlider(
                                     value = frameWidth,
                                     onValueChange = { onFrameWidth(it) },
                                     valueRange = 2f..20f,
@@ -12607,7 +12893,7 @@ private fun TextOnPhotoScreen(
                             Triple("Stickers", Icons.Default.EmojiEmotions, { sheetLevel = "stickers" }),
                             Triple("Meme", Icons.Default.Title, { sheetLevel = "meme" }),
                             Triple("Frame", Icons.Default.CropSquare, { sheetLevel = "frame" }),
-                            Triple("Perspective", Icons.Default.Transform, { sheetLevel = "perspective" })
+                            Triple("Perspective", Icons.Default.CropRotate, { sheetLevel = "perspective" })
                         ).chunked(3).forEach { rowItems ->
                             Row(Modifier.fillMaxWidth().padding(bottom = 8.dp)) {
                                 rowItems.forEach { (label, icon, action) ->

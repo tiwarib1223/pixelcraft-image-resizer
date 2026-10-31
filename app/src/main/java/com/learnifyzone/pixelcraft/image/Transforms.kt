@@ -265,22 +265,41 @@ object Transforms {
      * preview shows (CropMath.transformedCorners + coverScale), so what he sees
      * is exactly what exports. Cover-zoom guarantees no empty corner wedges.
      */
+    /**
+     * True-perspective straighten/tilt matrix (v1.0.7). The old affine 4-point fit could
+     * not bend the photo in 3D, so Horizontal/Vertical tilts left empty corners. Camera
+     * does real projective math; the zoom-to-cover is computed from the SAME matrix, so
+     * the transformed photo always fills the frame completely.
+     */
+    fun adjustMatrix(w: Int, h: Int, straightDeg: Float, tiltHDeg: Float, tiltVDeg: Float): android.graphics.Matrix {
+        val cx = w / 2f
+        val cy = h / 2f
+        val focal = 1.5f * max(w, h)
+        val camera = android.graphics.Camera()
+        val m = android.graphics.Matrix()
+        camera.save()
+        // Camera distance is set in inches (72 px/in); match the old focal length.
+        camera.setLocation(0f, 0f, -focal / 72f)
+        // Negated tilts match the projection direction of the old preview math.
+        camera.rotateX(-tiltVDeg)
+        camera.rotateY(-tiltHDeg)
+        camera.rotateZ(straightDeg)
+        camera.getMatrix(m)
+        camera.restore()
+        m.preTranslate(-cx, -cy)
+        m.postTranslate(cx, cy)
+        // Uniform zoom about the center so the transformed photo fully covers the frame.
+        val pts = floatArrayOf(0f, 0f, w.toFloat(), 0f, w.toFloat(), h.toFloat(), 0f, h.toFloat())
+        m.mapPoints(pts)
+        val cover = CropMath.coverScale(pts, w, h)
+        if (cover > 1f) m.postScale(cover, cover, cx, cy)
+        return m
+    }
+
     fun adjustPerspective(src: Bitmap, straightDeg: Float, tiltHDeg: Float, tiltVDeg: Float): Bitmap {
         val w = src.width
         val h = src.height
-        val focal = 1.5f * max(w, h)
-        val quad = CropMath.transformedCorners(w, h, straightDeg, tiltHDeg, tiltVDeg, focal)
-        val scale = CropMath.coverScale(quad, w, h)
-        val cx = w / 2f
-        val cy = h / 2f
-        val dst = FloatArray(8)
-        for (i in 0..3) {
-            dst[i * 2] = cx + (quad[i * 2] - cx) * scale
-            dst[i * 2 + 1] = cy + (quad[i * 2 + 1] - cy) * scale
-        }
-        val srcPts = floatArrayOf(0f, 0f, w.toFloat(), 0f, w.toFloat(), h.toFloat(), 0f, h.toFloat())
-        val m = android.graphics.Matrix()
-        m.setPolyToPoly(srcPts, 0, dst, 0, 4)
+        val m = adjustMatrix(w, h, straightDeg, tiltHDeg, tiltVDeg)
         val out = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(out)
         val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG or android.graphics.Paint.FILTER_BITMAP_FLAG)
