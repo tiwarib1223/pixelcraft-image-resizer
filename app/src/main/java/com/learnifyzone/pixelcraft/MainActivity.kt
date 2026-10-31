@@ -3959,7 +3959,7 @@ snackbar.showSnackbar("This phone ran out of memory. Try a smaller size or fewer
     // runs for tool screens. Now: an open drawer closes, a doc page returns to Settings, any other tab returns to
     // Home. Back must always return, never exit. Last enabled handler wins, so this order is load-bearing.
     BackHandler(enabled = screen == Screen.Home && tab != MainTab.Home) { tab = MainTab.Home }
-    BackHandler(enabled = settingsDoc != null) { settingsDoc = null }
+    BackHandler(enabled = settingsDoc != null) { settingsDoc = null; drawerOpen = true }
     BackHandler(enabled = drawerOpen) { drawerOpen = false }
 
 
@@ -4428,7 +4428,7 @@ snackbar.showSnackbar("This phone ran out of memory. Try a smaller size or fewer
     ) { padding ->
         when (screen) {
             Screen.Home -> if (settingsDoc != null) {
-                DocPage(Modifier.padding(padding), doc = settingsDoc!!, onBack = { settingsDoc = null })
+                DocPage(Modifier.padding(padding), doc = settingsDoc!!, onBack = { settingsDoc = null; drawerOpen = true })
             } else when (tab) {
                 MainTab.Home -> HomeScreen(
                     modifier = Modifier.padding(padding),

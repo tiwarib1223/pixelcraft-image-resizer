@@ -200,25 +200,21 @@ class PresetsSettingsTest {
             waitForText("Remove Background")
             waitForText("Shape Cutter")
             shot(sc, "v100_phone_help")
+            // v1.0.6 (his ask): back from a doc page returns to the drawer MENU LIST, not Home.
             composeRule.onNodeWithContentDescription("Back").performClick()
-            waitForText("PHOTO TOOLKIT")
-            composeRule.onNodeWithText("Home").performClick()
-            waitForText("PHOTO TOOLKIT")
-            composeRule.onNodeWithContentDescription("Menu").performClick()
+            waitForText("Terms & Conditions")
+            shot(sc, "v106_doc_back_drawer_menu")
             clickText("Open-source licences")
             waitForText("U-2-Net")
             shot(sc, "v100_phone_licences")
             composeRule.onNodeWithContentDescription("Back").performClick()
-            waitForText("PHOTO TOOLKIT")
+            waitForText("Terms & Conditions")
             // v1.0.2: What's new moved to the drawer (below Open-source licences).
-            composeRule.onNodeWithText("Home").performClick()
-            waitForText("PHOTO TOOLKIT")
-            composeRule.onNodeWithContentDescription("Menu").performClick()
             clickText("What's new")
-            waitForText("What's new in version 1.0.5")
+            waitForText("What's new in version 1.0.6")
             shot(sc, "v100_phone_whatsnew")
             composeRule.onNodeWithContentDescription("Back").performClick()
-            waitForText("PHOTO TOOLKIT")
+            waitForText("Terms & Conditions")
         }
     }
 
@@ -235,12 +231,19 @@ class PresetsSettingsTest {
             clickText("Terms & Conditions")
             waitForText("developed and published by Bitty")
             shot(sc, "v0202_phone_terms_back")
-            // 1) the page's own back arrow returns to where the user was (Home)
+            // 1) v1.0.6: the page's own back arrow returns to the drawer menu list
             composeRule.onNodeWithContentDescription("Back").performClick()
+            waitForText("Help & tips")
+            // closing the drawer returns to Home content
+            var finishingAfterDrawerBack = false
+            sc.onActivity { act ->
+                act.onBackPressedDispatcher.onBackPressed()
+                finishingAfterDrawerBack = act.isFinishing
+            }
+            pump()
+            assertTrue("system back on the open drawer must NOT finish the activity", !finishingAfterDrawerBack)
             waitForText("PHOTO TOOLKIT")
-            // 2) system back on the doc page returns to Settings too - the v0.20.0 bug was an app EXIT here
-            composeRule.onNodeWithText("Home").performClick()
-            waitForText("PHOTO TOOLKIT")
+            // 2) system back on the doc page also returns to the drawer menu - the v0.20.0 bug was an app EXIT here
             composeRule.onNodeWithContentDescription("Menu").performClick()
             clickText("Privacy Policy")
             waitForText("your photos stay on your phone")
@@ -251,6 +254,10 @@ class PresetsSettingsTest {
             }
             pump()
             assertTrue("system back on a doc page must NOT finish the activity", !finishingAfterDocBack)
+            waitForText("Help & tips")
+            // close the drawer again, back to Home content
+            sc.onActivity { act -> act.onBackPressedDispatcher.onBackPressed() }
+            pump()
             waitForText("PHOTO TOOLKIT")
             // 3) system back on the Settings tab returns to the Home tab
             composeRule.onNodeWithText("Settings").performClick()

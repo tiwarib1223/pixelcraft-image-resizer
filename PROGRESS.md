@@ -1,5 +1,17 @@
 # PixelCraft Image Resizer - Progress
 
+## v1.0.6 (versionCode 79): doc-page back arrow returns to the drawer menu list (his ask)
+- His report: on the drawer doc pages (Help & tips, Terms, Privacy, Open-source licences,
+  What's new) the top back arrow jumped to the homepage; it should go back to the menu list.
+- Now both the top back arrow AND the phone's system back button close the doc page and
+  re-open the drawer menu, so he can tap another row straight away. System back does the same
+  as the arrow because that is the standard Android pattern (back pops to the previous UI
+  state, which was the open drawer). Back again from the drawer closes it to the page
+  underneath; back still never exits the app.
+- Tests updated: g_v100DrawerDocsAndSettingsRows and f_backFromDocPagesReturnsNeverExits now
+  assert the drawer menu list is showing after both kinds of back, plus a screenshot
+  (v106_doc_back_drawer_menu).
+
 ## v1.0.5 (versionCode 78): tool-screens polish spec part 3 (his PDF, sections 8-12) + X website cards (his item 13)
 8. Online Shop Sizes: headline "Popular shops. The right product size."; the grey-box note
    is his exact "Sizes follow each shop's official guidance at the time of checking. Shops can
