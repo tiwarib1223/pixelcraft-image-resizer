@@ -107,6 +107,9 @@ import androidx.compose.material.icons.filled.Style
 import androidx.compose.material.icons.filled.SyncAlt
 import androidx.compose.material.icons.filled.TextFields
 import androidx.compose.material.icons.filled.Tune
+import androidx.compose.material.icons.filled.BrandingWatermark
+import androidx.compose.material.icons.filled.ChevronLeft
+import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Colorize
@@ -135,6 +138,7 @@ import com.google.mlkit.vision.documentscanner.GmsDocumentScannerOptions
 import com.google.mlkit.vision.documentscanner.GmsDocumentScanning
 import com.google.mlkit.vision.documentscanner.GmsDocumentScanningResult
 import com.learnifyzone.pixelcraft.data.ScansStore
+import com.learnifyzone.pixelcraft.data.WmStore
 import com.learnifyzone.pixelcraft.image.ScanEnhance
 import java.util.UUID
 import androidx.compose.material.icons.filled.AutoFixHigh
@@ -316,7 +320,7 @@ class MainActivity : ComponentActivity() {
 }
 
 private enum class MainTab { Home, MyPhotos, Presets, Settings }
-private enum class Screen { Home, Editor, Export, PrintHome, PrintSetup, PrintPreview, PrintExport, Success, QueueOverview, QueueResult, SocialHome, SocialPlatform, SocialEdit, ShopHome, ShopOther, ShopPlatform, ShopEdit, ShopCollage, ConvertHome, ConvertEdit, ConvertResult, CompressHome, CompressSettings, CompressResult, TextPhoto, Collage, PhotoAdjust, ScannerHome, ScannerImportImages, ScannerImportPdf, ScannerManager, ScannerMyScans, ScannerCrop, ScannerEnhance, ScannerPreview, ScannerExport, ScannerSuccess, ScannerSettings }
+private enum class Screen { Home, Editor, Export, PrintHome, PrintSetup, PrintPreview, PrintExport, Success, QueueOverview, QueueResult, SocialHome, SocialPlatform, SocialEdit, ShopHome, ShopOther, ShopPlatform, ShopEdit, ShopCollage, ConvertHome, ConvertEdit, ConvertResult, CompressHome, CompressSettings, CompressResult, TextPhoto, Collage, PhotoAdjust, ScannerHome, ScannerImportImages, ScannerImportPdf, ScannerManager, ScannerMyScans, ScannerCrop, ScannerEnhance, ScannerPreview, ScannerExport, ScannerSuccess, ScannerSettings, WmHome, WmSelect, WmType, WmSettings, WmTextEditor, WmLogoEditor }
 private enum class Tool(val label: String) { Resize("Resize"), Presets("Presets"), Crop("Crop & Rotate"), Background("Remove Background"), Circle("Shape Cutter"), Format("Format") }
 
 private enum class CropTransform { LEFT, RIGHT, FLIP_H, FLIP_V }
@@ -450,6 +454,7 @@ private fun PixelCraftRoot(themeMode: String, onThemeMode: (String) -> Unit) {
     var pendingCropTool by remember { mutableStateOf(false) }
     var pendingExportTest by remember { mutableStateOf(false) }
     val scanner = remember { ScannerUiState() }
+    val wm = remember { WmUiState() }
     var cropRect by remember { mutableStateOf(CropMath.defaultRect()) }
     var cropAspect by rememberSaveable { mutableStateOf("Free") }
     var straightenAngle by rememberSaveable { mutableStateOf(0f) }
@@ -836,8 +841,46 @@ snackbar.showSnackbar("This phone ran out of memory. Try a smaller size or fewer
     // skipping the system photo picker, which cannot run under Robolectric.
     LaunchedEffect(Unit) {
         // Phone-height scanner UI tests: jump straight to the scanner home (no photo needed).
-        if ((context as? Activity)?.intent?.getStringExtra("pixelcraft.test.tool") == "scanner" && screen == Screen.Home) {
+        val wmTestTool = (context as? Activity)?.intent?.getStringExtra("pixelcraft.test.tool")
+        if (wmTestTool == "scanner" && screen == Screen.Home) {
             screen = Screen.ScannerHome
+        }
+        if (wmTestTool == "watermark" && screen == Screen.Home) {
+            screen = Screen.WmHome
+        }
+        if (wmTestTool == "wmtype" && screen == Screen.Home) {
+            // Stage-1 UI tests: seed two placeholder selections so the Type screen is reachable.
+            wm.images.clear()
+            wm.images.add(Uri.parse("content://pixelcraft.test/wm1")); wm.images.add(Uri.parse("content://pixelcraft.test/wm2"))
+            screen = Screen.WmType
+        }
+        if (wmTestTool == "wmtext" && screen == Screen.Home) {
+            // Stage-2 UI tests: generated preview photo + the seeded default text layer.
+            wm.images.clear()
+            wm.images.add(Uri.parse("content://pixelcraft.test/wm1")); wm.images.add(Uri.parse("content://pixelcraft.test/wm2"))
+            wm.previewBitmap = wmTestPhoto()
+            wm.editorKind = "text"
+            val tl = TextOverlayUtils.TextLayer(id = wm.nextLayerId++, text = "Your Watermark", sizeFrac = 0.08f, colorArgb = 0xFFFFFFFF.toInt(), opacity = 0.6f, align = TextOverlayUtils.Align.CENTER, cx = 0.5f, cy = 0.5f)
+            wm.textLayers.add(tl); wm.selectedTextId = tl.id; wm.selectedImageId = null
+            screen = Screen.WmTextEditor
+        }
+        if (wmTestTool == "wmlogo" && screen == Screen.Home) {
+            wm.images.clear()
+            wm.images.add(Uri.parse("content://pixelcraft.test/wm1"))
+            wm.previewBitmap = wmTestPhoto()
+            wm.editorKind = "logo"
+            val logo = wmTestLogo()
+            wm.imageLayers.add(TextOverlayUtils.ImageLayer(id = wm.nextLayerId++, bitmap = logo, cx = 0.5f, cy = 0.75f, widthFrac = 0.45f))
+            wm.selectedImageId = wm.imageLayers.first().id; wm.selectedTextId = null
+            screen = Screen.WmLogoEditor
+        }
+        if (wmTestTool == "wmlogoempty" && screen == Screen.Home) {
+            wm.images.clear()
+            wm.images.add(Uri.parse("content://pixelcraft.test/wm1"))
+            wm.previewBitmap = wmTestPhoto()
+            wm.editorKind = "logo"
+            wm.selectedTextId = null
+            screen = Screen.WmLogoEditor
         }
         val testPath = (context as? Activity)?.intent?.getStringExtra("pixelcraft.test.photo")
         if (!testPath.isNullOrBlank() && sourceUri == null && workingBitmap == null) {
@@ -3124,6 +3167,202 @@ snackbar.showSnackbar("This phone ran out of memory. Try a smaller size or fewer
     }
 
     // ===== Document Scanner (his original Scanner recording) =====
+    fun resetWm() {
+        wm.images.clear(); wm.pendingKind = ""
+        wm.textLayers.clear(); wm.imageLayers.clear()
+        wm.selectedTextId = null; wm.selectedImageId = null
+        wm.undoStack.clear(); wm.redoStack.clear(); wm.canUndo = false; wm.canRedo = false; wm.lastUndoKey = ""
+        wm.previewBitmap = null; wm.editorKind = ""; wm.logoBusy = false
+    }
+
+    fun refreshWmProjects() {
+        scope.launch(Dispatchers.IO) { wm.projects = WmStore.listProjects(context) }
+    }
+
+    // ===== Watermark Stage 2: layer model, undo/redo, editors (spec screens 4A/4B) =====
+    fun wmSnapshotPair(): Pair<List<TextOverlayUtils.TextLayer>, List<TextOverlayUtils.ImageLayer>> =
+        wm.textLayers.map { it.copy() } to wm.imageLayers.map { img ->
+            TextOverlayUtils.ImageLayer(img.id, img.bitmap, img.cx, img.cy, img.widthFrac, img.rotation, img.opacity, img.flipH)
+        }
+
+    fun wmSyncUndoFlags() { wm.canUndo = wm.undoStack.isNotEmpty(); wm.canRedo = wm.redoStack.isNotEmpty() }
+
+    fun wmPushUndo() {
+        wm.undoStack.add(wmSnapshotPair())
+        if (wm.undoStack.size > 60) wm.undoStack.removeAt(0)
+        wm.redoStack.clear(); wmSyncUndoFlags()
+    }
+
+    /** Coalesced mutation: rapid edits with the same key (one slider drag, one typing burst) = ONE undo step. */
+    fun wmMutate(key: String, f: () -> Unit) {
+        if (wm.lastUndoKey != key) { wmPushUndo(); wm.lastUndoKey = key }
+        f()
+    }
+
+    fun wmRestore(snap: Pair<List<TextOverlayUtils.TextLayer>, List<TextOverlayUtils.ImageLayer>>) {
+        wm.textLayers.clear(); wm.textLayers.addAll(snap.first.map { it.copy() })
+        wm.imageLayers.clear(); wm.imageLayers.addAll(snap.second.map { img ->
+            TextOverlayUtils.ImageLayer(img.id, img.bitmap, img.cx, img.cy, img.widthFrac, img.rotation, img.opacity, img.flipH)
+        })
+        if (wm.textLayers.none { it.id == wm.selectedTextId }) wm.selectedTextId = wm.textLayers.lastOrNull()?.id
+        if (wm.imageLayers.none { it.id == wm.selectedImageId }) wm.selectedImageId = wm.imageLayers.lastOrNull()?.id
+    }
+
+    fun wmUndo() {
+        val snap = wm.undoStack.removeLastOrNull() ?: return
+        wm.redoStack.add(wmSnapshotPair()); wmRestore(snap); wm.lastUndoKey = ""; wmSyncUndoFlags()
+    }
+
+    fun wmRedo() {
+        val snap = wm.redoStack.removeLastOrNull() ?: return
+        wm.undoStack.add(wmSnapshotPair()); wmRestore(snap); wm.lastUndoKey = ""; wmSyncUndoFlags()
+    }
+
+    fun wmEnsurePreview() {
+        if (wm.previewBitmap != null || wm.images.isEmpty()) return
+        val uri = wm.images.first()
+        scope.launch(Dispatchers.IO) { wm.previewBitmap = decodeThumbnail(context, uri, 1600) }
+    }
+
+    fun wmDefaultTextLayer(): TextOverlayUtils.TextLayer =
+        TextOverlayUtils.TextLayer(
+            id = wm.nextLayerId++, text = "Your Watermark",
+            sizeFrac = 0.08f, colorArgb = 0xFFFFFFFF.toInt(), opacity = 0.6f,
+            align = TextOverlayUtils.Align.CENTER, cx = 0.5f, cy = 0.5f
+        )
+
+    fun wmOpenTextEditor() {
+        wm.editorKind = "text"
+        if (wm.textLayers.isEmpty()) wm.textLayers.add(wmDefaultTextLayer())
+        wm.selectedTextId = wm.textLayers.last().id
+        wm.selectedImageId = null
+        wmEnsurePreview()
+        screen = Screen.WmTextEditor
+    }
+
+    fun wmOpenLogoEditor() {
+        wm.editorKind = "logo"
+        wm.selectedImageId = wm.imageLayers.firstOrNull()?.id
+        wm.selectedTextId = null
+        wmEnsurePreview()
+        screen = Screen.WmLogoEditor
+    }
+
+    fun wmSetLogo(uri: Uri) {
+        scope.launch(Dispatchers.IO) {
+            val bmp = try { decodeOrientedBitmap(context, uri).copy(Bitmap.Config.ARGB_8888, true) } catch (e: Exception) { null }
+            withContext(Dispatchers.Main) {
+                if (bmp == null) { snackbar.showSnackbar("That logo could not be read. Try a PNG or JPG image."); return@withContext }
+                wmPushUndo()
+                val existing = wm.imageLayers.firstOrNull()
+                if (existing == null) {
+                    val layer = TextOverlayUtils.ImageLayer(id = wm.nextLayerId++, bitmap = bmp, cx = 0.5f, cy = 0.85f, widthFrac = 0.35f)
+                    wm.imageLayers.add(layer)
+                } else existing.bitmap = bmp
+                wm.selectedImageId = wm.imageLayers.first().id
+                wm.selectedTextId = null
+            }
+        }
+    }
+
+    /** His verbatim requirement: a Remove-background button INSIDE the watermark logo editor.
+     *  Plain-background logos use the corner flood-fill (instant, honest); other subjects use the
+     *  on-device cutout engines. Both are best-effort: the snackbar says exactly what happened. */
+    fun wmLogoRemoveBg() {
+        val layer = wm.imageLayers.firstOrNull() ?: return
+        if (wm.logoBusy) return
+        wm.logoBusy = true
+        scope.launch(Dispatchers.IO) {
+            var message = "Could not remove this background automatically. A logo on a plain background works best."
+            var out: Bitmap? = null
+            try {
+                val (cut, removed) = BackgroundRemoval.removeSolidBackground(layer.bitmap, 0.14f)
+                if (removed > layer.bitmap.width * layer.bitmap.height / 20) {
+                    out = cut; message = "Plain background removed. Undo brings the original back."
+                }
+            } catch (e: Exception) { }
+            if (out == null) {
+                try {
+                    val cut = BackgroundRemoval.cutOut(context, layer.bitmap)
+                    if (BackgroundRemoval.transparentFraction(cut) > 0.1f) {
+                        out = cut; message = "Background removed. Undo brings the original back."
+                    }
+                } catch (e: Exception) { }
+            }
+            val result = out; val msg = message
+            withContext(Dispatchers.Main) {
+                wm.logoBusy = false
+                if (result != null) { wmPushUndo(); layer.bitmap = result }
+                snackbar.showSnackbar(msg)
+            }
+        }
+    }
+
+    fun wmDragSelected(dx: Float, dy: Float) {
+        wmMutate("drag") {
+            wm.textLayers.firstOrNull { it.id == wm.selectedTextId }?.let { l ->
+                l.cx = (l.cx + dx).coerceIn(-0.3f, 1.3f); l.cy = (l.cy + dy).coerceIn(-0.3f, 1.3f)
+            }
+            wm.imageLayers.firstOrNull { it.id == wm.selectedImageId }?.let { l ->
+                l.cx = (l.cx + dx).coerceIn(-0.3f, 1.3f); l.cy = (l.cy + dy).coerceIn(-0.3f, 1.3f)
+            }
+        }
+    }
+
+    /** Tap-to-select in the preview, in 0..1 image space. Topmost layer wins; rotation ignored (fine for selection). */
+    fun wmSelectAt(fx: Float, fy: Float) {
+        val bmp = wm.previewBitmap ?: return
+        val px = fx * bmp.width; val py = fy * bmp.height
+        for (i in wm.textLayers.indices.reversed()) {
+            val l = wm.textLayers[i]
+            val b = TextOverlayUtils.measure(l, bmp.width)
+            if (kotlin.math.abs(px - l.cx * bmp.width) <= b.w / 2 + 24 && kotlin.math.abs(py - l.cy * bmp.height) <= b.h / 2 + 24) {
+                wm.selectedTextId = l.id; wm.selectedImageId = null; return
+            }
+        }
+        for (i in wm.imageLayers.indices.reversed()) {
+            val l = wm.imageLayers[i]
+            val w = l.widthFrac * bmp.width; val h = if (l.bitmap.width > 0) w * l.bitmap.height / l.bitmap.width else w
+            if (kotlin.math.abs(px - l.cx * bmp.width) <= w / 2 + 24 && kotlin.math.abs(py - l.cy * bmp.height) <= h / 2 + 24) {
+                wm.selectedImageId = l.id; wm.selectedTextId = null; return
+            }
+        }
+    }
+
+    fun wmTextAdd() {
+        wmPushUndo()
+        val l = wmDefaultTextLayer().also { it.text = "New Text"; it.cy = 0.35f }
+        wm.textLayers.add(l); wm.selectedTextId = l.id; wm.selectedImageId = null
+    }
+
+    fun wmTextDuplicate() {
+        val src = wm.textLayers.firstOrNull { it.id == wm.selectedTextId } ?: return
+        wmPushUndo()
+        val copy = src.copy(id = wm.nextLayerId++, cx = (src.cx + 0.04f).coerceAtMost(1.2f), cy = (src.cy + 0.05f).coerceAtMost(1.2f))
+        wm.textLayers.add(copy); wm.selectedTextId = copy.id
+    }
+
+    fun wmTextDelete() {
+        val id = wm.selectedTextId ?: return
+        wmPushUndo()
+        wm.textLayers.removeAll { it.id == id }
+        wm.selectedTextId = wm.textLayers.lastOrNull()?.id
+    }
+
+    /** Reset = back to one default text layer. Undo still restores the pre-reset state. */
+    fun wmTextReset() {
+        wmPushUndo()
+        wm.textLayers.clear()
+        val l = wmDefaultTextLayer()
+        wm.textLayers.add(l); wm.selectedTextId = l.id; wm.selectedImageId = null
+    }
+
+    fun wmLogoReset() {
+        val l = wm.imageLayers.firstOrNull() ?: return
+        wmPushUndo()
+        l.cx = 0.5f; l.cy = 0.85f; l.widthFrac = 0.35f; l.rotation = 0f; l.opacity = 1f; l.flipH = false
+    }
+
     fun resetScanner() {
         scanner.reset()
     }
@@ -3535,7 +3774,144 @@ snackbar.showSnackbar("This phone ran out of memory. Try a smaller size or fewer
         screen = Screen.ScannerManager
     }
 
-    fun scannerAddImageUris(uris: List<Uri>, thenCropFirst: Boolean = false) {
+    // ===== "Your scan" result screen (revised Scanner spec 2026-10-31, section 6) =====
+    fun scannerOpenResult() {
+        if (scanner.pages.isEmpty()) { screen = Screen.ScannerManager; return }
+        if (scanner.resultName.isBlank()) {
+            scanner.resultName = "a2z-scan-" + SimpleDateFormat("yyyyMMdd-HHmm", Locale.US).format(Date())
+        }
+        scanner.resultSelectedPageId = scanner.pages.firstOrNull()?.id
+        scanner.resultSaving = false; scanner.resultCancelled = false
+        scanner.resultProgress = 0; scanner.resultTotal = 0
+        screen = Screen.ScannerPreview
+    }
+
+    fun scannerResultSizeId(): String = when (scanner.resultPageSize) {
+        "US Letter" -> "Letter"
+        "Fit to image" -> "Original"
+        else -> "A4"
+    }
+
+    /** Honest estimate: sheet pixels at 220 PPI (High) x ~0.25 bytes/px document JPEG; Fit uses the stored page sizes. */
+    fun scannerResultEstimate(): String {
+        val bytes: Long = if (scanner.resultPageSize == "Fit to image") {
+            val docId = scanner.docId
+            if (docId == null) 0L else scanner.pages.sumOf { pg -> runCatching { ScansStore.pageFile(context, docId, pg.id).length() }.getOrDefault(0L) }
+        } else {
+            val sheetPx = if (scanner.resultPageSize == "US Letter") 1870L * 2420L else 1819L * 2579L
+            (scanner.pages.size.coerceAtLeast(1)) * (sheetPx * 0.25f).toLong()
+        }
+        return "about " + formatBytes((bytes * 1.05).toLong())
+    }
+
+    fun scannerSaveResultPdf(onDone: ((Uri, String) -> Unit)? = null) {
+        val docId = scanner.docId ?: return
+        val pages = scanner.pages.toList()
+        if (pages.isEmpty() || scanner.resultSaving) return
+        scanner.resultSaving = true; scanner.resultCancelled = false
+        scanner.resultProgress = 0; scanner.resultTotal = pages.size
+        val sizeId = scannerResultSizeId()
+        val baseName = scanner.resultName.trim().replace(Regex("[^A-Za-z0-9 _-]"), "").ifBlank { "a2z-scan" }
+        scope.launch {
+            try {
+                val rendered = mutableListOf<Bitmap>()
+                pages.forEachIndexed { i, pg ->
+                    if (scanner.resultCancelled) return@forEachIndexed
+                    val bmp = withContext(Dispatchers.IO) { renderScanPageBitmap(context, docId, pg, 3000) }
+                    if (bmp != null) rendered.add(bmp)
+                    scanner.resultProgress = i + 1
+                }
+                if (scanner.resultCancelled || rendered.isEmpty()) {
+                    rendered.forEach { it.recycle() }
+                    scanner.resultSaving = false
+                    return@launch
+                }
+                val saved = withContext(Dispatchers.IO) {
+                    val sheets = rendered.map { ScanExport.renderPageOnSheet(it, sizeId, "Automatic", "None", "High") }
+                    val bytes = ConvertFormats.encodePdf(sheets, android.graphics.Color.WHITE)
+                    sheets.forEach { it.recycle() }
+                    val name = "$baseName.pdf"
+                    val uri = saveToDocuments(context, name, "application/pdf", bytes)
+                    // Copy for My Scans + the Share/Compress/Print handoffs.
+                    val shareDir = File(context.cacheDir, "scanner").apply { mkdirs() }
+                    File(shareDir, name).writeBytes(bytes)
+                    File(ScansStore.docDir(context, docId), name).writeBytes(bytes)
+                    uri to name
+                }
+                rendered.forEach { it.recycle() }
+                if (scanner.resultCancelled) { scanner.resultSaving = false; return@launch }
+                scanner.resultSaving = false
+                scanner.lastExport = saved.second
+                scannerSaveDocMeta(); refreshScanDocs()
+                val uri = saved.first
+                if (uri != null) {
+                    scanner.resultSavedPdfUri = uri; scanner.resultSavedPdfName = saved.second
+                    if (onDone != null) onDone(uri, saved.second)
+                    else snackbar.showSnackbar("Saved to Documents/A2Z Image Craft")
+                } else if (Build.VERSION.SDK_INT < 29) {
+                    if (onDone == null) snackbar.showSnackbar("Saved to Download/A2Z Image Craft")
+                    else snackbar.showSnackbar("The PDF is saved in Downloads - share it from My Scans.")
+                } else {
+                    snackbar.showSnackbar("Saved inside the app, but writing to Documents failed.")
+                }
+            } catch (e: OutOfMemoryError) {
+                scanner.resultSaving = false
+                snackbar.showSnackbar("This phone ran out of memory. Try fewer pages.")
+            } catch (e: Exception) {
+                scanner.resultSaving = false
+                snackbar.showSnackbar("Could not save the PDF: ${e.message ?: "unknown error"}")
+            }
+        }
+    }
+
+    fun scannerSaveResultJpg() {
+        val docId = scanner.docId ?: return
+        val pages = scanner.pages.toList()
+        if (pages.isEmpty() || scanner.resultSaving) return
+        scanner.resultSaving = true; scanner.resultCancelled = false
+        scanner.resultProgress = 0; scanner.resultTotal = pages.size
+        val baseName = scanner.resultName.trim().replace(Regex("[^A-Za-z0-9 _-]"), "").ifBlank { "a2z-scan" }
+        scope.launch {
+            try {
+                var done = 0
+                pages.forEachIndexed { i, pg ->
+                    if (scanner.resultCancelled) return@forEachIndexed
+                    val bmp = withContext(Dispatchers.IO) { renderScanPageBitmap(context, docId, pg, 3000) }
+                    if (bmp != null) {
+                        withContext(Dispatchers.IO) {
+                            val bytes = ConvertFormats.encode(bmp, ConvertFormats.byId("jpg"), 92, android.graphics.Color.WHITE)
+                            val name = "${baseName}_page${i + 1}.jpg"
+                            saveToGallery(context, name, "image/jpeg", bytes)
+                            File(ScansStore.docDir(context, docId), name).writeBytes(bytes)
+                        }
+                        bmp.recycle()
+                        done++
+                    }
+                    scanner.resultProgress = i + 1
+                }
+                scanner.resultSaving = false
+                if (scanner.resultCancelled) return@launch
+                scannerSaveDocMeta(); refreshScanDocs()
+                if (done > 0) snackbar.showSnackbar("Saved $done image${if (done == 1) "" else "s"} to Pictures/A2Z Image Craft")
+                else snackbar.showSnackbar("Nothing was saved.")
+            } catch (e: OutOfMemoryError) {
+                scanner.resultSaving = false
+                snackbar.showSnackbar("This phone ran out of memory. Try fewer pages.")
+            } catch (e: Exception) {
+                scanner.resultSaving = false
+                snackbar.showSnackbar("Could not save the images: ${e.message ?: "unknown error"}")
+            }
+        }
+    }
+
+    /** Share/Compress/Print need the saved PDF; save it first when this session has not. */
+    fun scannerEnsureSavedPdf(then: (Uri, String) -> Unit) {
+        val existing = scanner.resultSavedPdfUri
+        if (existing != null) { then(existing, scanner.resultSavedPdfName); return }
+        scannerSaveResultPdf { uri, name -> then(uri, name) }
+    }
+
+    fun scannerAddImageUris(uris: List<Uri>, thenCropFirst: Boolean = false, stayOnResult: Boolean = false) {
         if (uris.isEmpty()) return
         busy = true; busyLabel = "Adding pages…"
         scope.launch {
@@ -3567,7 +3943,7 @@ snackbar.showSnackbar("This phone ran out of memory. Try a smaller size or fewer
                 busy = false; busyLabel = ""
                 // His spec flow: camera capture opens the first new page in Crop & Adjust.
                 if (thenCropFirst && added.isNotEmpty()) scannerStartEdit(added.first())
-                else screen = Screen.ScannerManager
+                else screen = if (stayOnResult) Screen.ScannerPreview else Screen.ScannerManager
             } catch (e: Exception) {
                 busy = false; busyLabel = ""
                 snackbar.showSnackbar("Could not add those images: ${e.message ?: "unknown error"}")
@@ -3602,7 +3978,7 @@ snackbar.showSnackbar("This phone ran out of memory. Try a smaller size or fewer
                     scope.launch {
                         snackbar.showSnackbar(
                             if (e.message?.contains("UNSUPPORTED", ignoreCase = true) == true)
-                                "Camera scanning is not available on this phone. You can still import images or a PDF."
+                                "Scanner is not available on this phone. You can still import images or a PDF."
                             else "Could not open the camera scanner: ${e.message ?: "unknown error"}"
                         )
                     }
@@ -3622,10 +3998,23 @@ snackbar.showSnackbar("This phone ran out of memory. Try a smaller size or fewer
     val scannerImageAddMore = rememberLauncherForActivityResult(ActivityResultContracts.PickMultipleVisualMedia(50)) { uris ->
         if (uris.isNotEmpty()) scanner.importReview.addAll(uris.filter { it !in scanner.importReview })
     }
+    // Add Watermark pickers (his spec: up to 50 images per batch; originals never modified).
+    val wmPicker = rememberLauncherForActivityResult(ActivityResultContracts.PickMultipleVisualMedia(50)) { uris ->
+        if (uris.isNotEmpty()) { wm.images.clear(); wm.images.addAll(uris.take(50)); screen = Screen.WmSelect }
+    }
+    val wmAddMorePicker = rememberLauncherForActivityResult(ActivityResultContracts.PickMultipleVisualMedia(50)) { uris ->
+        if (uris.isNotEmpty()) wm.images.addAll(uris.filter { it !in wm.images }.take((50 - wm.images.size).coerceAtLeast(0)))
+    }
+    val wmLogoPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        if (uri != null) wmSetLogo(uri)
+    }
     val scannerReplacePicker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
         val pid = scanner.replaceTargetId
         if (uri != null && pid != null) scannerReplacePage(pid, uri)
         scanner.replaceTargetId = null
+    }
+    val scannerResultAddPicker = rememberLauncherForActivityResult(ActivityResultContracts.PickMultipleVisualMedia(20)) { uris ->
+        if (uris.isNotEmpty()) scannerAddImageUris(uris, stayOnResult = true)
     }
 
     fun scannerEnsurePdfThumb(index: Int) {
@@ -3776,7 +4165,8 @@ snackbar.showSnackbar("This phone ran out of memory. Try a smaller size or fewer
                 scannerQueueThumb(pm.id)
             }
             busy = false; busyLabel = ""
-            screen = if (thenExport) Screen.ScannerExport else Screen.ScannerManager
+            if (thenExport) scanner.resultName = ""
+            scannerOpenResult()   // lands on "Your scan"; falls back to the manager when empty
         }
     }
 
@@ -4714,6 +5104,11 @@ snackbar.showSnackbar("This phone ran out of memory. Try a smaller size or fewer
             Screen.ScannerManager -> { scannerSaveDocMeta(); screen = Screen.ScannerHome }
             Screen.ScannerMyScans -> screen = Screen.ScannerHome
             Screen.ScannerHome -> { resetScanner(); screen = Screen.Home }
+            Screen.WmSettings -> screen = Screen.WmHome
+            Screen.WmTextEditor, Screen.WmLogoEditor -> screen = Screen.WmType
+            Screen.WmType -> screen = if (wm.images.isEmpty()) Screen.WmHome else Screen.WmSelect
+            Screen.WmSelect -> screen = Screen.WmHome
+            Screen.WmHome -> { resetWm(); screen = Screen.Home }
             else -> screen = Screen.Home
         }
     }
@@ -4761,6 +5156,121 @@ snackbar.showSnackbar("This phone ran out of memory. Try a smaller size or fewer
         scannerRenameFolder = { o, n -> scannerRenameFolder(o, n) }
         scannerDeleteFolder = { scannerDeleteFolder(it) }
         scannerExportAgain = { scannerOpenDoc(it, thenExport = true) }
+        scannerResultSavePdf = { scannerSaveResultPdf() }
+        scannerResultSaveJpg = { scannerSaveResultJpg() }
+        scannerResultShare = { scannerEnsureSavedPdf { uri, name -> scope.launch { shareExported(context, uri, name) } } }
+        scannerResultCompress = { scannerEnsureSavedPdf { uri, _ -> loadCompressPdf(uri) } }
+        scannerResultPrint = { scannerEnsureSavedPdf { uri, _ -> loadPrintPdf(uri); screen = Screen.PrintHome } }
+        scannerResultCancel = { scanner.resultCancelled = true }
+        scannerResultAddImport = { scannerResultAddPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) }
+        scannerOpenResult = { scannerOpenResult() }
+    }
+    val wmActions = WmRootActions().apply {
+        resetWm = { resetWm() }
+        refreshWmProjects = { refreshWmProjects() }
+        pickImages = { wmPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) }
+        pickAddMore = { wmAddMorePicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) }
+        prefs = { context.getSharedPreferences("wm_settings", Context.MODE_PRIVATE) }
+        wmUndo = { wmUndo() }
+        wmRedo = { wmRedo() }
+        wmEndCoalesce = { wm.lastUndoKey = "" }
+        wmDragSelected = { dx, dy -> wmDragSelected(dx, dy) }
+        wmSelectAt = { fx, fy -> wmSelectAt(fx, fy) }
+        wmTextSelect = { id -> wm.selectedTextId = id; wm.selectedImageId = null }
+        wmTextMutate = { key, id, f -> wmMutate(key) { wm.textLayers.firstOrNull { it.id == id }?.let { l -> f(l) } } }
+        wmTextAdd = { wmTextAdd() }
+        wmTextDuplicate = { wmTextDuplicate() }
+        wmTextDelete = { wmTextDelete() }
+        wmTextReset = { wmTextReset() }
+        wmLogoPick = { wmLogoPicker.launch("image/*") }
+        wmLogoMutate = { key, f -> wmMutate(key) { wm.imageLayers.firstOrNull()?.let { l -> f(l) } } }
+        wmLogoRemoveBg = { wmLogoRemoveBg() }
+        wmLogoReset = { wmLogoReset() }
+    }
+    @Composable
+    fun RenderWatermark(modifier: Modifier, a: WmRootActions) {
+        when (screen) {
+            Screen.WmHome -> WmHomeScreen(
+                modifier = modifier,
+                projects = wm.projects,
+                onBack = { a.resetWm(); screen = Screen.Home },
+                onSelectImages = { wm.pendingKind = ""; a.pickImages() },
+                onText = { wm.pendingKind = "text"; if (wm.images.isEmpty()) a.pickImages() else screen = Screen.WmType },
+                onLogo = { wm.pendingKind = "logo"; if (wm.images.isEmpty()) a.pickImages() else screen = Screen.WmType },
+                onOpenProject = { /* STAGE6: reopen the saved project in the editor */ },
+                onSettings = { screen = Screen.WmSettings }
+            )
+            Screen.WmSelect -> WmSelectScreen(
+                modifier = modifier,
+                uris = wm.images,
+                onBack = { screen = Screen.WmHome },
+                onRemove = { wm.images.remove(it) },
+                onAddMore = { a.pickAddMore() },
+                onClear = { wm.images.clear() },
+                onMove = { from, to -> if (from in wm.images.indices && to in wm.images.indices) { val u = wm.images.removeAt(from); wm.images.add(to, u) } },
+                onCancel = { wm.images.clear(); screen = Screen.WmHome },
+                onContinue = { screen = Screen.WmType }
+            )
+            Screen.WmType -> WmTypeScreen(
+                modifier = modifier,
+                imageCount = wm.images.size,
+                onBack = { screen = Screen.WmSelect },
+                onText = { wm.pendingKind = "text"; wmOpenTextEditor() },
+                onLogo = { wm.pendingKind = "logo"; wmOpenLogoEditor() }
+            )
+            Screen.WmTextEditor -> WmTextEditorScreen(
+                modifier = modifier,
+                preview = wm.previewBitmap,
+                textLayers = wm.textLayers,
+                imageLayers = wm.imageLayers,
+                selectedTextId = wm.selectedTextId,
+                selectedImageId = wm.selectedImageId,
+                canUndo = wm.canUndo,
+                canRedo = wm.canRedo,
+                onBack = { screen = Screen.WmType },
+                onSelect = { a.wmTextSelect(it) },
+                onTapSelect = { fx, fy -> a.wmSelectAt(fx, fy) },
+                onAdd = { a.wmTextAdd() },
+                onDuplicate = { a.wmTextDuplicate() },
+                onDelete = { a.wmTextDelete() },
+                onMutate = { key, id, f -> a.wmTextMutate(key, id, f) },
+                onEndCoalesce = { a.wmEndCoalesce() },
+                onUndo = { a.wmUndo() },
+                onRedo = { a.wmRedo() },
+                onReset = { a.wmTextReset() },
+                onDrag = { dx, dy -> a.wmDragSelected(dx, dy) }
+            )
+            Screen.WmLogoEditor -> WmLogoEditorScreen(
+                modifier = modifier,
+                preview = wm.previewBitmap,
+                imageLayers = wm.imageLayers,
+                textLayers = wm.textLayers,
+                selectedImageId = wm.selectedImageId,
+                logoBusy = wm.logoBusy,
+                canUndo = wm.canUndo,
+                canRedo = wm.canRedo,
+                onBack = { screen = Screen.WmType },
+                onImport = { a.wmLogoPick() },
+                onRemoveBg = { a.wmLogoRemoveBg() },
+                onMutate = { key, f -> a.wmLogoMutate(key, f) },
+                onEndCoalesce = { a.wmEndCoalesce() },
+                onUndo = { a.wmUndo() },
+                onRedo = { a.wmRedo() },
+                onReset = { a.wmLogoReset() },
+                onDrag = { dx, dy -> a.wmDragSelected(dx, dy) },
+                onTapSelect = { fx, fy -> a.wmSelectAt(fx, fy) }
+            )
+            Screen.WmSettings -> WmSettingsScreen(
+                modifier = modifier,
+                prefs = a.prefs(),
+                themeMode = themeMode,
+                onThemeMode = onThemeMode,
+                onBack = { screen = Screen.WmHome },
+                onPrivacy = { a.resetWm(); screen = Screen.Home; settingsDoc = "privacy" },
+                onAbout = { a.resetWm(); screen = Screen.Home; settingsDoc = "about" }
+            )
+            else -> {}
+        }
     }
     @Composable
     fun RenderScanner(modifier: Modifier, a: ScannerRootActions) {
@@ -4823,16 +5333,36 @@ snackbar.showSnackbar("This phone ran out of memory. Try a smaller size or fewer
                 onAddImages = { a.pickImages() },
                 onAddPdf = { a.pickPdf() },
                 onRename = { a.scannerRenameDoc(it) },
-                onPreview = { a.scannerCheckBlanks(); screen = Screen.ScannerPreview }
+                onPreview = { a.scannerCheckBlanks(); scannerOpenResult() }
             )
-            Screen.ScannerPreview -> ScannerPreviewScreen(
+            Screen.ScannerPreview -> ScannerResultScreen(
                 modifier = modifier,
                 docId = scanner.docId ?: "",
                 docName = scanner.docName,
                 pages = scanner.pages,
                 blankFlags = scanner.blankFlags,
-                onBack = { screen = Screen.ScannerManager },
-                onExport = {
+                name = scanner.resultName,
+                onName = { scanner.resultName = it },
+                pageSize = scanner.resultPageSize,
+                onPageSize = { scanner.resultPageSize = it },
+                estimate = scannerResultEstimate(),
+                saving = scanner.resultSaving,
+                progress = scanner.resultProgress,
+                total = scanner.resultTotal,
+                selectedPageId = scanner.resultSelectedPageId,
+                onSelectPage = { scanner.resultSelectedPageId = it },
+                onEditPage = { a.scannerStartEdit(it) },
+                onDeletePage = { a.scannerDeletePage(it) },
+                onMovePage = { pid, d -> a.scannerMovePage(pid, d) },
+                onAddCamera = { a.startScannerCamera() },
+                onAddImport = { a.scannerResultAddImport() },
+                onSavePdf = { a.scannerResultSavePdf() },
+                onSaveJpg = { a.scannerResultSaveJpg() },
+                onShare = { a.scannerResultShare() },
+                onCompress = { a.scannerResultCompress() },
+                onPrint = { a.scannerResultPrint() },
+                onCancelSave = { a.scannerResultCancel() },
+                onMoreOptions = {
                     val sp = a.scannerPrefs()
                     if (scanner.exportName.isBlank()) scanner.exportName = scanner.docName
                     scanner.exportFormat = sp.getString("scan_default_format", "PDF") ?: "PDF"
@@ -4840,7 +5370,7 @@ snackbar.showSnackbar("This phone ran out of memory. Try a smaller size or fewer
                     scanner.exportQuality = sp.getString("scan_default_quality", "High") ?: "High"
                     screen = Screen.ScannerExport
                 },
-                onShare = { scanner.docId?.let { id -> a.scannerShareDoc(id) } }
+                onBack = { screen = Screen.ScannerManager }
             )
             Screen.ScannerMyScans -> ScannerMyScansScreen(
                 modifier = modifier,
@@ -5487,6 +6017,7 @@ snackbar.showSnackbar("This phone ran out of memory. Try a smaller size or fewer
                             "Resize" -> pickPhotos()
                             "Print Size & DPI" -> { resetPrint(); screen = Screen.PrintHome }
                             "Document Scanner" -> { scannerActions.resetScanner(); scannerActions.refreshScanDocs(); screen = Screen.ScannerHome }
+                            "Add Watermark" -> { wmActions.resetWm(); wmActions.refreshWmProjects(); screen = Screen.WmHome }
                             "Social Media Sizes" -> screen = Screen.SocialHome
                             "Online Shop Sizes" -> screen = Screen.ShopHome
                             "Format Converter" -> screen = Screen.ConvertHome
@@ -6052,6 +6583,7 @@ snackbar.showSnackbar("This phone ran out of memory. Try a smaller size or fewer
                 onSave = { saveAdjustPhoto() }
             )
             Screen.ScannerHome, Screen.ScannerImportImages, Screen.ScannerImportPdf, Screen.ScannerManager, Screen.ScannerMyScans, Screen.ScannerCrop, Screen.ScannerEnhance, Screen.ScannerPreview, Screen.ScannerExport, Screen.ScannerSuccess, Screen.ScannerSettings -> RenderScanner(Modifier.padding(padding), scannerActions)
+            Screen.WmHome, Screen.WmSelect, Screen.WmType, Screen.WmSettings, Screen.WmTextEditor, Screen.WmLogoEditor -> RenderWatermark(Modifier.padding(padding), wmActions)
             Screen.TextPhoto -> RenderTextPhoto(Modifier.padding(padding))
             Screen.PrintHome -> PrintHomeScreen(
                 modifier = Modifier.padding(padding),
@@ -7421,7 +7953,8 @@ private fun HomeScreen(
         Feature("Collage Maker", "Combine 2-20 photos", Icons.Default.GridOn),
         Feature("Photo Adjustments", "Light, colour & detail sliders", Icons.Default.Tune),
         Feature("Print Size & DPI", "Ready images for printing", Icons.Default.Print),
-        Feature("Document Scanner", "Scan papers to PDF & images", Icons.Default.DocumentScanner)
+        Feature("Document Scanner", "Scan papers to PDF or JPG", Icons.Default.DocumentScanner),
+        Feature("Add Watermark", "Text & logo on photos", Icons.Default.BrandingWatermark)
     )
     Column(modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).padding(horizontal = 16.dp).verticalScroll(rememberScrollState())) {
         Row(Modifier.fillMaxWidth().padding(top = 12.dp, bottom = 12.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -9613,7 +10146,7 @@ private const val TERMS_TEXT = "A2Z Image Craft - Terms & Conditions\n\n" +
     "Email: bittyjee1223@gmail.com\n"
 
 private const val PRIVACY_TEXT = "A2Z Image Craft - Privacy Policy\n\n" +
-    "Last updated: 30 October 2026\n\n" +
+    "Last updated: 31 October 2026\n\n" +
     "A2Z Image Craft (\"the app\") is developed and published by Bitty, Bruges, Belgium (\"we\", \"us\"). This policy explains what happens to your data when you use the app. In short: your photos stay on your phone, and we do not collect personal data through the app.\n\n" +
     "1. Your photos stay on your device\n\n" +
     "- Every tool in the app (resize, crop, background removal, convert, compress, print size, collage, text on photo, frames and photo adjustments) works entirely on your phone.\n\n" +
@@ -9681,12 +10214,15 @@ private val HELP_ENTRIES = listOf(
     DocEntry("Collage Maker", "Pick several photos and choose a layout. Hold a photo and drop it on another frame to swap them, and adjust spacing and background."),
     DocEntry("Photo Adjustments", "Brightness, contrast, warmth and filters. Tap Compare to see the original photo."),
     DocEntry("Presets", "Tap a preset to open the resize tool with that exact size ready - one tap to finish."),
+    DocEntry("Document Scanner", "Scan with your camera or import photos/PDF. Crop, enhance, then save as PDF or JPG, or send to Compress or Print."),
     DocEntry("Saving and sharing", "Edited photos are saved to Pictures/A2Z Image Craft (or the folder you choose). Your original photo is never changed unless you choose \"Replace original\"."),
     DocEntry("Privacy", "Everything happens on your phone. Your photos are never uploaded.")
 )
 
 private val WHATS_NEW_ITEMS = listOf(
-    "NEW: Document Scanner - scan with your camera or import images and PDFs, crop and enhance pages, then export as PDF, PNG or JPG",
+    "Scanner: a new Your scan screen with page thumbnails, one-tap Save as PDF / Save as JPG, Share, Compress and Print",
+    "Scanner: Black & White filter, Whiten background and Remove shadows, and clearer crop buttons",
+    "New: Document Scanner. Scan papers to PDF or JPG.",
     "Scanner library: My Scans with folders, search, sorting (including file size) and sharing",
     "Theme choice: Light, Dark or System (follows your phone)",
     "Dark mode now covers every screen",
@@ -10207,6 +10743,30 @@ private fun saveToDownloads(context: Context, filename: String, mimeType: String
         val dir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
         val outDir = File(dir, "A2Z Image Craft").apply { mkdirs() }
         FileOutputStream(File(outDir, filename)).use { it.write(bytes) }
+    }
+}
+
+/** His scanner spec: saved PDFs land in Documents/A2Z Image Craft (JPGs stay in Pictures). Returns the MediaStore uri (needed for Share/Compress/Print handoffs), or null on pre-29 / failure. */
+private fun saveToDocuments(context: Context, filename: String, mimeType: String, bytes: ByteArray): Uri? {
+    if (Build.VERSION.SDK_INT < 29) {
+        saveToDownloads(context, filename, mimeType, bytes)
+        return null
+    }
+    val resolver = context.contentResolver
+    val values = ContentValues().apply {
+        put(MediaStore.Files.FileColumns.DISPLAY_NAME, filename)
+        put(MediaStore.Files.FileColumns.MIME_TYPE, mimeType)
+        put(MediaStore.Files.FileColumns.RELATIVE_PATH, "Documents/A2Z Image Craft")
+        put(MediaStore.Files.FileColumns.IS_PENDING, 1)
+    }
+    val uri = resolver.insert(MediaStore.Files.getContentUri(MediaStore.VOLUME_EXTERNAL), values) ?: return null
+    try {
+        resolver.openOutputStream(uri, "w")?.use { it.write(bytes) } ?: return null
+        resolver.update(uri, ContentValues().apply { put(MediaStore.Files.FileColumns.IS_PENDING, 0) }, null, null)
+        return uri
+    } catch (e: Exception) {
+        resolver.delete(uri, null, null)
+        return null
     }
 }
 
@@ -14003,6 +14563,49 @@ private class TextUiState {
     var pendingTextStyle by mutableStateOf<TextStylePreset?>(null)
     var textLastGestureRecord by mutableStateOf(0L)
 }
+// ===== Add Watermark (his original Watermark recording, TOOL 14) =====
+private class WmRootActions {
+    lateinit var resetWm: () -> Unit
+    lateinit var refreshWmProjects: () -> Unit
+    lateinit var pickImages: () -> Unit
+    lateinit var pickAddMore: () -> Unit
+    lateinit var prefs: () -> android.content.SharedPreferences
+    lateinit var wmUndo: () -> Unit
+    lateinit var wmRedo: () -> Unit
+    lateinit var wmEndCoalesce: () -> Unit
+    lateinit var wmDragSelected: (Float, Float) -> Unit
+    lateinit var wmSelectAt: (Float, Float) -> Unit
+    lateinit var wmTextSelect: (Long) -> Unit
+    lateinit var wmTextMutate: (String, Long, (TextOverlayUtils.TextLayer) -> Unit) -> Unit
+    lateinit var wmTextAdd: () -> Unit
+    lateinit var wmTextDuplicate: () -> Unit
+    lateinit var wmTextDelete: () -> Unit
+    lateinit var wmTextReset: () -> Unit
+    lateinit var wmLogoPick: () -> Unit
+    lateinit var wmLogoMutate: (String, (TextOverlayUtils.ImageLayer) -> Unit) -> Unit
+    lateinit var wmLogoRemoveBg: () -> Unit
+    lateinit var wmLogoReset: () -> Unit
+}
+private class WmUiState {
+    val images = mutableStateListOf<Uri>()
+    var pendingKind by mutableStateOf("")   // "", "text", "logo" - set by the Home entries or the Type screen
+    var projects by mutableStateOf<List<WmStore.ProjectMeta>>(emptyList())
+    // Stage 2: live editors. Proportional layer model from TextOverlayUtils (0..1 of image size).
+    val textLayers = mutableStateListOf<TextOverlayUtils.TextLayer>()
+    val imageLayers = mutableStateListOf<TextOverlayUtils.ImageLayer>()
+    var selectedTextId by mutableStateOf<Long?>(null)
+    var selectedImageId by mutableStateOf<Long?>(null)
+    var nextLayerId by mutableLongStateOf(1L)
+    var previewBitmap by mutableStateOf<Bitmap?>(null)
+    var editorKind by mutableStateOf("")    // "text" | "logo"
+    var logoBusy by mutableStateOf(false)
+    val undoStack = mutableListOf<Pair<List<TextOverlayUtils.TextLayer>, List<TextOverlayUtils.ImageLayer>>>()
+    val redoStack = mutableListOf<Pair<List<TextOverlayUtils.TextLayer>, List<TextOverlayUtils.ImageLayer>>>()
+    var canUndo by mutableStateOf(false)
+    var canRedo by mutableStateOf(false)
+    var lastUndoKey by mutableStateOf("")
+}
+
 private class ScannerRootActions {
     lateinit var resetScanner: () -> Unit
     lateinit var startScannerCamera: () -> Unit
@@ -14028,6 +14631,14 @@ private class ScannerRootActions {
     lateinit var scannerDeletePages: (List<String>) -> Unit
     lateinit var scannerMovePage: (String, Int) -> Unit
     lateinit var scannerRenameDocById: (String, String) -> Unit
+    lateinit var scannerResultSavePdf: () -> Unit
+    lateinit var scannerResultSaveJpg: () -> Unit
+    lateinit var scannerResultShare: () -> Unit
+    lateinit var scannerResultCompress: () -> Unit
+    lateinit var scannerResultPrint: () -> Unit
+    lateinit var scannerResultCancel: () -> Unit
+    lateinit var scannerResultAddImport: () -> Unit
+    lateinit var scannerOpenResult: () -> Unit
     lateinit var scannerAddImageUris: (List<Uri>) -> Unit
     lateinit var scannerEnsurePdfThumb: (Int) -> Unit
     lateinit var pickImages: () -> Unit
@@ -14047,6 +14658,16 @@ private class ScannerUiState {
     val pages = mutableStateListOf<ScanPageUi>()
     val importReview = mutableStateListOf<Uri>()
     var pdfTemp by mutableStateOf<File?>(null)
+    // "Your scan" result screen (his 2026-10-31 revised Scanner spec, section 6)
+    var resultName by mutableStateOf("")
+    var resultPageSize by mutableStateOf("A4")          // "A4" | "US Letter" | "Fit to image"
+    var resultSaving by mutableStateOf(false)
+    var resultCancelled by mutableStateOf(false)
+    var resultProgress by mutableStateOf(0)
+    var resultTotal by mutableStateOf(0)
+    var resultSavedPdfUri by mutableStateOf<Uri?>(null)
+    var resultSavedPdfName by mutableStateOf("")
+    var resultSelectedPageId by mutableStateOf<String?>(null)
     var pdfName by mutableStateOf("")
     var pdfSize by mutableLongStateOf(-1L)
     var pdfPageCount by mutableStateOf(0)
@@ -14527,48 +15148,161 @@ private fun ScanPageImage(docId: String, page: ScanPageUi, modifier: Modifier, m
 }
 
 @Composable
-private fun ScannerPreviewScreen(
+private fun ScannerResultScreen(
     modifier: Modifier,
     docId: String,
     docName: String,
     pages: List<ScanPageUi>,
     blankFlags: Map<String, Boolean>,
-    onBack: () -> Unit,
-    onExport: () -> Unit,
-    onShare: () -> Unit
+    name: String,
+    onName: (String) -> Unit,
+    pageSize: String,
+    onPageSize: (String) -> Unit,
+    estimate: String,
+    saving: Boolean,
+    progress: Int,
+    total: Int,
+    selectedPageId: String?,
+    onSelectPage: (String) -> Unit,
+    onEditPage: (String) -> Unit,
+    onDeletePage: (String) -> Unit,
+    onMovePage: (String, Int) -> Unit,
+    onAddCamera: () -> Unit,
+    onAddImport: () -> Unit,
+    onSavePdf: () -> Unit,
+    onSaveJpg: () -> Unit,
+    onShare: () -> Unit,
+    onCompress: () -> Unit,
+    onPrint: () -> Unit,
+    onCancelSave: () -> Unit,
+    onMoreOptions: () -> Unit,
+    onBack: () -> Unit
 ) {
+    var addOpen by remember { mutableStateOf(false) }
+    var deleteId by remember { mutableStateOf<String?>(null) }
     Column(modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).padding(horizontal = 16.dp)) {
         Row(Modifier.fillMaxWidth().padding(top = 12.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-            IconButton(onClick = onBack) { Icon(Icons.Default.ArrowBack, contentDescription = "Back to Edit", tint = DeepNavy, modifier = Modifier.size(24.dp)) }
+            IconButton(onClick = onBack) { Icon(Icons.Default.ArrowBack, contentDescription = "Back to Edit Pages", tint = DeepNavy, modifier = Modifier.size(24.dp)) }
             Column(Modifier.weight(1f)) {
-                Text(docName, color = DeepNavy, fontSize = 18.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text("${pages.size} page${if (pages.size == 1) "" else "s"}", color = Slate, fontSize = 12.sp)
+                Text("Your scan", color = DeepNavy, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+                Text("$docName \u00B7 ${pages.size} page${if (pages.size == 1) "" else "s"}", color = Slate, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
-            IconButton(onClick = onShare) { Icon(Icons.Default.Share, contentDescription = "Share", tint = DeepNavy, modifier = Modifier.size(22.dp)) }
         }
         val blanks = pages.filter { blankFlags[it.id] == true }
         if (blanks.isNotEmpty()) {
             Text(
-                "Heads up: page ${blanks.map { pages.indexOfFirst { p -> p.id == it.id } + 1 }.joinToString(", ")} look${if (blanks.size == 1) "s" else ""} blank. Check before exporting.",
+                "Heads up: page ${blanks.map { pages.indexOfFirst { p -> p.id == it.id } + 1 }.joinToString(", ")} look${if (blanks.size == 1) "s" else ""} blank. Check before saving.",
                 color = Color(0xFFB26A00), fontSize = 12.sp, lineHeight = 16.sp, modifier = Modifier.padding(bottom = 6.dp)
             )
         }
-        Column(Modifier.weight(1f).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            pages.forEachIndexed { idx, page ->
-                Card(shape = RoundedCornerShape(12.dp), border = BorderStroke(1.dp, BorderGrey), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
-                    Box {
-                        ScanPageImage(docId, page, Modifier.fillMaxWidth())
-                        Text("${idx + 1}", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold, modifier = Modifier.align(Alignment.TopStart).padding(8.dp).background(DeepNavy, RoundedCornerShape(6.dp)).padding(horizontal = 6.dp, vertical = 2.dp))
+        LazyRow(Modifier.padding(vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            items(pages.size) { idx ->
+                val page = pages[idx]
+                val sel = page.id == selectedPageId
+                Box(
+                    Modifier.width(104.dp).aspectRatio(0.72f).clip(RoundedCornerShape(12.dp)).background(SoftGrey)
+                        .border(if (sel) 2.dp else 1.dp, if (sel) SkyBlue else BorderGrey, RoundedCornerShape(12.dp))
+                        .clickable { onSelectPage(page.id) }
+                ) {
+                    ScanPageImage(docId, page, Modifier.fillMaxSize())
+                    Text("${idx + 1}", color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.Bold, modifier = Modifier.align(Alignment.BottomStart).padding(5.dp).background(DeepNavy, RoundedCornerShape(6.dp)).padding(horizontal = 5.dp, vertical = 1.dp))
+                }
+            }
+            item {
+                Box(
+                    Modifier.width(104.dp).aspectRatio(0.72f).clip(RoundedCornerShape(12.dp))
+                        .border(1.dp, SkyBlue, RoundedCornerShape(12.dp))
+                        .clickable { addOpen = true },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Icon(Icons.Default.Add, contentDescription = null, tint = SkyBlue, modifier = Modifier.size(26.dp))
+                        Text("+ Add page", color = SkyBlue, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
                     }
                 }
             }
         }
-        Row(Modifier.fillMaxWidth().padding(vertical = 12.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            OutlinedButton(onClick = onBack, modifier = Modifier.weight(1f).height(50.dp), shape = RoundedCornerShape(14.dp)) { Text("Edit Pages", color = DeepNavy, fontWeight = FontWeight.SemiBold) }
-            Button(onClick = onExport, enabled = pages.isNotEmpty(), modifier = Modifier.weight(1.6f).height(50.dp), colors = ButtonDefaults.buttonColors(containerColor = Orange, contentColor = Color.White), shape = RoundedCornerShape(14.dp)) {
-                Text("Export Document", fontWeight = FontWeight.Bold)
+        val selIdx = pages.indexOfFirst { it.id == selectedPageId }
+        if (selIdx >= 0) {
+            Row(Modifier.fillMaxWidth().padding(bottom = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                @Composable
+                fun act(label: String, enabled: Boolean = true, danger: Boolean = false, onClick: () -> Unit) {
+                    Box(
+                        Modifier.clip(RoundedCornerShape(10.dp)).background(if (enabled) PaleBlue else PaleBlue.copy(alpha = 0.4f))
+                            .clickable(enabled = enabled) { onClick() }.padding(horizontal = 12.dp, vertical = 7.dp)
+                    ) { Text(label, color = if (!enabled) Slate else if (danger) Color(0xFFD32F2F) else DeepNavy, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, softWrap = false) }
+                }
+                act("Edit page") { onEditPage(pages[selIdx].id) }
+                act("\u25C0", enabled = selIdx > 0) { onMovePage(pages[selIdx].id, -1) }
+                act("\u25B6", enabled = selIdx < pages.size - 1) { onMovePage(pages[selIdx].id, 1) }
+                act("Delete", danger = true) { deleteId = pages[selIdx].id }
             }
         }
+        Column(Modifier.weight(1f).verticalScroll(rememberScrollState())) {
+            Text("File name", color = DeepNavy, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 6.dp, bottom = 4.dp))
+            OutlinedTextField(value = name, onValueChange = onName, singleLine = true, modifier = Modifier.fillMaxWidth())
+            Text("Page size", color = DeepNavy, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 12.dp, bottom = 6.dp))
+            ScanChipRow(listOf("A4", "US Letter", "Fit to image"), pageSize, onPageSize)
+            Text("Estimated size: $estimate (final size depends on the pages)", color = Slate, fontSize = 12.sp, lineHeight = 16.sp, modifier = Modifier.padding(top = 10.dp))
+            Text("PDF quality: 220 PPI - sharp text for documents.", color = Slate, fontSize = 12.sp, lineHeight = 16.sp, modifier = Modifier.padding(top = 2.dp))
+            Text("PDF saves to Documents/A2Z Image Craft. JPG saves one image per page to Pictures/A2Z Image Craft. Saved files appear in My Scans and My Photos > Saved.", color = Slate, fontSize = 11.sp, lineHeight = 15.sp, modifier = Modifier.padding(top = 6.dp))
+            // Room to scroll the last line fully clear of the fixed save buttons (his phone-height note).
+            Spacer(Modifier.height(10.dp))
+        }
+        if (saving) {
+            Row(Modifier.fillMaxWidth().padding(vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.weight(1f).height(6.dp).clip(RoundedCornerShape(3.dp)).background(PaleBlue)) {
+                    Box(Modifier.fillMaxHeight().fillMaxWidth(if (total > 0) (progress.toFloat() / total).coerceIn(0f, 1f) else 0f).clip(RoundedCornerShape(3.dp)).background(Orange))
+                }
+                Spacer(Modifier.width(10.dp))
+                Text("$progress of $total", color = DeepNavy, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                TextButton(onClick = onCancelSave) { Text("Cancel", color = Color(0xFFD32F2F), fontSize = 13.sp) }
+            }
+        } else {
+            Button(onClick = onSavePdf, enabled = pages.isNotEmpty(), modifier = Modifier.fillMaxWidth().height(50.dp), colors = ButtonDefaults.buttonColors(containerColor = Orange, contentColor = Color.White), shape = RoundedCornerShape(14.dp)) {
+                Text("Save as PDF", fontWeight = FontWeight.Bold)
+            }
+            Row(Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                OutlinedButton(onClick = onSaveJpg, enabled = pages.isNotEmpty(), modifier = Modifier.weight(1f).height(46.dp), shape = RoundedCornerShape(12.dp)) { Text("Save as JPG", color = DeepNavy, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, softWrap = false) }
+                OutlinedButton(onClick = onShare, enabled = pages.isNotEmpty(), modifier = Modifier.weight(1f).height(46.dp), shape = RoundedCornerShape(12.dp)) { Text("Share", color = DeepNavy, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, softWrap = false) }
+            }
+            Row(Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                OutlinedButton(onClick = onCompress, enabled = pages.isNotEmpty(), modifier = Modifier.weight(1f).height(46.dp), shape = RoundedCornerShape(12.dp)) { Text("Compress", color = DeepNavy, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, softWrap = false) }
+                OutlinedButton(onClick = onPrint, enabled = pages.isNotEmpty(), modifier = Modifier.weight(1f).height(46.dp), shape = RoundedCornerShape(12.dp)) { Text("Print", color = DeepNavy, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, softWrap = false) }
+            }
+            // The earlier spec's export options stay reachable here (margins, selected pages, PNG/WebP);
+            // his five primary buttons above are unchanged.
+            Text(
+                "More save options (PNG, margins, selected pages)",
+                color = SkyBlue, fontSize = 13.sp, fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.fillMaxWidth().padding(top = 2.dp, bottom = 14.dp).clip(RoundedCornerShape(8.dp)).clickable { onMoreOptions() }.padding(vertical = 10.dp),
+                textAlign = androidx.compose.ui.text.style.TextAlign.Center
+            )
+        }
+    }
+    if (addOpen) {
+        AlertDialog(
+            onDismissRequest = { addOpen = false },
+            title = { Text("Add Page") },
+            text = {
+                Column {
+                    Text("Scan with Camera", color = DeepNavy, fontSize = 15.sp, modifier = Modifier.fillMaxWidth().clickable { addOpen = false; onAddCamera() }.padding(vertical = 12.dp))
+                    Text("Import Images", color = DeepNavy, fontSize = 15.sp, modifier = Modifier.fillMaxWidth().clickable { addOpen = false; onAddImport() }.padding(vertical = 12.dp))
+                }
+            },
+            confirmButton = { TextButton(onClick = { addOpen = false }) { Text("Cancel") } }
+        )
+    }
+    val delId = deleteId
+    if (delId != null) {
+        val pageNo = pages.indexOfFirst { it.id == delId } + 1
+        AlertDialog(
+            onDismissRequest = { deleteId = null },
+            title = { Text("Delete page $pageNo?") },
+            text = { Text("The page is removed from this scan. Files you already saved stay on your phone.") },
+            confirmButton = { TextButton(onClick = { deleteId = null; onDeletePage(delId) }) { Text("Delete", color = Color(0xFFD32F2F)) } },
+            dismissButton = { TextButton(onClick = { deleteId = null }) { Text("Cancel") } }
+        )
     }
 }
 
@@ -14599,6 +15333,7 @@ private fun ScannerMyScansScreen(
     // per-scan Open / Rename / Share / Export Again / Move to Folder / Delete.
     var renameId by remember { mutableStateOf<String?>(null) }
     var menuId by remember { mutableStateOf<String?>(null) }
+    var removeId by remember { mutableStateOf<String?>(null) }
     var moveId by remember { mutableStateOf<String?>(null) }
     var manageOpen by remember { mutableStateOf(false) }
     var folderRename by remember { mutableStateOf<String?>(null) }
@@ -14694,12 +15429,21 @@ private fun ScannerMyScansScreen(
                     Text("Open", color = DeepNavy, fontSize = 15.sp, modifier = Modifier.fillMaxWidth().clickable { menuId = null; onOpen(menuDocId) }.padding(vertical = 12.dp))
                     Text("Rename", color = DeepNavy, fontSize = 15.sp, modifier = Modifier.fillMaxWidth().clickable { menuId = null; renameId = menuDocId }.padding(vertical = 12.dp))
                     Text("Share", color = DeepNavy, fontSize = 15.sp, modifier = Modifier.fillMaxWidth().clickable { menuId = null; onShare(menuDocId) }.padding(vertical = 12.dp))
-                    Text("Export Again", color = DeepNavy, fontSize = 15.sp, modifier = Modifier.fillMaxWidth().clickable { menuId = null; onExportAgain(menuDocId) }.padding(vertical = 12.dp))
                     Text("Move to Folder", color = DeepNavy, fontSize = 15.sp, modifier = Modifier.fillMaxWidth().clickable { menuId = null; moveId = menuDocId }.padding(vertical = 12.dp))
-                    Text("Delete", color = Color(0xFFD32F2F), fontSize = 15.sp, modifier = Modifier.fillMaxWidth().clickable { menuId = null; onDelete(menuDocId) }.padding(vertical = 12.dp))
+                    Text("Remove from A2Z", color = Color(0xFFD32F2F), fontSize = 15.sp, modifier = Modifier.fillMaxWidth().clickable { menuId = null; removeId = menuDocId }.padding(vertical = 12.dp))
                 }
             },
             confirmButton = { TextButton(onClick = { menuId = null }) { Text("Cancel") } }
+        )
+    }
+    val removeDocId = removeId
+    if (removeDocId != null) {
+        AlertDialog(
+            onDismissRequest = { removeId = null },
+            title = { Text("Remove from A2Z?") },
+            text = { Text("The scan is removed from this list. Files you already saved stay on your phone.") },
+            confirmButton = { TextButton(onClick = { removeId = null; onDelete(removeDocId) }) { Text("Remove", color = Color(0xFFD32F2F)) } },
+            dismissButton = { TextButton(onClick = { removeId = null }) { Text("Cancel") } }
         )
     }
     val renameDocId = renameId
@@ -14997,8 +15741,9 @@ private fun ScannerCropScreen(
             }
         }
         Row(
-            Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
-            horizontalArrangement = Arrangement.SpaceEvenly
+            // Scrollable so narrow phones never crowd the labels (SpaceEvenly when it fits).
+            Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 4.dp),
+            horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterHorizontally)
         ) {
             listOf(
                 Triple("Auto Crop", Icons.Default.AutoFixHigh) {
@@ -15024,14 +15769,14 @@ private fun ScannerCropScreen(
             }
         }
         Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            OutlinedButton(onClick = onCancel, modifier = Modifier.weight(1f).height(50.dp), shape = RoundedCornerShape(14.dp)) { Text("Cancel", color = DeepNavy, fontWeight = FontWeight.SemiBold) }
+            OutlinedButton(onClick = onCancel, modifier = Modifier.weight(1f).height(50.dp), shape = RoundedCornerShape(14.dp), contentPadding = PaddingValues(horizontal = 4.dp)) { Text("Cancel", color = DeepNavy, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, softWrap = false) }
             OutlinedButton(onClick = {
                 // Reset = restore the crop the page had when this screen opened (his spec: "restore original crop")
                 sessionRot = page.rotation
                 straightenAngle = page.straighten
                 quad = page.crop?.copyOf() ?: ScanGeometry.defaultQuad()
                 scale = 1f; offset = Offset.Zero
-            }, modifier = Modifier.weight(1f).height(50.dp), shape = RoundedCornerShape(14.dp)) { Text("Reset", color = DeepNavy, fontWeight = FontWeight.SemiBold) }
+            }, modifier = Modifier.weight(1f).height(50.dp), shape = RoundedCornerShape(14.dp), contentPadding = PaddingValues(horizontal = 4.dp)) { Text("Reset", color = DeepNavy, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, softWrap = false) }
             Button(onClick = {
                 page.rotation = sessionRot
                 page.straighten = straightenAngle
@@ -15101,15 +15846,20 @@ private fun ScannerEnhanceScreen(
             if (comparing) Text("Original", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold, modifier = Modifier.align(Alignment.TopStart).padding(10.dp).background(DeepNavy, RoundedCornerShape(8.dp)).padding(horizontal = 8.dp, vertical = 3.dp))
         }
         Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp)) {
-            // The six filters from his spec, in his order.
-            LazyRow(Modifier.padding(top = 10.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                items(ScanEnhance.FILTERS.size) { i ->
-                    val fid = ScanEnhance.FILTERS[i]
-                    val selected = page.filter == fid
-                    Box(
-                        Modifier.clip(RoundedCornerShape(12.dp)).background(if (selected) SkyBlue else PaleBlue).clickable { page.filter = fid; renderTick++ }.padding(horizontal = 12.dp, vertical = 8.dp)
-                    ) {
-                        Text(ScanEnhance.filterLabel(fid), color = if (selected) Color.White else DeepNavy, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, softWrap = false)
+            // The six filters from his spec, in his order. Two rows of three so every filter -
+            // including Black & White - is visible without scrolling (his 2026-10-31 note).
+            Column(Modifier.padding(top = 10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                ScanEnhance.FILTERS.chunked(3).forEach { rowFids ->
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        rowFids.forEach { fid ->
+                            val selected = page.filter == fid
+                            Box(
+                                Modifier.weight(1f).clip(RoundedCornerShape(12.dp)).background(if (selected) SkyBlue else PaleBlue).clickable { page.filter = fid; renderTick++ }.padding(vertical = 9.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(ScanEnhance.filterLabel(fid), color = if (selected) Color.White else DeepNavy, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, softWrap = false)
+                            }
+                        }
                     }
                 }
             }
@@ -15125,8 +15875,8 @@ private fun ScannerEnhanceScreen(
             adjSlider("Highlights", page.adjust.highlights, -100f..100f) { page.adjust.highlights = it }
             adjSlider("Shadows", page.adjust.shadows, -100f..100f) { page.adjust.shadows = it }
             adjSlider("Sharpness", page.adjust.sharpness, 0f..100f) { page.adjust.sharpness = it }
-            adjSlider("Background Whitening", page.adjust.whitening, 0f..100f) { page.adjust.whitening = it }
-            adjSlider("Shadow Reduction", page.adjust.shadowReduction, 0f..100f) { page.adjust.shadowReduction = it }
+            adjSlider("Whiten background", page.adjust.whitening, 0f..100f) { page.adjust.whitening = it }
+            adjSlider("Remove shadows", page.adjust.shadowReduction, 0f..100f) { page.adjust.shadowReduction = it }
             Row(Modifier.fillMaxWidth().padding(top = 4.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 Box(
                     Modifier.clip(RoundedCornerShape(12.dp)).background(PaleBlue).pointerInput(Unit) { detectTapGestures(onPress = { comparing = true; tryAwaitRelease(); comparing = false }) }.padding(horizontal = 14.dp, vertical = 10.dp)
@@ -15139,7 +15889,7 @@ private fun ScannerEnhanceScreen(
             }
         }
         Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            OutlinedButton(onClick = onCancel, modifier = Modifier.weight(1f).height(50.dp), shape = RoundedCornerShape(14.dp)) { Text("Cancel", color = DeepNavy, fontWeight = FontWeight.SemiBold) }
+            OutlinedButton(onClick = onCancel, modifier = Modifier.weight(1f).height(50.dp), shape = RoundedCornerShape(14.dp), contentPadding = PaddingValues(horizontal = 4.dp)) { Text("Cancel", color = DeepNavy, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, softWrap = false) }
             Button(onClick = { onApply(page.id) }, modifier = Modifier.weight(1.6f).height(50.dp), colors = ButtonDefaults.buttonColors(containerColor = Orange, contentColor = Color.White), shape = RoundedCornerShape(14.dp)) {
                 Text("Apply", fontWeight = FontWeight.Bold)
             }
@@ -15343,6 +16093,492 @@ private fun ScannerSuccessScreen(
         }
         OutlinedButton(onClick = onMyScans, modifier = Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 16.dp).height(50.dp), shape = RoundedCornerShape(14.dp)) {
             Text("Open My Scans", color = DeepNavy, fontWeight = FontWeight.SemiBold)
+        }
+    }
+}
+
+
+// ===== Add Watermark - Stage 1 (his original Watermark recording): Home (Screen 1), Select Images (Screen 2),
+// Choose Type (Screen 3), Settings. Editors/positioning/batch/export/history land in the next stages. =====
+
+@Composable
+private fun WmOptionCard(title: String, subtitle: String, icon: androidx.compose.ui.graphics.vector.ImageVector, onClick: () -> Unit) {
+    Card(shape = RoundedCornerShape(14.dp), border = BorderStroke(1.dp, BorderGrey), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface), modifier = Modifier.fillMaxWidth().padding(bottom = 10.dp).clickable { onClick() }) {
+        Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.size(44.dp).clip(RoundedCornerShape(12.dp)).background(PaleBlue), contentAlignment = Alignment.Center) {
+                Icon(icon, contentDescription = null, tint = SkyBlue, modifier = Modifier.size(24.dp))
+            }
+            Spacer(Modifier.width(12.dp))
+            Column(Modifier.weight(1f)) {
+                Text(title, color = DeepNavy, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                Text(subtitle, color = Slate, fontSize = 12.sp, lineHeight = 16.sp)
+            }
+            Icon(Icons.Default.ChevronRight, contentDescription = null, tint = Slate, modifier = Modifier.size(20.dp))
+        }
+    }
+}
+
+@Composable
+private fun WmHomeScreen(
+    modifier: Modifier,
+    projects: List<WmStore.ProjectMeta>,
+    onBack: () -> Unit,
+    onSelectImages: () -> Unit,
+    onText: () -> Unit,
+    onLogo: () -> Unit,
+    onOpenProject: (String) -> Unit,
+    onSettings: () -> Unit
+) {
+    Column(modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).verticalScroll(rememberScrollState()).padding(horizontal = 16.dp)) {
+        Row(Modifier.fillMaxWidth().padding(top = 12.dp, bottom = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = onBack) { Icon(Icons.Default.ArrowBack, contentDescription = "Back", tint = DeepNavy, modifier = Modifier.size(24.dp)) }
+            Text("Add Watermark", color = DeepNavy, fontSize = 20.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+            IconButton(onClick = onSettings) { Icon(Icons.Default.Settings, contentDescription = "Watermark settings", tint = DeepNavy, modifier = Modifier.size(24.dp)) }
+        }
+        WmOptionCard("Select Images", "Choose one or multiple images to watermark.", Icons.Default.PhotoLibrary, onSelectImages)
+        WmOptionCard("Text Watermark", "Add your name, copyright, brand or custom text.", Icons.Default.TextFields, onText)
+        WmOptionCard("Logo Watermark", "Add your own logo or transparent PNG.", Icons.Default.Image, onLogo)
+        Text("Recent Projects", color = DeepNavy, fontWeight = FontWeight.Bold, fontSize = 14.sp, modifier = Modifier.padding(top = 14.dp, bottom = 6.dp))
+        if (projects.isEmpty()) {
+            Text("Your watermark projects will appear here. Projects stay on this phone and can be reopened to continue editing.", color = Slate, fontSize = 12.sp, lineHeight = 16.sp, modifier = Modifier.padding(bottom = 10.dp))
+        } else {
+            projects.take(3).forEach { p ->
+                Card(shape = RoundedCornerShape(12.dp), border = BorderStroke(1.dp, BorderGrey), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface), modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp).clickable { onOpenProject(p.id) }) {
+                    Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Icon(if (p.kind == "logo") Icons.Default.Image else Icons.Default.TextFields, contentDescription = null, tint = SkyBlue, modifier = Modifier.size(22.dp))
+                        Spacer(Modifier.width(10.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text(p.name, color = DeepNavy, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text("${p.imageCount} image${if (p.imageCount == 1) "" else "s"} · " + java.text.SimpleDateFormat("d MMM yyyy", java.util.Locale.getDefault()).format(java.util.Date(p.updatedAt)), color = Slate, fontSize = 12.sp)
+                        }
+                        Icon(Icons.Default.ChevronRight, contentDescription = null, tint = Slate, modifier = Modifier.size(18.dp))
+                    }
+                }
+            }
+        }
+        Text("Watermarks are added on your phone. Your photos are never uploaded, and originals stay untouched.", color = Slate, fontSize = 11.sp, lineHeight = 15.sp, modifier = Modifier.padding(top = 12.dp, bottom = 16.dp))
+    }
+}
+
+@Composable
+private fun WmSelectScreen(
+    modifier: Modifier,
+    uris: List<Uri>,
+    onBack: () -> Unit,
+    onRemove: (Uri) -> Unit,
+    onAddMore: () -> Unit,
+    onClear: () -> Unit,
+    onMove: (Int, Int) -> Unit,
+    onCancel: () -> Unit,
+    onContinue: () -> Unit
+) {
+    Column(modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).padding(horizontal = 16.dp)) {
+        Row(Modifier.fillMaxWidth().padding(top = 12.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = onBack) { Icon(Icons.Default.ArrowBack, contentDescription = "Back", tint = DeepNavy, modifier = Modifier.size(24.dp)) }
+            Text("Select Images", color = DeepNavy, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+        }
+        Row(Modifier.fillMaxWidth().padding(bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text("${uris.size} of 50 image${if (uris.size == 1) "" else "s"} selected", color = Slate, fontSize = 13.sp, modifier = Modifier.weight(1f))
+            if (uris.isNotEmpty()) Text("Clear all", color = SkyBlue, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.clip(RoundedCornerShape(8.dp)).clickable { onClear() }.padding(horizontal = 8.dp, vertical = 4.dp))
+        }
+        LazyVerticalGrid(columns = GridCells.Fixed(3), modifier = Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            items(uris.size, key = { uris[it].toString() }) { idx ->
+                val uri = uris[idx]
+                Box {
+                    ScanUriThumb(uri, Modifier.aspectRatio(0.75f).fillMaxWidth())
+                    Box(Modifier.align(Alignment.TopEnd).padding(4.dp).size(24.dp).clip(CircleShape).background(DeepNavy).clickable { onRemove(uri) }, contentAlignment = Alignment.Center) {
+                        Icon(Icons.Default.Close, contentDescription = "Remove", tint = Color.White, modifier = Modifier.size(14.dp))
+                    }
+                    Row(Modifier.align(Alignment.BottomCenter).padding(4.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        if (idx > 0) Box(Modifier.size(24.dp).clip(CircleShape).background(DeepNavy).clickable { onMove(idx, idx - 1) }, contentAlignment = Alignment.Center) {
+                            Icon(Icons.Default.ChevronLeft, contentDescription = "Move earlier", tint = Color.White, modifier = Modifier.size(16.dp))
+                        }
+                        if (idx < uris.size - 1) Box(Modifier.size(24.dp).clip(CircleShape).background(DeepNavy).clickable { onMove(idx, idx + 1) }, contentAlignment = Alignment.Center) {
+                            Icon(Icons.Default.ChevronRight, contentDescription = "Move later", tint = Color.White, modifier = Modifier.size(16.dp))
+                        }
+                    }
+                }
+            }
+            item {
+                Box(Modifier.aspectRatio(0.75f).fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(PaleBlue).clickable { onAddMore() }, contentAlignment = Alignment.Center) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Icon(Icons.Default.Add, contentDescription = null, tint = SkyBlue, modifier = Modifier.size(26.dp))
+                        Text("Add more", color = SkyBlue, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                    }
+                }
+            }
+        }
+        Row(Modifier.fillMaxWidth().padding(vertical = 12.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            OutlinedButton(onClick = onCancel, modifier = Modifier.weight(1f).height(50.dp), shape = RoundedCornerShape(14.dp)) { Text("Cancel", color = DeepNavy, fontWeight = FontWeight.SemiBold) }
+            Button(onClick = onContinue, enabled = uris.isNotEmpty(), modifier = Modifier.weight(2f).height(50.dp), colors = ButtonDefaults.buttonColors(containerColor = Orange, contentColor = Color.White), shape = RoundedCornerShape(14.dp)) {
+                Text("Continue with ${uris.size} Image${if (uris.size == 1) "" else "s"}", fontWeight = FontWeight.Bold)
+            }
+        }
+    }
+}
+
+@Composable
+private fun WmTypeScreen(
+    modifier: Modifier,
+    imageCount: Int,
+    onBack: () -> Unit,
+    onText: () -> Unit,
+    onLogo: () -> Unit
+) {
+    Column(modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).padding(horizontal = 16.dp)) {
+        Row(Modifier.fillMaxWidth().padding(top = 12.dp, bottom = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = onBack) { Icon(Icons.Default.ArrowBack, contentDescription = "Back", tint = DeepNavy, modifier = Modifier.size(24.dp)) }
+            Text("Choose Watermark Type", color = DeepNavy, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+        }
+        Text("$imageCount image${if (imageCount == 1) "" else "s"} ready. The watermark scales and positions proportionally on each image, so mixed sizes stay consistent.", color = Slate, fontSize = 12.sp, lineHeight = 16.sp, modifier = Modifier.padding(bottom = 12.dp))
+        WmOptionCard("Text Watermark", "Create a watermark using custom text.", Icons.Default.TextFields, onText)
+        WmOptionCard("Logo Watermark", "Use an existing brand logo or transparent PNG.", Icons.Default.Image, onLogo)
+        Text("Both editors share the same positioning, preview and export.", color = Slate, fontSize = 11.sp, lineHeight = 15.sp, modifier = Modifier.padding(top = 8.dp))
+    }
+}
+
+// ===== Watermark Stage 2: shared preview + editor screens (spec 4A text / 4B logo) =====
+
+private fun wmTestPhoto(): Bitmap {
+    val b = Bitmap.createBitmap(1200, 900, Bitmap.Config.ARGB_8888)
+    val c = android.graphics.Canvas(b); c.drawColor(0xFF3E5C76.toInt())
+    val pnt = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply { color = 0xFF8FB8DE.toInt() }
+    c.drawCircle(820f, 300f, 240f, pnt)
+    pnt.color = 0xFF2E4756.toInt(); c.drawRect(0f, 560f, 1200f, 900f, pnt)
+    return b
+}
+
+private fun wmTestLogo(): Bitmap {
+    val b = Bitmap.createBitmap(300, 300, Bitmap.Config.ARGB_8888)
+    val c = android.graphics.Canvas(b); c.drawColor(0xFFFFFFFF.toInt())
+    val pnt = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply { color = 0xFFFF8A32.toInt() }
+    c.drawCircle(150f, 150f, 118f, pnt)
+    pnt.color = 0xFFFFFFFF.toInt(); c.drawCircle(150f, 150f, 62f, pnt)
+    return b
+}
+
+/** Live preview: the photo plus every layer, drawn by the SAME engine the export will use.
+ *  Drag moves the selected layer proportionally; tapping a layer selects it (dashed frame). */
+@Composable
+private fun WmEditorPreview(
+    preview: Bitmap?,
+    textLayers: List<TextOverlayUtils.TextLayer>,
+    imageLayers: List<TextOverlayUtils.ImageLayer>,
+    selectedTextId: Long?,
+    selectedImageId: Long?,
+    onDrag: (Float, Float) -> Unit,
+    onDragEnd: () -> Unit,
+    onTap: (Float, Float) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Box(
+        modifier.fillMaxWidth().height(300.dp).clip(RoundedCornerShape(16.dp)).background(Color(0xFF141B26)),
+        contentAlignment = Alignment.Center
+    ) {
+        if (preview == null) {
+            Text("Loading preview\u2026", color = Color.White.copy(alpha = 0.7f), fontSize = 13.sp)
+        } else {
+            androidx.compose.foundation.Canvas(
+                Modifier.fillMaxSize()
+                    .pointerInput(preview) {
+                        detectTapGestures { offset ->
+                            val sc = minOf(size.width / preview.width.toFloat(), size.height / preview.height.toFloat())
+                            val dw = preview.width * sc; val dh = preview.height * sc
+                            val ox = (size.width - dw) / 2f; val oy = (size.height - dh) / 2f
+                            if (offset.x >= ox && offset.x <= ox + dw && offset.y >= oy && offset.y <= oy + dh) {
+                                onTap((offset.x - ox) / dw, (offset.y - oy) / dh)
+                            }
+                        }
+                    }
+                    .pointerInput(preview) {
+                        detectDragGestures(
+                            onDragEnd = { onDragEnd() },
+                            onDrag = { change, dragAmount ->
+                                change.consume()
+                                val sc = minOf(size.width / preview.width.toFloat(), size.height / preview.height.toFloat())
+                                onDrag(dragAmount.x / (preview.width * sc), dragAmount.y / (preview.height * sc))
+                            }
+                        )
+                    }
+            ) {
+                val sc = minOf(size.width / preview.width.toFloat(), size.height / preview.height.toFloat())
+                val dw = preview.width * sc; val dh = preview.height * sc
+                val ox = (size.width - dw) / 2f; val oy = (size.height - dh) / 2f
+                val nc = drawContext.canvas.nativeCanvas
+                nc.save(); nc.translate(ox, oy); nc.scale(sc, sc)
+                nc.drawBitmap(preview, 0f, 0f, null)
+                TextOverlayUtils.drawAll(nc, textLayers, preview.width, preview.height, selectedTextId, true, imageLayers, selectedImageId)
+                nc.restore()
+            }
+        }
+    }
+}
+
+@Composable
+private fun WmSectionLabel(text: String, note: String? = null) {
+    Text(text, color = DeepNavy, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 14.dp, bottom = 4.dp))
+    if (note != null) Text(note, color = Slate, fontSize = 11.sp, lineHeight = 15.sp, modifier = Modifier.padding(bottom = 4.dp))
+}
+
+@Composable
+private fun WmColorGrid(selected: Int, onPick: (Int) -> Unit) {
+    (TextOverlayUtils.QUICK_COLORS + TextOverlayUtils.EXTRA_COLORS).chunked(6).forEach { rowItems ->
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            rowItems.forEach { c ->
+                Box(
+                    Modifier.size(34.dp).clip(CircleShape).background(Color(c))
+                        .border(if (selected == c) 3.dp else 1.dp, if (selected == c) SkyBlue else Color(0x33000000), CircleShape)
+                        .clickable { onPick(c) }
+                )
+            }
+        }
+        Spacer(Modifier.height(8.dp))
+    }
+}
+
+@Composable
+private fun WmMiniButton(label: String, enabled: Boolean = true, onClick: () -> Unit) {
+    OutlinedButton(onClick = onClick, enabled = enabled, shape = RoundedCornerShape(10.dp), contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)) {
+        Text(label, color = if (enabled) DeepNavy else Slate, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+    }
+}
+
+@Composable
+private fun WmUndoRedoHeader(title: String, canUndo: Boolean, canRedo: Boolean, onBack: () -> Unit, onUndo: () -> Unit, onRedo: () -> Unit, onReset: () -> Unit) {
+    Row(Modifier.fillMaxWidth().padding(top = 12.dp, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+        IconButton(onClick = onBack) { Icon(Icons.Default.ArrowBack, contentDescription = "Back", tint = DeepNavy, modifier = Modifier.size(24.dp)) }
+        Text(title, color = DeepNavy, fontSize = 20.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+        IconButton(onClick = onUndo, enabled = canUndo) { Icon(Icons.Default.Undo, contentDescription = "Undo", tint = if (canUndo) DeepNavy else Slate.copy(alpha = 0.4f), modifier = Modifier.size(22.dp)) }
+        IconButton(onClick = onRedo, enabled = canRedo) { Icon(Icons.Default.Redo, contentDescription = "Redo", tint = if (canRedo) DeepNavy else Slate.copy(alpha = 0.4f), modifier = Modifier.size(22.dp)) }
+        TextButton(onClick = onReset) { Text("Reset", color = SkyBlue, fontSize = 13.sp, fontWeight = FontWeight.SemiBold) }
+    }
+}
+
+// ----- Screen 4A: Text watermark editor -----
+@Composable
+private fun WmTextEditorScreen(
+    modifier: Modifier,
+    preview: Bitmap?,
+    textLayers: List<TextOverlayUtils.TextLayer>,
+    imageLayers: List<TextOverlayUtils.ImageLayer>,
+    selectedTextId: Long?,
+    selectedImageId: Long?,
+    canUndo: Boolean,
+    canRedo: Boolean,
+    onBack: () -> Unit,
+    onSelect: (Long) -> Unit,
+    onTapSelect: (Float, Float) -> Unit,
+    onAdd: () -> Unit,
+    onDuplicate: () -> Unit,
+    onDelete: () -> Unit,
+    onMutate: (String, Long, (TextOverlayUtils.TextLayer) -> Unit) -> Unit,
+    onEndCoalesce: () -> Unit,
+    onUndo: () -> Unit,
+    onRedo: () -> Unit,
+    onReset: () -> Unit,
+    onDrag: (Float, Float) -> Unit
+) {
+    val layer = textLayers.firstOrNull { it.id == selectedTextId }
+    Column(modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).verticalScroll(rememberScrollState()).padding(horizontal = 16.dp)) {
+        WmUndoRedoHeader("Text Watermark", canUndo, canRedo, onBack, onUndo, onRedo, onReset)
+        Text("Drag the preview to move the selected text. Tap a text layer to select it.", color = Slate, fontSize = 12.sp, lineHeight = 16.sp, modifier = Modifier.padding(bottom = 8.dp))
+        WmEditorPreview(preview, textLayers, imageLayers, selectedTextId, selectedImageId, onDrag, onEndCoalesce, onTapSelect)
+
+        WmSectionLabel("Layers", "Each text layer has its own text, style and position.")
+        Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            textLayers.forEachIndexed { i, l ->
+                val sel = l.id == selectedTextId
+                Box(
+                    Modifier.clip(RoundedCornerShape(10.dp))
+                        .background(if (sel) SkyBlue.copy(alpha = 0.18f) else Color.Transparent)
+                        .border(1.dp, if (sel) SkyBlue else Color(0x33000000), RoundedCornerShape(10.dp))
+                        .clickable { onSelect(l.id) }
+                        .padding(horizontal = 10.dp, vertical = 6.dp)
+                ) {
+                    Text("Layer ${i + 1}", color = if (sel) SkyBlue else DeepNavy, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                }
+            }
+        }
+        Row(Modifier.padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            WmMiniButton("Add") { onAdd() }
+            WmMiniButton("Duplicate", enabled = layer != null) { onDuplicate() }
+            WmMiniButton("Delete", enabled = layer != null) { onDelete() }
+        }
+
+        if (layer == null) {
+            Text("No text layers yet. Tap Add to create one.", color = Slate, fontSize = 12.sp, modifier = Modifier.padding(top = 14.dp))
+        } else {
+            val id = layer.id
+            WmSectionLabel("Text")
+            OutlinedTextField(
+                value = layer.text,
+                onValueChange = { onMutate("text-$id", id) { l -> l.text = it } },
+                label = { Text("Watermark text") },
+                minLines = 2,
+                modifier = Modifier.fillMaxWidth()
+            )
+            Text("Tap to use:", color = Slate, fontSize = 11.sp, modifier = Modifier.padding(top = 8.dp, bottom = 4.dp))
+            ScanChipRow(listOf("\u00A9 Copyright", "All Rights Reserved", "Sample", "Your Brand Name", "Your Website"), "") { onMutate("quick-$id", id) { l -> l.text = it } }
+
+            WmSectionLabel("Font")
+            var showAllFonts by remember { mutableStateOf(false) }
+            val fontOptions = TextOverlayUtils.FontChoice.entries.filter { it.common || showAllFonts }.map { it.label } + if (showAllFonts) emptyList() else listOf("More\u2026")
+            ScanChipRow(fontOptions, layer.font.label) { label ->
+                if (label == "More\u2026") showAllFonts = true
+                else onMutate("font-$id", id) { l -> TextOverlayUtils.FontChoice.entries.firstOrNull { it.label == label }?.let { fc -> l.font = fc } }
+            }
+
+            WmSectionLabel("Size: ${(layer.sizeFrac * 100).toInt()}% of the image width")
+            A2ZSlider(value = layer.sizeFrac, onValueChange = { v -> onMutate("size-$id", id) { l -> l.sizeFrac = v } }, valueRange = 0.02f..0.3f, onValueChangeFinished = onEndCoalesce, modifier = Modifier.fillMaxWidth())
+
+            WmSectionLabel("Weight")
+            ScanChipRow(listOf("Regular", "Medium", "Bold"), if (layer.bold) "Bold" else if (layer.medium) "Medium" else "Regular") { w ->
+                onMutate("weight-$id", id) { l -> l.bold = w == "Bold"; l.medium = w == "Medium" }
+            }
+            WmSectionLabel("Style")
+            ScanChipRow(listOf("Normal", "Italic"), if (layer.italic) "Italic" else "Normal") { st ->
+                onMutate("style-$id", id) { l -> l.italic = st == "Italic" }
+            }
+
+            WmSectionLabel("Colour")
+            WmColorGrid(layer.colorArgb) { c -> onMutate("color-$id", id) { l -> l.colorArgb = c } }
+
+            WmSectionLabel("Alignment")
+            ScanChipRow(TextOverlayUtils.Align.entries.map { it.label }, layer.align.label) { a ->
+                onMutate("align-$id", id) { l -> TextOverlayUtils.Align.entries.firstOrNull { it.label == a }?.let { al -> l.align = al } }
+            }
+
+            WmSectionLabel("Letter spacing: ${(layer.letterSpacing * 100).toInt()}%")
+            A2ZSlider(value = layer.letterSpacing, onValueChange = { v -> onMutate("lsp-$id", id) { l -> l.letterSpacing = v } }, valueRange = 0f..0.3f, onValueChangeFinished = onEndCoalesce, modifier = Modifier.fillMaxWidth())
+            WmSectionLabel("Line spacing: ${(layer.lineSpacing * 100).toInt()}%")
+            A2ZSlider(value = layer.lineSpacing, onValueChange = { v -> onMutate("linesp-$id", id) { l -> l.lineSpacing = v } }, valueRange = 0f..0.8f, onValueChangeFinished = onEndCoalesce, modifier = Modifier.fillMaxWidth())
+            WmSectionLabel("Opacity: ${(layer.opacity * 100).toInt()}%")
+            A2ZSlider(value = layer.opacity, onValueChange = { v -> onMutate("op-$id", id) { l -> l.opacity = v } }, valueRange = 0.05f..1f, onValueChangeFinished = onEndCoalesce, modifier = Modifier.fillMaxWidth())
+
+            WmSectionLabel("Outline", "A border around each letter, for readability on busy photos.")
+            ScanChipRow(listOf("Off", "On"), if (layer.outlineFrac > 0f) "On" else "Off") { v ->
+                onMutate("outline-$id", id) { l -> l.outlineFrac = if (v == "On") 0.02f else 0f }
+            }
+            if (layer.outlineFrac > 0f) {
+                WmColorGrid(layer.outlineColorArgb) { c -> onMutate("outcolor-$id", id) { l -> l.outlineColorArgb = c } }
+                WmSectionLabel("Outline thickness: ${(layer.outlineFrac * 1000).toInt()}")
+                A2ZSlider(value = layer.outlineFrac, onValueChange = { v -> onMutate("outthick-$id", id) { l -> l.outlineFrac = v } }, valueRange = 0.005f..0.08f, onValueChangeFinished = onEndCoalesce, modifier = Modifier.fillMaxWidth())
+            }
+
+            WmSectionLabel("Shadow")
+            ScanChipRow(listOf("Off", "On"), if (layer.shadow) "On" else "Off") { v ->
+                onMutate("shadow-$id", id) { l -> l.shadow = v == "On" }
+            }
+            if (layer.shadow) {
+                WmSectionLabel("Shadow softness: ${(layer.shadowBlur * 100).toInt()}%")
+                A2ZSlider(value = layer.shadowBlur, onValueChange = { v -> onMutate("shblur-$id", id) { l -> l.shadowBlur = v } }, valueRange = 0.02f..0.5f, onValueChangeFinished = onEndCoalesce, modifier = Modifier.fillMaxWidth())
+                WmSectionLabel("Shadow darkness: ${(layer.shadowAlpha * 100 / 255)}%")
+                A2ZSlider(value = layer.shadowAlpha / 255f, onValueChange = { v -> onMutate("shalpha-$id", id) { l -> l.shadowAlpha = (v * 255).toInt() } }, valueRange = 0.15f..0.9f, onValueChangeFinished = onEndCoalesce, modifier = Modifier.fillMaxWidth())
+            }
+        }
+        Spacer(Modifier.height(24.dp))
+    }
+}
+
+// ----- Screen 4B: Logo watermark editor -----
+@Composable
+private fun WmLogoEditorScreen(
+    modifier: Modifier,
+    preview: Bitmap?,
+    imageLayers: List<TextOverlayUtils.ImageLayer>,
+    textLayers: List<TextOverlayUtils.TextLayer>,
+    selectedImageId: Long?,
+    logoBusy: Boolean,
+    canUndo: Boolean,
+    canRedo: Boolean,
+    onBack: () -> Unit,
+    onImport: () -> Unit,
+    onRemoveBg: () -> Unit,
+    onMutate: (String, (TextOverlayUtils.ImageLayer) -> Unit) -> Unit,
+    onEndCoalesce: () -> Unit,
+    onUndo: () -> Unit,
+    onRedo: () -> Unit,
+    onReset: () -> Unit,
+    onDrag: (Float, Float) -> Unit,
+    onTapSelect: (Float, Float) -> Unit
+) {
+    val layer = imageLayers.firstOrNull()
+    Column(modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).verticalScroll(rememberScrollState()).padding(horizontal = 16.dp)) {
+        WmUndoRedoHeader("Logo Watermark", canUndo, canRedo, onBack, onUndo, onRedo, onReset)
+        Text("Drag the preview to move the logo. Size always keeps the logo's own aspect ratio.", color = Slate, fontSize = 12.sp, lineHeight = 16.sp, modifier = Modifier.padding(bottom = 8.dp))
+        WmEditorPreview(preview, textLayers, imageLayers, null, selectedImageId, onDrag, onEndCoalesce, onTapSelect)
+
+        if (layer == null) {
+            Button(onClick = onImport, modifier = Modifier.fillMaxWidth().padding(top = 16.dp).height(50.dp), colors = ButtonDefaults.buttonColors(containerColor = Orange, contentColor = Color.White), shape = RoundedCornerShape(14.dp)) {
+                Text("Import Logo", fontWeight = FontWeight.Bold)
+            }
+            Text("A PNG with transparency looks best. JPG logos work too - Remove Background can clear a plain background.", color = Slate, fontSize = 12.sp, lineHeight = 16.sp, modifier = Modifier.padding(top = 8.dp))
+        } else {
+            Row(Modifier.padding(top = 14.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(onClick = onImport, modifier = Modifier.weight(1f).height(46.dp), shape = RoundedCornerShape(12.dp)) {
+                    Text("Replace Logo", color = DeepNavy, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                }
+                Button(onClick = onRemoveBg, enabled = !logoBusy, modifier = Modifier.weight(1f).height(46.dp), colors = ButtonDefaults.buttonColors(containerColor = Orange, contentColor = Color.White), shape = RoundedCornerShape(12.dp)) {
+                    if (logoBusy) CircularProgressIndicator(Modifier.size(18.dp), color = Color.White, strokeWidth = 2.dp)
+                    else Text("Remove Background", fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                }
+            }
+            Text("Remove Background works best on a clear subject or a plain background. Undo brings the original back.", color = Slate, fontSize = 11.sp, lineHeight = 15.sp, modifier = Modifier.padding(top = 6.dp))
+
+            WmSectionLabel("Size: ${(layer.widthFrac * 100).toInt()}% of the image width")
+            A2ZSlider(value = layer.widthFrac, onValueChange = { v -> onMutate("lsize") { l -> l.widthFrac = v } }, valueRange = 0.05f..0.95f, onValueChangeFinished = onEndCoalesce, modifier = Modifier.fillMaxWidth())
+            WmSectionLabel("Rotation: ${layer.rotation.toInt()}\u00B0")
+            A2ZSlider(value = layer.rotation, onValueChange = { v -> onMutate("lrot") { l -> l.rotation = v } }, valueRange = -180f..180f, centered = true, onValueChangeFinished = onEndCoalesce, modifier = Modifier.fillMaxWidth())
+            WmSectionLabel("Opacity: ${(layer.opacity * 100).toInt()}%")
+            A2ZSlider(value = layer.opacity, onValueChange = { v -> onMutate("lop") { l -> l.opacity = v } }, valueRange = 0.05f..1f, onValueChangeFinished = onEndCoalesce, modifier = Modifier.fillMaxWidth())
+
+            WmSectionLabel("Mirror")
+            ScanChipRow(listOf("Normal", "Flipped"), if (layer.flipH) "Flipped" else "Normal") { v ->
+                onMutate("lflip") { l -> l.flipH = v == "Flipped" }
+            }
+        }
+        Spacer(Modifier.height(24.dp))
+    }
+}
+
+@Composable
+private fun WmSettingsScreen(
+    modifier: Modifier,
+    prefs: android.content.SharedPreferences,
+    themeMode: String,
+    onThemeMode: (String) -> Unit,
+    onBack: () -> Unit,
+    onPrivacy: () -> Unit,
+    onAbout: () -> Unit
+) {
+    var defaultFormat by remember { mutableStateOf(prefs.getString("wm_default_format", "JPG") ?: "JPG") }
+    var defaultQuality by remember { mutableIntStateOf(prefs.getInt("wm_default_jpg_quality", 90)) }
+    Column(modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).verticalScroll(rememberScrollState()).padding(horizontal = 16.dp)) {
+        Row(Modifier.fillMaxWidth().padding(top = 12.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = onBack) { Icon(Icons.Default.ArrowBack, contentDescription = "Back", tint = DeepNavy, modifier = Modifier.size(24.dp)) }
+            Text("Watermark Settings", color = DeepNavy, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+        }
+        Text("Export Defaults", color = DeepNavy, fontWeight = FontWeight.Bold, fontSize = 14.sp, modifier = Modifier.padding(top = 8.dp, bottom = 6.dp))
+        Text("Default export format", color = Slate, fontSize = 12.sp, modifier = Modifier.padding(bottom = 6.dp))
+        ScanChipRow(listOf("JPG", "PNG", "WebP"), defaultFormat) { defaultFormat = it; prefs.edit().putString("wm_default_format", it).apply() }
+        Text("Default JPG quality: $defaultQuality%", color = DeepNavy, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 14.dp, bottom = 2.dp))
+        A2ZSlider(value = defaultQuality / 100f, onValueChange = {
+            defaultQuality = (it * 100).toInt().coerceIn(50, 100)
+            prefs.edit().putInt("wm_default_jpg_quality", defaultQuality).apply()
+        }, valueRange = 0.5f..1f, modifier = Modifier.fillMaxWidth())
+        Text("Used when you export JPG images from the watermark tool.", color = Slate, fontSize = 11.sp, lineHeight = 15.sp)
+        Text("App Preferences", color = DeepNavy, fontWeight = FontWeight.Bold, fontSize = 14.sp, modifier = Modifier.padding(top = 16.dp, bottom = 6.dp))
+        Text("Theme", color = DeepNavy, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+        Text("Light, Dark, or System (follows your phone's theme)", color = Slate, fontSize = 12.sp, modifier = Modifier.padding(bottom = 6.dp))
+        ScanChipRow(listOf("Light", "Dark", "System"), themeMode.replaceFirstChar { it.uppercase() }) { onThemeMode(it.lowercase()) }
+        Text("About", color = DeepNavy, fontWeight = FontWeight.Bold, fontSize = 14.sp, modifier = Modifier.padding(top = 16.dp, bottom = 6.dp))
+        Text("About A2Z Image Craft", color = SkyBlue, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.clip(RoundedCornerShape(8.dp)).clickable { onAbout() }.padding(vertical = 8.dp, horizontal = 4.dp))
+        Text("Privacy information", color = SkyBlue, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.clip(RoundedCornerShape(8.dp)).clickable { onPrivacy() }.padding(vertical = 8.dp, horizontal = 4.dp))
+        OutlinedButton(onClick = {
+            prefs.edit().remove("wm_default_format").remove("wm_default_jpg_quality").apply()
+            defaultFormat = "JPG"; defaultQuality = 90
+        }, modifier = Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 16.dp).height(48.dp), shape = RoundedCornerShape(14.dp)) {
+            Text("Reset Watermark Settings", color = DeepNavy, fontWeight = FontWeight.SemiBold)
         }
     }
 }

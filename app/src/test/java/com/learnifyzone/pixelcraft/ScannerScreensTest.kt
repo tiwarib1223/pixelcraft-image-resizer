@@ -4,6 +4,7 @@ import android.content.Intent
 import android.os.Looper
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.performClick
@@ -45,6 +46,17 @@ class ScannerScreensTest {
             Thread.sleep(60)
         }
         throw AssertionError("Text not found within ${timeoutMs}ms: $text")
+    }
+
+
+    private fun waitForDesc(desc: String, timeoutMs: Long = 60_000) {
+        val deadline = System.currentTimeMillis() + timeoutMs
+        while (System.currentTimeMillis() < deadline) {
+            pump()
+            if (composeRule.onAllNodesWithContentDescription(desc).fetchSemanticsNodes().isNotEmpty()) return
+            Thread.sleep(60)
+        }
+        throw AssertionError("Content description not found within ${timeoutMs}ms: $desc")
     }
 
     private fun shot(scenario: ActivityScenario<MainActivity>, name: String) {
@@ -112,39 +124,98 @@ class ScannerScreensTest {
     }
 
     @Test
-    fun scan03ManagerPreviewExportLight() {
+    fun scan03ManagerResultFlow() {
         seedDoc()
         launch().use { sc ->
             openScannerHome(sc)
             composeRule.onNodeWithText("My Scans").performClick()
             waitForText("Invoice March")
             composeRule.onNodeWithText("Invoice March").performClick()
+            // His revised flow (2026-10-31): opening a scan lands on "Your scan" (the result screen).
+            waitForText("Your scan", timeoutMs = 120_000)
+            waitForText("Save as PDF")
+            waitForText("a2z-scan-")
+            waitForText("Page size")
+            waitForText("Estimated size")
+            waitForText("Save as JPG")
+            waitForText("Compress")
+            waitForText("Print")
+            pump(); pump()
+            shot(sc, "scan_result")
+            // Add-page dialog entries
+            composeRule.onNodeWithText("+ Add page").performClick()
+            waitForText("Scan with Camera")
+            waitForText("Import Images")
+            composeRule.onNodeWithText("Cancel").performClick()
+            pump()
+            // Delete page asks for confirmation first
+            composeRule.onNodeWithText("Delete").performClick()
+            waitForText("Delete page 1?")
+            shot(sc, "scan_result_delete_confirm")
+            composeRule.onNodeWithText("Cancel").performClick()
+            pump()
+            // Back to the manager ("Edit Pages"), then menu -> Preview returns to Your scan.
+            composeRule.onNodeWithContentDescription("Back to Edit Pages").performClick()
             waitForText("Add Page", timeoutMs = 120_000)
             pump(); pump()
             shot(sc, "scan_manager")
-            // header menu -> Preview
             composeRule.onNodeWithContentDescription("More options").performClick()
             pump()
             composeRule.onNodeWithText("Preview Document").performClick()
-            waitForText("Export Document")
+            waitForText("Your scan")
+            waitForText("Save as PDF")
             pump()
-            shot(sc, "scan_preview")
-            composeRule.onNodeWithText("Export Document").performClick()
-            waitForText("Page Size")
-            pump()
-            shot(sc, "scan_export_pdf")
-            // Custom margin + selected pages + JPG estimate
-            composeRule.onNodeWithText("Custom").performClick()
-            pump()
-            composeRule.onNodeWithText("Selected pages").performClick()
-            pump()
-            composeRule.onNodeWithText("Page 1").performClick()
-            pump()
-            shot(sc, "scan_export_custom_pages")
-            composeRule.onNodeWithText("JPG").performClick()
-            waitForText("Dimensions")
+            shot(sc, "scan_result_2")
+            sc.close()
+        }
+    }
+
+    @Test
+    fun scan06CropEnhanceFixes() {
+        // His 2026-10-31 fixes: Crop bottom buttons on one line; Enhance renamed sliders + Black & White visible.
+        seedDoc()
+        launch().use { sc ->
+            openScannerHome(sc)
+            composeRule.onNodeWithText("My Scans").performClick()
+            waitForText("Invoice March")
+            composeRule.onNodeWithText("Invoice March").performClick()
+            waitForText("Your scan", timeoutMs = 120_000)
+            composeRule.onNodeWithText("Edit page").performClick()
+            waitForText("Crop & Adjust", timeoutMs = 120_000)
+            waitForText("Auto Crop")
             pump(); pump()
-            shot(sc, "scan_export_jpg")
+            shot(sc, "scan_crop_light")
+            composeRule.onNodeWithText("Apply").performClick()
+            waitForText("Enhance", timeoutMs = 120_000)
+            waitForText("Whiten background")
+            waitForText("Remove shadows")
+            waitForText("Black & White")
+            waitForText("Hold: Compare Original")
+            pump(); pump()
+            shot(sc, "scan_enhance_light")
+            sc.close()
+        }
+    }
+
+    @Test
+    fun scan07CropEnhanceDark() {
+        seedDoc()
+        launch(dark = true).use { sc ->
+            openScannerHome(sc)
+            composeRule.onNodeWithText("My Scans").performClick()
+            waitForText("Invoice March")
+            composeRule.onNodeWithText("Invoice March").performClick()
+            waitForText("Your scan", timeoutMs = 120_000)
+            composeRule.onNodeWithText("Edit page").performClick()
+            waitForText("Crop & Adjust", timeoutMs = 120_000)
+            waitForText("Auto Crop")
+            waitForDesc("Page to crop")
+            shot(sc, "scan_crop_dark")
+            composeRule.onNodeWithText("Apply").performClick()
+            waitForText("Enhance", timeoutMs = 120_000)
+            waitForText("Whiten background")
+            waitForDesc("Enhanced page")
+            shot(sc, "scan_enhance_dark")
             sc.close()
         }
     }
@@ -171,6 +242,11 @@ class ScannerScreensTest {
             waitForText("Invoice March")
             shot(sc, "scan_myscans_dark")
             composeRule.onNodeWithText("Invoice March").performClick()
+            waitForText("Your scan", timeoutMs = 120_000)
+            waitForText("Save as PDF")
+            pump(); pump()
+            shot(sc, "scan_result_dark")
+            composeRule.onNodeWithContentDescription("Back to Edit Pages").performClick()
             waitForText("Add Page", timeoutMs = 120_000)
             pump(); pump()
             shot(sc, "scan_manager_dark")

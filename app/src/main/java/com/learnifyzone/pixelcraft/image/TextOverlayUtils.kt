@@ -10,6 +10,7 @@ import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.RectF
 import android.graphics.Typeface
+import android.os.Build
 import kotlin.math.max
 
 /**
@@ -143,12 +144,17 @@ object TextOverlayUtils {
         var sizeFrac: Float = 0.07f,          // base text size as a fraction of image width
         var bold: Boolean = false,
         var italic: Boolean = false,
+        var medium: Boolean = false,
         var align: Align = Align.CENTER,
         var colorArgb: Int = 0xFFFFFFFF.toInt(),
         var outlineFrac: Float = 0f,          // stroke width as a fraction of text size; 0 = no outline
         var outlineColorArgb: Int = 0xFF000000.toInt(),
         var bgColorArgb: Int = 0,             // 0 = no background box
         var shadow: Boolean = false,
+        var shadowBlur: Float = 0.14f,
+        var shadowDx: Float = 0.05f,
+        var shadowDy: Float = 0.07f,
+        var shadowAlpha: Int = 0x99,
         var opacity: Float = 1f,              // 0..1
         var cx: Float = 0.5f,
         var cy: Float = 0.5f,
@@ -316,9 +322,13 @@ object TextOverlayUtils {
             color = layer.colorArgb
             alpha = (layer.opacity.coerceIn(0f, 1f) * 255).toInt()
             textSize = effSize(layer, imgW)
-            typeface = typefaceFor(layer.font, layer.bold, layer.italic)
+            typeface = if (layer.medium && !layer.bold && Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                Typeface.create(Typeface.create(layer.font.family, Typeface.NORMAL), 500, layer.italic)
+            } else {
+                typefaceFor(layer.font, layer.bold, layer.italic)
+            }
             letterSpacing = layer.letterSpacing
-            if (layer.shadow) setShadowLayer(textSize * 0.14f, textSize * 0.05f, textSize * 0.07f, 0x99000000.toInt())
+            if (layer.shadow) setShadowLayer(textSize * layer.shadowBlur, textSize * layer.shadowDx, textSize * layer.shadowDy, (layer.shadowAlpha.coerceIn(0, 255) shl 24))
         }
 
     private fun lines(layer: TextLayer): List<String> =

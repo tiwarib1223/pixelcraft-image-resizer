@@ -4,6 +4,7 @@ import android.content.Intent
 import android.os.Looper
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.onNodeWithContentDescription
@@ -12,6 +13,8 @@ import androidx.compose.ui.test.hasScrollAction
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollToNode
+import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.test.swipeUp
 import androidx.test.core.app.ActivityScenario
 import androidx.test.core.app.ApplicationProvider
 import org.junit.Rule
@@ -68,6 +71,17 @@ class ScannerPhoneHeightTest {
         pump()
     }
 
+
+    private fun waitForDesc(desc: String, timeoutMs: Long = 60_000) {
+        val deadline = System.currentTimeMillis() + timeoutMs
+        while (System.currentTimeMillis() < deadline) {
+            pump()
+            if (composeRule.onAllNodesWithContentDescription(desc).fetchSemanticsNodes().isNotEmpty()) return
+            Thread.sleep(60)
+        }
+        throw AssertionError("Content description not found within ${timeoutMs}ms: $desc")
+    }
+
     private fun shot(scenario: ActivityScenario<MainActivity>, name: String) {
         pump()
         val dir = File("build/outputs/uishots").apply { mkdirs() }
@@ -108,38 +122,137 @@ class ScannerPhoneHeightTest {
     }
 
     @Test
-    fun phone02ExportButtonReachable() {
+    fun phone03CropButtonsOneLine() {
+        // His fix: the Crop bottom buttons (Cancel / Reset / Apply) must each stay on ONE line at phone width.
         seedDoc()
         ActivityScenario.launch<MainActivity>(Intent(ApplicationProvider.getApplicationContext(), MainActivity::class.java).putExtra("pixelcraft.test.tool", "scanner")).use { sc ->
             waitForText("Scan with Camera")
             composeRule.onNodeWithText("My Scans").performClick()
             waitForText("Invoice March")
             composeRule.onNodeWithText("Invoice March").performClick()
-            waitForText("Add Page", timeoutMs = 120_000)
-            composeRule.onNodeWithContentDescription("More options").performClick()
+            waitForText("Your scan", timeoutMs = 120_000)
+            composeRule.onNodeWithText("Edit page").performClick()
+            waitForText("Crop & Adjust", timeoutMs = 120_000)
+            waitForText("Auto Crop")
             pump()
-            composeRule.onNodeWithText("Preview Document").performClick()
-            waitForText("Export Document")
-            composeRule.onAllNodesWithText("Export Document")[0].performClick()
+            listOf("Cancel", "Reset", "Apply").forEach { label ->
+                // Unmerged tree: the raw Text node's tight bounds (the merged button node is 50dp tall by design).
+                val nodes = composeRule.onAllNodesWithText(label, useUnmergedTree = true).fetchSemanticsNodes()
+                if (nodes.isEmpty()) throw AssertionError("$label missing on the crop screen")
+                val h = nodes.maxOf { it.boundsInRoot.height }
+                // One line at 13sp is ~25px; a wrapped second line is ~45px+.
+                if (h > 40f) throw AssertionError("$label wraps to more than one line at phone width (height=${h}px)")
+            }
+            waitForDesc("Page to crop")
+            shot(sc, "scan_crop_phone")
+            sc.close()
+        }
+    }
+
+    @Test
+    fun phone04EnhancePhoneHeight() {
+        seedDoc()
+        listOf(false, true).forEach { dark ->
+            var intent = Intent(ApplicationProvider.getApplicationContext(), MainActivity::class.java)
+                .putExtra("pixelcraft.test.tool", "scanner")
+            if (dark) intent = intent.putExtra("pixelcraft.test.darkmode", "1")
+            ActivityScenario.launch<MainActivity>(intent).use { sc ->
+                waitForText("Scan with Camera")
+                composeRule.onNodeWithText("My Scans").performClick()
+                waitForText("Invoice March")
+                composeRule.onNodeWithText("Invoice March").performClick()
+                waitForText("Your scan", timeoutMs = 120_000)
+                composeRule.onNodeWithText("Edit page").performClick()
+                waitForText("Crop & Adjust", timeoutMs = 120_000)
+                composeRule.onNodeWithText("Apply").performClick()
+                waitForText("Enhance", timeoutMs = 120_000)
+                waitForText("Whiten background")
+                waitForText("Remove shadows")
+                waitForText("Black & White")
+                // The workspace (preview) must still have real room at phone height.
+                waitForText("Hold: Compare Original")
+                waitForDesc("Enhanced page")
+                shot(sc, if (dark) "scan_enhance_phone_dark" else "scan_enhance_phone")
+                sc.close()
+            }
+        }
+    }
+
+    @Test
+    fun phone05CropDarkPhoneHeight() {
+        seedDoc()
+        ActivityScenario.launch<MainActivity>(Intent(ApplicationProvider.getApplicationContext(), MainActivity::class.java)
+            .putExtra("pixelcraft.test.tool", "scanner").putExtra("pixelcraft.test.darkmode", "1")).use { sc ->
+            waitForText("Scan with Camera")
+            composeRule.onNodeWithText("My Scans").performClick()
+            waitForText("Invoice March")
+            composeRule.onNodeWithText("Invoice March").performClick()
+            waitForText("Your scan", timeoutMs = 120_000)
+            composeRule.onNodeWithText("Edit page").performClick()
+            waitForText("Crop & Adjust", timeoutMs = 120_000)
+            waitForDesc("Page to crop")
+            listOf("Auto Crop", "Straighten", "Rotate Left", "Rotate Right", "Fit", "Cancel", "Reset", "Apply").forEach { waitForText(it) }
+            shot(sc, "scan_crop_phone_dark")
+            sc.close()
+        }
+    }
+
+    @Test
+    fun phone02ResultActionsReachable() {
+        seedDoc()
+        ActivityScenario.launch<MainActivity>(Intent(ApplicationProvider.getApplicationContext(), MainActivity::class.java).putExtra("pixelcraft.test.tool", "scanner")).use { sc ->
+            waitForText("Scan with Camera")
+            composeRule.onNodeWithText("My Scans").performClick()
+            waitForText("Invoice March")
+            composeRule.onNodeWithText("Invoice March").performClick()
+            waitForText("Your scan", timeoutMs = 120_000)
+            waitForText("Save as PDF")
+            // At real phone height every action must be composed AND inside the viewport.
+            val root = composeRule.onRoot().fetchSemanticsNode().boundsInRoot
+            listOf("Save as PDF", "Save as JPG", "Share", "Compress", "Print").forEach { label ->
+                val nodes = composeRule.onAllNodesWithText(label).fetchSemanticsNodes()
+                if (nodes.isEmpty()) throw AssertionError("$label not composed at phone height")
+                val inView = nodes.any { it.boundsInRoot.top >= root.top - 1f && it.boundsInRoot.bottom <= root.bottom + 1f }
+                if (!inView) throw AssertionError("$label outside the viewport at phone height")
+            }
+            // Every settings line must be reachable by scrolling (no fixed-button overlap).
+            val content = hasScrollAction().and(hasAnyDescendant(hasText("File name")))
+            composeRule.onNode(content).performScrollToNode(hasText("PDF saves to Documents", substring = true))
+            pump()
+            waitForText("PDF quality: 220 PPI")
+            waitForText("More save options")
+            // Scrolled state: estimate (both lines), quality and destination must be FULLY
+            // inside the viewport, and the fixed actions + More save options still visible.
+            fun assertFullyVisible(label: String) {
+                val nodes = composeRule.onAllNodesWithText(label, substring = true).fetchSemanticsNodes()
+                if (nodes.isEmpty()) throw AssertionError("$label not composed after scrolling")
+                // Zero-size bounds = semantics row not really laid out; do not count it as visible.
+                val inView = nodes.any { it.boundsInRoot.width > 1f && it.boundsInRoot.height > 1f && it.boundsInRoot.top >= root.top - 1f && it.boundsInRoot.bottom <= root.bottom + 1f }
+                if (!inView) throw AssertionError("$label not fully visible after scrolling (bounds=${nodes.map { it.boundsInRoot }})")
+            }
+            assertFullyVisible("Estimated size:")
+            assertFullyVisible("PDF quality: 220 PPI")
+            assertFullyVisible("PDF saves to Documents")
+            assertFullyVisible("More save options (PNG, margins, selected pages)")
+            listOf("Save as PDF", "Save as JPG", "Share", "Compress", "Print").forEach { assertFullyVisible(it) }
+            shot(sc, "scan_result_phone_scrolled")
+            // The old export options are reachable again via More save options.
+            composeRule.onNodeWithText("More save options (PNG, margins, selected pages)").performClick()
             waitForText("Page Size")
-            // Both the header title and the bottom Export action must exist at phone height.
-            val nodes = composeRule.onAllNodesWithText("Export Document").fetchSemanticsNodes()
-            if (nodes.size < 2) throw AssertionError("Export action not composed at phone height (found ${nodes.size})")
-            // Custom margin + selected pages still leave the action composed.
-            // The Margins row is still inside the 640dp viewport; scroll the content column
-            // so the Pages row is too before tapping (off-viewport taps do not dispatch).
-            composeRule.onNodeWithText("Custom").performClick()
+            waitForText("Custom")
+            waitForText("PNG")
+            shot(sc, "scan_export_more_phone")
+            // Pages controls must scroll fully into view above the fixed Export Document action.
+            // (performScrollToNode cannot target LazyRow items below the fold - they report
+            // zero-size bounds - so scroll the container with a real swipe.)
+            val exportContent = hasScrollAction().and(hasAnyDescendant(hasText("Format")))
+            composeRule.onNode(exportContent).performTouchInput { swipeUp(startY = 400f, endY = 150f, durationMillis = 200) }
             pump()
-            val content = hasScrollAction().and(hasAnyDescendant(hasText("Page Size")))
-            composeRule.onNode(content).performScrollToNode(hasText("Selected pages"))
-            pump()
-            clickChip("Selected pages")
-            composeRule.onNode(content).performScrollToNode(hasText("Page 1"))
-            pump()
-            clickChip("Page 1")
-            val nodes2 = composeRule.onAllNodesWithText("Export Document").fetchSemanticsNodes()
-            if (nodes2.size < 2) throw AssertionError("Export action lost after options at phone height")
-            shot(sc, "scan_export_phone")
+            assertFullyVisible("Pages")
+            assertFullyVisible("All pages")
+            assertFullyVisible("Selected pages")
+            assertFullyVisible("Export Document")
+            shot(sc, "scan_export_pages_phone")
             sc.close()
         }
     }

@@ -211,7 +211,7 @@ class PresetsSettingsTest {
             waitForText("Terms & Conditions")
             // v1.0.2: What's new moved to the drawer (below Open-source licences).
             clickText("What's new")
-            waitForText("What's new in version 1.0.8")
+            waitForText("What's new in version " + BuildConfig.VERSION_NAME.removeSuffix("-debug"))
             waitForText("Document Scanner")
             shot(sc, "v100_phone_whatsnew")
             composeRule.onNodeWithContentDescription("Back").performClick()
